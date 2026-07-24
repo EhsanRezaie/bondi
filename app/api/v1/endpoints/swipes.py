@@ -181,7 +181,7 @@ async def swipe(
 
     # Load full user for get_remaining_chats (needs user.profile)
     user_result = await session.execute(
-        select(User).where(User.id == current_user_id)
+        select(User).options(selectinload(User.profile)).where(User.id == current_user_id)
     )
     current_user = user_result.scalar_one()
     chats_result = await reward_service.get_remaining_chats(current_user)
