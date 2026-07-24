@@ -1099,6 +1099,7 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 45 | **DailyLimit upsert fix — `on_conflict_do_nothing` replaces broken `on_conflict_do_update(set_={})`** | ✅ |
 | 46 | **Discover distance fix — `distance_km` now optional (default None), no filter when omitted** | ✅ |
 | 47 | **Race condition audit — photos FOR UPDATE, double-commit fix, Redis pipeline incr+expire** | ✅ |
+| 48 | **Search API parity — search now returns same fields as discover** | ✅ |
 
 ---
 
@@ -1877,3 +1878,29 @@ Full codebase audit for race conditions. Found and fixed remaining medium+low se
 **Verification:**
 - All imports pass (no syntax errors)
 - Tests require Docker containers (PostgreSQL on port 5433, Redis on port 6380)
+
+### ✅ Session 48 Complete — Search API Parity with Discover
+
+Search endpoint now returns the same response shape as discover.
+
+**Fields Added to SearchProfileResponse:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `sexual_orientation` | string? | User's sexual orientation |
+| `photos` | List<string>? | All approved photo URLs (sorted by order) |
+| `interests` | List<string>? | Interest names |
+| `prompts` | List<dict>? | Prompt answers with question text |
+| `is_online` | bool? | True if last_seen within 5 minutes |
+
+**Fields Removed from SearchProfileResponse:**
+| Field | Reason |
+|-------|--------|
+| `hide_last_seen` | Replaced by privacy-aware `last_seen_at` (null when hidden) |
+| `hide_online_status` | Replaced by privacy-aware `is_online` (null when hidden) |
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/schemas/search.py` | Updated `SearchProfileResponse` to match discover's `ProfileResponse` |
+| `app/api/v1/endpoints/search.py` | Added `UserPrompt` eager load, populate sexual_orientation/photos/interests/prompts/is_online, privacy-aware last_seen_at/is_online |
+| `dev.md` | Session 48 notes |

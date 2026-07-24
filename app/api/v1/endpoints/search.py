@@ -9,6 +9,7 @@ from app.db.session import get_session
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_interest import UserInterest
+from app.models.user_prompt import UserPrompt
 from app.models.interest import Interest
 from app.models.photo import Photo
 from app.models.block import Block
@@ -91,6 +92,7 @@ async def search_users(
         selectinload(User.settings),
         selectinload(User.photos),
         selectinload(User.user_interests).selectinload(UserInterest.interest),
+        selectinload(User.prompts).selectinload(UserPrompt.prompt),
     ).where(
         User.is_active == True,
         User.id != current_user.id,
@@ -226,21 +228,45 @@ async def search_users(
         if not profile:
             continue
 
-        hide_last_seen = settings.hide_last_seen if settings else False
-        hide_online_status = settings.hide_online_status if settings else False
+        # Interests
+        user_interests = [ui.interest.name for ui in user.user_interests if ui.interest] if user.user_interests else []
 
-        user_interests = []
-        if user.user_interests:
-            user_interests = [ui.interest.name for ui in user.user_interests if ui.interest]
+        # Prompts (with question text)
+        prompts = [
+            {"prompt_id": str(up.prompt_id), "question": up.prompt.question, "answer": up.answer}
+            for up in user.prompts if up.prompt
+        ] if user.prompts else []
 
-        main_photo = next((p for p in user.photos if p.is_main and p.status == "approved"), None) if user.photos else None
-        main_photo_url = await PhotoService.get_photo_url(main_photo.url, main_photo.status) if main_photo else None
+        # Photos — all approved, sorted by order
+        approved_photos_raw = sorted(
+            [p for p in user.photos if p.status == "approved"],
+            key=lambda p: p.order,
+        ) if user.photos else []
+        approved_photos = [
+            await PhotoService.get_photo_url(p.url, p.status)
+            for p in approved_photos_raw
+        ]
+
+        main_photo_url = approved_photos[0] if approved_photos else None
+
+        # Privacy-respecting last_seen and online status
+        last_seen_at = None
+        is_online = None
+        if user.last_seen_at:
+            hide_last_seen = settings.hide_last_seen if settings else False
+            hide_online_status = settings.hide_online_status if settings else False
+            if not hide_last_seen:
+                last_seen_at = user.last_seen_at.isoformat()
+            if not hide_online_status:
+                now = datetime.now(timezone.utc)
+                is_online = (now - user.last_seen_at).total_seconds() < 300
 
         response_users.append(SearchProfileResponse(
             id=user.id,
             name=profile.name,
             age=profile.age,
             gender=profile.gender,
+            sexual_orientation=profile.sexual_orientation,
             bio=profile.bio,
             height=profile.height,
             weight=profile.weight,
@@ -261,11 +287,13 @@ async def search_users(
             city=profile.city,
             distance_km=fuzz_distance(distance),
             main_photo_url=main_photo_url,
+            photos=approved_photos if approved_photos else None,
+            interests=user_interests if user_interests else None,
+            prompts=prompts if prompts else None,
             is_premium=profile.is_premium,
             is_verified=profile.is_verified if profile.is_verified is not None else False,
-            last_seen_at=user.last_seen_at.isoformat() if user.last_seen_at else None,
-            hide_last_seen=hide_last_seen,
-            hide_online_status=hide_online_status
+            last_seen_at=last_seen_at,
+            is_online=is_online,
         ))
 
     return SearchResponse(
