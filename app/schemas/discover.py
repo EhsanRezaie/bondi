@@ -76,4 +76,5 @@ class SwipeResponse(BaseModel):
     matched: bool
     match_id: Optional[UUID] = None
     likes_remaining_today: Optional[int] = None
+    chats_remaining_today: Optional[int] = None
     message: str

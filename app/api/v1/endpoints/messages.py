@@ -27,6 +27,7 @@ from app.services.chat_service import (
 )
 from app.services.media_service import MediaService
 from app.services.notification_service import NotificationService
+from app.services.reward_service import RewardService
 from app.services.websocket_manager import websocket_manager
 import app.core.redis as redis
 
@@ -295,6 +296,13 @@ async def send_text_message(
 
     await session.commit()
 
+    # Get updated chat remaining count for the client
+    chats_remaining = None
+    if not current_user.profile.is_premium:
+        reward_service = RewardService(session)
+        chats_result = await reward_service.get_remaining_chats(current_user)
+        chats_remaining = chats_result if chats_result != -1 else None
+
     # Offload WebSocket notification to background
     decrypted_content = new_message.content if new_message.match_id else new_message._content
     message_data = {
@@ -319,7 +327,8 @@ async def send_text_message(
         id=new_message.id,
         sent_at=new_message.sent_at,
         requires_acceptance=not is_accepted and not match_id,
-        chat_accepted=is_accepted or match_id is not None
+        chat_accepted=is_accepted or match_id is not None,
+        chats_remaining_today=chats_remaining,
     )
 
 

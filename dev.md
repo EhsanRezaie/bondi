@@ -1100,6 +1100,7 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 46 | **Discover distance fix — `distance_km` now optional (default None), no filter when omitted** | ✅ |
 | 47 | **Race condition audit — photos FOR UPDATE, double-commit fix, Redis pipeline incr+expire** | ✅ |
 | 48 | **Search API parity — search now returns same fields as discover** | ✅ |
+| 49 | **Swipe + message responses return live likes/chats remaining counts** | ✅ |
 
 ---
 
@@ -1904,3 +1905,25 @@ Search endpoint now returns the same response shape as discover.
 | `app/schemas/search.py` | Updated `SearchProfileResponse` to match discover's `ProfileResponse` |
 | `app/api/v1/endpoints/search.py` | Added `UserPrompt` eager load, populate sexual_orientation/photos/interests/prompts/is_online, privacy-aware last_seen_at/is_online |
 | `dev.md` | Session 48 notes |
+
+### ✅ Session 49 Complete — Live Likes/Chats Remaining in API Responses
+
+Swipe and message endpoints now return updated daily limit counts so the client stays in sync without extra API calls.
+
+**Changes:**
+
+| Endpoint | Response Field | Behavior |
+|----------|---------------|----------|
+| `POST /swipes` | `likes_remaining_today` | Always returned (both like and pass), null if premium |
+| `POST /swipes` | `chats_remaining_today` | **NEW** — always returned, null if premium |
+| `POST /messages/{id}/text` | `chats_remaining_today` | **NEW** — returned after new chat consumption, null if premium or matched chat |
+| `POST /messages/{id}/photo` | `chats_remaining_today` | null (photo msgs don't consume daily limit) |
+| `POST /messages/{id}/voice` | `chats_remaining_today` | null (voice msgs don't consume daily limit) |
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/schemas/discover.py` | Added `chats_remaining_today` to `SwipeResponse` |
+| `app/schemas/message.py` | Added `chats_remaining_today` to `SendMessageResponse` |
+| `app/api/v1/endpoints/swipes.py` | Always return both likes + chats remaining after every swipe |
+| `app/api/v1/endpoints/messages.py` | Return `chats_remaining_today` after text message send, added `RewardService` import |

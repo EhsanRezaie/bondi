@@ -155,11 +155,13 @@ async def swipe(
         )
     
     # Check daily like limit using RewardService
+    reward_service = RewardService(session)
     likes_remaining = None
+    chats_remaining = None
+
     if body.direction == "like":
-        reward_service = RewardService(session)
         can_like = await reward_service.consume_like(current_user_id, current_profile.is_premium)
-        
+
         if not can_like:
             remaining = await reward_service.get_remaining_likes(current_user_id, current_profile.is_premium)
             if remaining == 0:
@@ -172,10 +174,18 @@ async def swipe(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Daily like limit reached. Watch an ad or upgrade to premium."
                 )
-        
-        # Get remaining after consumption
-        remaining = await reward_service.get_remaining_likes(current_user_id, current_profile.is_premium)
-        likes_remaining = remaining if remaining != -1 else None
+
+    # Always return both remaining counts so the client stays in sync
+    likes_result = await reward_service.get_remaining_likes(current_user_id, current_profile.is_premium)
+    likes_remaining = likes_result if likes_result != -1 else None
+
+    # Load full user for get_remaining_chats (needs user.profile)
+    user_result = await session.execute(
+        select(User).where(User.id == current_user_id)
+    )
+    current_user = user_result.scalar_one()
+    chats_result = await reward_service.get_remaining_chats(current_user)
+    chats_remaining = chats_result if chats_result != -1 else None
     
     # Create swipe record
     new_swipe = Swipe(
@@ -246,6 +256,7 @@ async def swipe(
         matched=matched,
         match_id=match_id,
         likes_remaining_today=likes_remaining,
+        chats_remaining_today=chats_remaining,
         message="Swiped successfully" + (" You matched!" if matched else "")
     )
 

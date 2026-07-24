@@ -95,6 +95,7 @@ class SendMessageResponse(BaseModel):
     sent_at: datetime
     requires_acceptance: bool = False
     chat_accepted: bool = True
+    chats_remaining_today: Optional[int] = None
 
 
 class MessageActionResponse(BaseModel):
