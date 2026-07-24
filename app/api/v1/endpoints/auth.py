@@ -193,9 +193,11 @@ async def register_init(
     client_ip = request.client.host if request.client else "unknown"
     ip_key = f"reg_ip:{client_ip}"
     try:
-        ip_count = await redis.redis_client.incr(ip_key)
-        if ip_count == 1:
-            await redis.redis_client.expire(ip_key, 86400)
+        pipe = redis.redis_client.pipeline()
+        incr_result = pipe.incr(ip_key)
+        pipe.expire(ip_key, 86400)
+        results = await pipe.execute()
+        ip_count = results[0]
         if ip_count >= 3:
             logger.warning("suspicious_registration_pattern", ip=client_ip, count=ip_count)
     except Exception:

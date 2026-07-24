@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update, literal
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
@@ -94,68 +94,107 @@ class RewardService:
         return max(0, available)
     
     async def consume_like(self, user_id: UUID, is_premium: bool) -> bool:
-        """Consume one like. Returns True if successful."""
+        """Consume one like atomically. Returns True if successful."""
         if is_premium:
             return True
-        
-        remaining = await self.get_remaining_likes(user_id, is_premium)
-        if remaining <= 0:
-            return False
-        
+
         today = date.today()
-        daily_limit = await self.get_or_create_daily_limit(user_id, today)
-        daily_limit.likes_used += 1
+
+        # Atomic: increment only if under the limit (prevents TOCTOU race)
+        stmt = (
+            update(DailyLimit)
+            .where(
+                DailyLimit.user_id == user_id,
+                DailyLimit.date == today,
+                DailyLimit.likes_used < literal(settings.FREE_USER_DAILY_LIKES) + DailyLimit.ad_likes_bonus,
+            )
+            .values(likes_used=DailyLimit.likes_used + 1)
+            .returning(DailyLimit)
+        )
+        result = await self.db.execute(stmt)
+        updated = result.scalar_one_or_none()
+
+        if not updated:
+            return False
+
         await self.db.commit()
 
         # Update Redis cache
         cache_key = key_daily_limits(user_id, today.isoformat())
         await cache_set(redis_client, cache_key, {
-            "likes_used": daily_limit.likes_used,
-            "chats_used": daily_limit.chats_used,
-            "ad_likes_bonus": daily_limit.ad_likes_bonus,
-            "ad_chats_bonus": daily_limit.ad_chats_bonus,
+            "likes_used": updated.likes_used,
+            "chats_used": updated.chats_used,
+            "ad_likes_bonus": updated.ad_likes_bonus,
+            "ad_chats_bonus": updated.ad_chats_bonus,
         }, _seconds_until_midnight())
-        
+
         return True
     
     async def consume_chat(self, user: User) -> bool:
-        """Consume one new chat. Returns True if successful."""
-        # ✅ FIX: Check profile exists and is_premium
+        """Consume one new chat atomically. Returns True if successful."""
         if user.profile and user.profile.is_premium:
             return True
-        
-        remaining = await self.get_remaining_chats(user)
-        if remaining <= 0:
-            return False
-        
+
         today = date.today()
-        daily_limit = await self.get_or_create_daily_limit(user.id, today)
-        daily_limit.chats_used += 1
+
+        # Atomic: increment only if under the limit (prevents TOCTOU race)
+        stmt = (
+            update(DailyLimit)
+            .where(
+                DailyLimit.user_id == user.id,
+                DailyLimit.date == today,
+                DailyLimit.chats_used < literal(settings.FREE_USER_DAILY_CHATS) + DailyLimit.ad_chats_bonus,
+            )
+            .values(chats_used=DailyLimit.chats_used + 1)
+            .returning(DailyLimit)
+        )
+        result = await self.db.execute(stmt)
+        updated = result.scalar_one_or_none()
+
+        if not updated:
+            return False
+
         await self.db.commit()
 
         # Update Redis cache
         cache_key = key_daily_limits(user.id, today.isoformat())
         await cache_set(redis_client, cache_key, {
-            "likes_used": daily_limit.likes_used,
-            "chats_used": daily_limit.chats_used,
-            "ad_likes_bonus": daily_limit.ad_likes_bonus,
-            "ad_chats_bonus": daily_limit.ad_chats_bonus,
+            "likes_used": updated.likes_used,
+            "chats_used": updated.chats_used,
+            "ad_likes_bonus": updated.ad_likes_bonus,
+            "ad_chats_bonus": updated.ad_chats_bonus,
         }, _seconds_until_midnight())
-        
+
         return True
     
     async def claim_ad_reward(self, user: User) -> dict:
         """
-        Claim reward for watching an ad.
+        Claim reward for watching an ad atomically.
         Returns: {'success': bool, 'likes_added': int, 'chats_added': int, 'message': str}
         """
         today = date.today()
-        daily_limit = await self.get_or_create_daily_limit(user.id, today)
-        
-        # Calculate how many ads already watched today
-        current_ad_count = daily_limit.ad_likes_bonus // settings.AD_REWARD_LIKES_BONUS
-        
-        if current_ad_count >= settings.MAX_AD_REWARDS_PER_DAY:
+
+        # Atomic: increment bonuses only if under the ad limit (prevents TOCTOU race)
+        stmt = (
+            update(DailyLimit)
+            .where(
+                DailyLimit.user_id == user.id,
+                DailyLimit.date == today,
+                (DailyLimit.ad_likes_bonus / literal(settings.AD_REWARD_LIKES_BONUS)) < literal(settings.MAX_AD_REWARDS_PER_DAY),
+            )
+            .values(
+                ad_likes_bonus=DailyLimit.ad_likes_bonus + settings.AD_REWARD_LIKES_BONUS,
+                ad_chats_bonus=DailyLimit.ad_chats_bonus + settings.AD_REWARD_CHATS_BONUS,
+            )
+            .returning(DailyLimit)
+        )
+        result = await self.db.execute(stmt)
+        updated = result.scalar_one_or_none()
+
+        if not updated:
+            # Read current state for the error response
+            daily_limit = await self.get_or_create_daily_limit(user.id, today)
+            current_ad_count = daily_limit.ad_likes_bonus // settings.AD_REWARD_LIKES_BONUS
             return {
                 'success': False,
                 'likes_added': 0,
@@ -164,27 +203,25 @@ class RewardService:
                 'ads_watched_today': current_ad_count,
                 'max_ads_per_day': settings.MAX_AD_REWARDS_PER_DAY
             }
-        
-        # Add bonuses
-        daily_limit.ad_likes_bonus += settings.AD_REWARD_LIKES_BONUS
-        daily_limit.ad_chats_bonus += settings.AD_REWARD_CHATS_BONUS
+
         await self.db.commit()
 
         # Update Redis cache
         cache_key = key_daily_limits(user.id, today.isoformat())
         await cache_set(redis_client, cache_key, {
-            "likes_used": daily_limit.likes_used,
-            "chats_used": daily_limit.chats_used,
-            "ad_likes_bonus": daily_limit.ad_likes_bonus,
-            "ad_chats_bonus": daily_limit.ad_chats_bonus,
+            "likes_used": updated.likes_used,
+            "chats_used": updated.chats_used,
+            "ad_likes_bonus": updated.ad_likes_bonus,
+            "ad_chats_bonus": updated.ad_chats_bonus,
         }, _seconds_until_midnight())
 
+        new_ad_count = updated.ad_likes_bonus // settings.AD_REWARD_LIKES_BONUS
         return {
             'success': True,
             'likes_added': settings.AD_REWARD_LIKES_BONUS,
             'chats_added': settings.AD_REWARD_CHATS_BONUS,
             'message': f'You gained +{settings.AD_REWARD_LIKES_BONUS} likes and +{settings.AD_REWARD_CHATS_BONUS} new chats for today!',
-            'ads_watched_today': current_ad_count + 1,
+            'ads_watched_today': new_ad_count,
             'max_ads_per_day': settings.MAX_AD_REWARDS_PER_DAY
         }
     

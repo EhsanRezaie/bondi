@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, DateTime, ForeignKey, SmallInteger
+from sqlalchemy import Column, DateTime, ForeignKey, SmallInteger, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -8,6 +8,9 @@ from app.db.base import Base
 
 class ReferralReward(Base):
     __tablename__ = "referral_rewards"
+    __table_args__ = (
+        UniqueConstraint("invited_id", name="uq_referral_rewards_invited"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     inviter_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

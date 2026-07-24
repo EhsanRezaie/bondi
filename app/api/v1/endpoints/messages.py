@@ -255,9 +255,11 @@ async def send_text_message(
     # Per-match message rate limit (30/min per sender per chat)
     rate_key = f"msg_rate:{current_user.id}:{match_id or other_user_id}"
     try:
-        count = await redis.redis_client.incr(rate_key)
-        if count == 1:
-            await redis.redis_client.expire(rate_key, 60)
+        pipe = redis.redis_client.pipeline()
+        incr_result = pipe.incr(rate_key)
+        pipe.expire(rate_key, 60)
+        results = await pipe.execute()
+        count = results[0]
         if count > 30:
             raise HTTPException(status_code=429, detail="Sending too fast. Please slow down.")
     except HTTPException:

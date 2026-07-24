@@ -59,9 +59,11 @@ async def report_user(
     today = datetime.utcnow().strftime("%Y-%m-%d")
     daily_key = f"reports:{current_user_id}:{today}"
     try:
-        daily_count = await redis.redis_client.incr(daily_key)
-        if daily_count == 1:
-            await redis.redis_client.expire(daily_key, 86400)
+        pipe = redis.redis_client.pipeline()
+        incr_result = pipe.incr(daily_key)
+        pipe.expire(daily_key, 86400)
+        results = await pipe.execute()
+        daily_count = results[0]
         if daily_count > 5:
             raise HTTPException(status_code=429, detail="Report limit reached for today.")
     except HTTPException:

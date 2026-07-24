@@ -32,9 +32,8 @@ async def get_or_create_daily_limit(
         chats_used=0,
         ad_likes_bonus=0,
         ad_chats_bonus=0,
-    ).on_conflict_do_update(
-        constraint="uq_daily_limits_user_date",
-        set_={}
+    ).on_conflict_do_nothing(
+        constraint="uq_daily_limits_user_date"
     ).returning(DailyLimit)
 
     result = await session.execute(stmt)

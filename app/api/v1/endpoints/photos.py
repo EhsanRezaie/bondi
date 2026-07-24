@@ -87,15 +87,18 @@ async def upload_photo(
             detail="Photo rejected: content policy violation.",
         )
 
-    # Check photo limit (max 6 photos)
+    # Check photo limit atomically — FOR UPDATE locks existing rows so
+    # a concurrent upload cannot read the same count and both pass the check.
     result = await session.execute(
-        select(Photo).where(Photo.user_id == current_user.id)
+        select(Photo)
+        .where(Photo.user_id == current_user.id)
+        .with_for_update()
     )
     photos = result.scalars().all()
     if len(photos) >= settings.MAX_PHOTOS_PER_USER:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Maximum 9 photos per user",
+            detail=f"Maximum {settings.MAX_PHOTOS_PER_USER} photos per user",
         )
 
     # Create photo record
@@ -189,14 +192,14 @@ async def delete_photo(
     # could be in either depending on its moderation status)
     await PhotoService.delete_photo(str(current_user.id), str(photo_id))
 
+    # Track whether we need to reassign main before deleting
+    was_main = photo.is_main
+
     # Delete from database
     await session.delete(photo)
-    await session.commit()
 
-    await invalidate_user_cache(redis_client, current_user.id)
-
-    # If deleted photo was main, set new main photo
-    if photo.is_main:
+    # If deleted photo was main, set new main — same transaction, no double commit
+    if was_main:
         result = await session.execute(
             select(Photo)
             .where(Photo.user_id == current_user.id)
@@ -206,7 +209,10 @@ async def delete_photo(
         first_photo = result.scalar_one_or_none()
         if first_photo:
             first_photo.is_main = True
-            await session.commit()
+
+    await session.commit()
+
+    await invalidate_user_cache(redis_client, current_user.id)
 
 
 @router.put("/{photo_id}/main", response_model=PhotoResponse)

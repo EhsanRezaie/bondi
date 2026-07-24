@@ -173,8 +173,10 @@ async def verify_video(
         # Increment attempt counter
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
-        await redis_module.redis_client.incr(attempts_key)
-        await redis_module.redis_client.expire(attempts_key, 86400)
+        pipe = redis_module.redis_client.pipeline()
+        pipe.incr(attempts_key)
+        pipe.expire(attempts_key, 86400)
+        await pipe.execute()
 
         logger.warning(
             "liveness_challenge_failed",
@@ -234,8 +236,10 @@ async def verify_video(
         # Increment attempt counter
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
-        await redis_module.redis_client.incr(attempts_key)
-        await redis_module.redis_client.expire(attempts_key, 86400)
+        pipe = redis_module.redis_client.pipeline()
+        pipe.incr(attempts_key)
+        pipe.expire(attempts_key, 86400)
+        await pipe.execute()
 
         logger.warning(
             "face_match_failed",
@@ -274,8 +278,10 @@ async def verify_video(
     # Increment attempt counter
     today = now.strftime("%Y-%m-%d")
     attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
-    await redis_module.redis_client.incr(attempts_key)
-    await redis_module.redis_client.expire(attempts_key, 86400)
+    pipe = redis_module.redis_client.pipeline()
+    pipe.incr(attempts_key)
+    pipe.expire(attempts_key, 86400)
+    await pipe.execute()
 
     logger.info(
         "verification_success",

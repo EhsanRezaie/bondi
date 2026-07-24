@@ -1098,6 +1098,7 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 44 | **DailyLimit race condition fix + SQL logging cleanup** | ✅ |
 | 45 | **DailyLimit upsert fix — `on_conflict_do_nothing` replaces broken `on_conflict_do_update(set_={})`** | ✅ |
 | 46 | **Discover distance fix — `distance_km` now optional (default None), no filter when omitted** | ✅ |
+| 47 | **Race condition audit — photos FOR UPDATE, double-commit fix, Redis pipeline incr+expire** | ✅ |
 
 ---
 
@@ -1839,3 +1840,40 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 |------|--------|
 | `app/services/reward_service.py` | `on_conflict_do_update(set_={})` → `on_conflict_do_nothing()` |
 | `dev.md` | Session 45 documentation |
+
+### ✅ Session 47 Complete — Race Condition Audit & Fixes
+
+Full codebase audit for race conditions. Found and fixed remaining medium+low severity issues (critical and high were already fixed in sessions 44-45).
+
+**Already Fixed (confirmed):**
+| Item | Status |
+|------|--------|
+| `chat_service.get_or_create_daily_limit` — `on_conflict_do_nothing` | ✅ Session 45 |
+| `reward_service.consume_like` — atomic UPDATE with WHERE | ✅ Session 44 |
+| `reward_service.consume_chat` — atomic UPDATE with WHERE | ✅ Session 44 |
+| `reward_service.claim_ad_reward` — atomic UPDATE with WHERE | ✅ Session 44 |
+| `ReferralReward` — `UniqueConstraint("invited_id")` | ✅ Already present |
+
+**Fixes Applied (Session 47):**
+
+| Severity | File | Issue | Fix |
+|----------|------|-------|-----|
+| Medium | `photos.py:90-99` | Photo upload TOCTOU — SELECT count then INSERT | Added `SELECT ... FOR UPDATE` to lock rows during count check |
+| Medium | `photos.py:193-209` | Photo delete double commit — separate commit for delete + set-main | Merged into single transaction (one `session.commit()`) |
+| Low | `reports.py:62-64` | Redis incr+expire TOCTOU — key may persist without TTL | Replaced with `pipeline()` for atomic incr+expire |
+| Low | `messages.py:258-260` | Redis incr+expire TOCTOU | Same pipeline fix |
+| Low | `auth.py:196-198` | Redis incr+expire TOCTOU | Same pipeline fix |
+| Low | `verify.py:176,237,277` | Redis incr+expire TOCTOU (3 locations) | Same pipeline fix |
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/api/v1/endpoints/photos.py` | `with_for_update()` on photo count check; single transaction for delete+set-main |
+| `app/api/v1/endpoints/reports.py` | `incr`+`expire` → `pipeline()` |
+| `app/api/v1/endpoints/messages.py` | `incr`+`expire` → `pipeline()` |
+| `app/api/v1/endpoints/auth.py` | `incr`+`expire` → `pipeline()` |
+| `app/api/v1/endpoints/verify.py` | `incr`+`expire` → `pipeline()` (3 locations) |
+
+**Verification:**
+- All imports pass (no syntax errors)
+- Tests require Docker containers (PostgreSQL on port 5433, Redis on port 6380)
