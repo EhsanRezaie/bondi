@@ -31,4 +31,4 @@ Thumbs.db
 
 # Logs
 logs/*.log
-!logs/.gitkeep
+!logs/.gitkeep.mimocode/

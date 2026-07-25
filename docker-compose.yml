@@ -1,9 +1,43 @@
-version: '3.9'
-
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dating_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_BASE_URL: http://minio:9000/photos-public
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    container_name: dating_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_certs:/etc/nginx/certs
+    depends_on:
+      - app
+
   db:
     image: postgis/postgis:15-3.3
     container_name: dating_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: dating_user
       POSTGRES_PASSWORD: dating_pass
@@ -21,8 +55,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: dating_redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -32,13 +69,14 @@ services:
   minio:
     image: minio/minio:latest
     container_name: dating_minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console (browse buckets at http://localhost:9001)
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -47,15 +85,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # One-shot init container: creates the two buckets and sets photos-public
-  # to allow anonymous reads. Runs once on `docker compose up`, then exits.
-  # Re-running is safe — `mc mb --ignore-existing` and `mc anonymous set`
-  # are both idempotent.
-  #
-  # NOTE: keep "minio" / "minio-init" hyphenated, not underscored — MinIO's
-  # S3 hostname validation rejects underscores in the endpoint host (fails
-  # with "Invalid Request (invalid hostname)") even though Docker's
-  # internal DNS resolves underscored service names fine otherwise.
   minio-init:
     image: minio/mc:latest
     container_name: dating_minio_init
@@ -68,7 +97,7 @@ services:
       mc mb --ignore-existing local/photos-public &&
       mc mb --ignore-existing local/photos-private &&
       mc anonymous set download local/photos-public &&
-      echo 'MinIO buckets ready: photos-public (public-read), photos-private (private)'
+      echo 'MinIO buckets ready'
       "
 
   glitchtip-db-init:
@@ -86,8 +115,7 @@ services:
   glitchtip:
     image: glitchtip/glitchtip:latest
     container_name: dating_glitchtip
-    ports:
-      - "8080:80"
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://dating_user:dating_pass@db:5432/glitchtip
       REDIS_URL: redis://redis:6379/1
@@ -98,11 +126,11 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    restart: unless-stopped
 
   glitchtip-worker:
     image: glitchtip/glitchtip:latest
     container_name: dating_glitchtip_worker
+    restart: unless-stopped
     command: python manage.py runworker --scheduler
     environment:
       DATABASE_URL: postgres://dating_user:dating_pass@db:5432/glitchtip
@@ -111,8 +139,10 @@ services:
     depends_on:
       glitchtip:
         condition: service_started
-    restart: unless-stopped
 
 volumes:
   postgres_data:
   minio_data:
+  uploads_data:
+  redis_data:
+  nginx_certs:

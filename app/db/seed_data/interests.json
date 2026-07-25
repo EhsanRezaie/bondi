@@ -60,7 +60,7 @@
     "icon": "🤸"
   },
   {
-    "name": "martial_arts",
+    "name": "martial arts",
     "category": "sports_fitness",
     "icon": "🥋"
   },
@@ -80,7 +80,7 @@
     "icon": "🥾"
   },
   {
-    "name": "rock_climbing",
+    "name": "rock climbing",
     "category": "sports_fitness",
     "icon": "🧗"
   },
@@ -115,7 +115,7 @@
     "icon": "🏸"
   },
   {
-    "name": "table_tennis",
+    "name": "table tennis",
     "category": "sports_fitness",
     "icon": "🏓"
   },
@@ -125,7 +125,7 @@
     "icon": "⛳"
   },
   {
-    "name": "horseback_riding",
+    "name": "horseback riding",
     "category": "sports_fitness",
     "icon": "🏇"
   },
@@ -150,22 +150,22 @@
     "icon": "🤾"
   },
   {
-    "name": "pop_music",
+    "name": "pop music",
     "category": "music",
     "icon": "🎤"
   },
   {
-    "name": "rock_music",
+    "name": "rock music",
     "category": "music",
     "icon": "🎸"
   },
   {
-    "name": "traditional_persian_music",
+    "name": "traditional persian music",
     "category": "music",
     "icon": "🪕"
   },
   {
-    "name": "classical_music",
+    "name": "classical music",
     "category": "music",
     "icon": "🎻"
   },
@@ -175,12 +175,12 @@
     "icon": "🎷"
   },
   {
-    "name": "electronic_music",
+    "name": "electronic music",
     "category": "music",
     "icon": "🎧"
   },
   {
-    "name": "rap_hiphop",
+    "name": "rap hiphop",
     "category": "music",
     "icon": "🎙️"
   },
@@ -190,22 +190,22 @@
     "icon": "🤘"
   },
   {
-    "name": "indie_music",
+    "name": "indie music",
     "category": "music",
     "icon": "🎶"
   },
   {
-    "name": "playing_guitar",
+    "name": "playing guitar",
     "category": "music",
     "icon": "🎸"
   },
   {
-    "name": "playing_piano",
+    "name": "playing piano",
     "category": "music",
     "icon": "🎹"
   },
   {
-    "name": "playing_drums",
+    "name": "playing drums",
     "category": "music",
     "icon": "🥁"
   },
@@ -220,7 +220,7 @@
     "icon": "📝"
   },
   {
-    "name": "dj_ing",
+    "name": "dj ing",
     "category": "music",
     "icon": "🎚️"
   },
@@ -230,7 +230,7 @@
     "icon": "🎫"
   },
   {
-    "name": "music_festivals",
+    "name": "music festivals",
     "category": "music",
     "icon": "🎪"
   },
@@ -245,12 +245,12 @@
     "icon": "🍰"
   },
   {
-    "name": "street_food",
+    "name": "street food",
     "category": "food_drink",
     "icon": "🌭"
   },
   {
-    "name": "persian_cuisine",
+    "name": "persian cuisine",
     "category": "food_drink",
     "icon": "🍲"
   },
@@ -265,17 +265,17 @@
     "icon": "☕"
   },
   {
-    "name": "tea_culture",
+    "name": "tea culture",
     "category": "food_drink",
     "icon": "🍵"
   },
   {
-    "name": "fine_dining",
+    "name": "fine dining",
     "category": "food_drink",
     "icon": "🍽️"
   },
   {
-    "name": "vegan_vegetarian",
+    "name": "vegan vegetarian",
     "category": "food_drink",
     "icon": "🥗"
   },
@@ -285,12 +285,12 @@
     "icon": "🍖"
   },
   {
-    "name": "desserts_sweets",
+    "name": "desserts sweets",
     "category": "food_drink",
     "icon": "🍮"
   },
   {
-    "name": "wine_tasting",
+    "name": "wine tasting",
     "category": "food_drink",
     "icon": "🍷"
   },
@@ -300,12 +300,12 @@
     "icon": "🍹"
   },
   {
-    "name": "food_blogging",
+    "name": "food blogging",
     "category": "food_drink",
     "icon": "📸"
   },
   {
-    "name": "restaurant_hopping",
+    "name": "restaurant hopping",
     "category": "food_drink",
     "icon": "🍴"
   },
@@ -315,7 +315,7 @@
     "icon": "🎬"
   },
   {
-    "name": "tv_series",
+    "name": "tv series",
     "category": "movies_tv",
     "icon": "📺"
   },
@@ -330,32 +330,32 @@
     "icon": "🎥"
   },
   {
-    "name": "stand_up_comedy",
+    "name": "stand up comedy",
     "category": "movies_tv",
     "icon": "🎙️"
   },
   {
-    "name": "k_drama",
+    "name": "k drama",
     "category": "movies_tv",
     "icon": "🇰🇷"
   },
   {
-    "name": "sci_fi_fantasy",
+    "name": "sci fi fantasy",
     "category": "movies_tv",
     "icon": "🚀"
   },
   {
-    "name": "horror_movies",
+    "name": "horror movies",
     "category": "movies_tv",
     "icon": "👻"
   },
   {
-    "name": "classic_cinema",
+    "name": "classic cinema",
     "category": "movies_tv",
     "icon": "🎞️"
   },
   {
-    "name": "reality_tv",
+    "name": "reality tv",
     "category": "movies_tv",
     "icon": "📹"
   },
@@ -365,7 +365,7 @@
     "icon": "🎨"
   },
   {
-    "name": "drawing_sketching",
+    "name": "drawing sketching",
     "category": "arts_creative",
     "icon": "✏️"
   },
@@ -395,7 +395,7 @@
     "icon": "🖋️"
   },
   {
-    "name": "graphic_design",
+    "name": "graphic design",
     "category": "arts_creative",
     "icon": "🖌️"
   },
@@ -410,12 +410,12 @@
     "icon": "🗿"
   },
   {
-    "name": "pottery_ceramics",
+    "name": "pottery ceramics",
     "category": "arts_creative",
     "icon": "🏺"
   },
   {
-    "name": "fashion_design",
+    "name": "fashion design",
     "category": "arts_creative",
     "icon": "🧵"
   },
@@ -425,7 +425,7 @@
     "icon": "🎞️"
   },
   {
-    "name": "crafts_diy",
+    "name": "crafts diy",
     "category": "arts_creative",
     "icon": "✂️"
   },
@@ -455,12 +455,12 @@
     "icon": "🔭"
   },
   {
-    "name": "nature_walks",
+    "name": "nature walks",
     "category": "outdoors_nature",
     "icon": "🌿"
   },
   {
-    "name": "road_trips",
+    "name": "road trips",
     "category": "outdoors_nature",
     "icon": "🚗"
   },
@@ -470,32 +470,32 @@
     "icon": "🦅"
   },
   {
-    "name": "national_parks",
+    "name": "national parks",
     "category": "outdoors_nature",
     "icon": "🏞️"
   },
   {
-    "name": "off_roading",
+    "name": "off roading",
     "category": "outdoors_nature",
     "icon": "🚙"
   },
   {
-    "name": "video_gaming",
+    "name": "video gaming",
     "category": "gaming_tech",
     "icon": "🎮"
   },
   {
-    "name": "pc_gaming",
+    "name": "pc gaming",
     "category": "gaming_tech",
     "icon": "🖥️"
   },
   {
-    "name": "mobile_gaming",
+    "name": "mobile gaming",
     "category": "gaming_tech",
     "icon": "📱"
   },
   {
-    "name": "board_games",
+    "name": "board games",
     "category": "gaming_tech",
     "icon": "🎲"
   },
@@ -505,7 +505,7 @@
     "icon": "♟️"
   },
   {
-    "name": "card_games",
+    "name": "card games",
     "category": "gaming_tech",
     "icon": "🃏"
   },
@@ -520,7 +520,7 @@
     "icon": "👨‍💻"
   },
   {
-    "name": "ai_machine_learning",
+    "name": "ai machine learning",
     "category": "gaming_tech",
     "icon": "🤖"
   },
@@ -530,7 +530,7 @@
     "icon": "📲"
   },
   {
-    "name": "vr_gaming",
+    "name": "vr gaming",
     "category": "gaming_tech",
     "icon": "🥽"
   },
@@ -560,7 +560,7 @@
     "icon": "🪴"
   },
   {
-    "name": "self_improvement",
+    "name": "self improvement",
     "category": "lifestyle",
     "icon": "📈"
   },
@@ -570,7 +570,7 @@
     "icon": "💼"
   },
   {
-    "name": "investing_finance",
+    "name": "investing finance",
     "category": "lifestyle",
     "icon": "💹"
   },
@@ -585,7 +585,7 @@
     "icon": "🏍️"
   },
   {
-    "name": "interior_design",
+    "name": "interior design",
     "category": "lifestyle",
     "icon": "🛋️"
   },
@@ -595,7 +595,7 @@
     "icon": "🌃"
   },
   {
-    "name": "home_cooking",
+    "name": "home cooking",
     "category": "lifestyle",
     "icon": "🍳"
   },
@@ -605,7 +605,7 @@
     "icon": "🎧"
   },
   {
-    "name": "public_speaking",
+    "name": "public speaking",
     "category": "lifestyle",
     "icon": "🎤"
   },
@@ -620,32 +620,32 @@
     "icon": "🎒"
   },
   {
-    "name": "solo_travel",
+    "name": "solo travel",
     "category": "travel",
     "icon": "🧳"
   },
   {
-    "name": "road_travel",
+    "name": "road travel",
     "category": "travel",
     "icon": "🚐"
   },
   {
-    "name": "cultural_exploration",
+    "name": "cultural exploration",
     "category": "travel",
     "icon": "🗺️"
   },
   {
-    "name": "island_hopping",
+    "name": "island hopping",
     "category": "travel",
     "icon": "🏝️"
   },
   {
-    "name": "mountain_trips",
+    "name": "mountain trips",
     "category": "travel",
     "icon": "⛰️"
   },
   {
-    "name": "historical_sites",
+    "name": "historical sites",
     "category": "travel",
     "icon": "🏛️"
   },
@@ -660,22 +660,22 @@
     "icon": "🌍"
   },
   {
-    "name": "animal_welfare",
+    "name": "animal welfare",
     "category": "social_causes",
     "icon": "🐾"
   },
   {
-    "name": "human_rights",
+    "name": "human rights",
     "category": "social_causes",
     "icon": "✊"
   },
   {
-    "name": "community_service",
+    "name": "community service",
     "category": "social_causes",
     "icon": "🏘️"
   },
   {
-    "name": "charity_work",
+    "name": "charity work",
     "category": "social_causes",
     "icon": "❤️"
   },
@@ -720,7 +720,7 @@
     "icon": "💰"
   },
   {
-    "name": "online_courses",
+    "name": "online courses",
     "category": "learning",
     "icon": "🎓"
   },
@@ -740,7 +740,7 @@
     "icon": "🦜"
   },
   {
-    "name": "aquariums_fish",
+    "name": "aquariums fish",
     "category": "pets_animals",
     "icon": "🐠"
   },
@@ -775,7 +775,7 @@
     "icon": "🛍️"
   },
   {
-    "name": "jewelry_accessories",
+    "name": "jewelry accessories",
     "category": "fashion_beauty",
     "icon": "💍"
   },
@@ -785,7 +785,7 @@
     "icon": "💇"
   },
   {
-    "name": "persian_calligraphy_art",
+    "name": "persian calligraphy art",
     "category": "arts_creative",
     "icon": "🖋️"
   }

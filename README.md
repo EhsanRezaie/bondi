@@ -289,30 +289,46 @@ pytest tests/test_auth.py -v
 
 | Service | Port | Description |
 |---------|------|-------------|
+| **Nginx** | **80** | **Reverse proxy (entry point)** |
+| **App (FastAPI)** | 8000 (internal) | API server |
 | PostgreSQL + PostGIS | 5432 | Main database |
 | Redis | 6379 | Cache + realtime |
 | MinIO | 9000 (API), 9001 (console) | Photo storage (S3-compatible) |
 | GlitchTip (web) | 8080 | Error tracking dashboard |
 | GlitchTip (worker) | — | Event ingestion + processing |
 
+### Start everything
+
 ```bash
-# Start services
 docker compose up -d
+```
 
-# Stop services
+App is available at `http://localhost` (via Nginx). The entrypoint auto-runs migrations + seeds on first start.
+
+### Dev mode (hot-reload)
+
+Set `ENVIRONMENT=development` in your `.env` file. The entrypoint detects this and adds `--reload` automatically.
+
+### Stop services
+
+```bash
 docker compose down
+```
 
-# View logs
-docker compose logs -f
+### View logs
 
-# View MinIO init logs specifically (bucket creation/policy setup)
-docker compose logs minio-init
+```bash
+docker compose logs -f          # all services
+docker compose logs -f app      # app only
+```
 
-# Reset everything (WARNING: deletes all data, including uploaded photos)
+### Reset everything
+
+WARNING: deletes all data, including uploaded photos.
+
+```bash
 docker compose down -v
 docker compose up -d
-alembic upgrade head
-python -m app.db.scripts.seed_interests
 ```
 
 ---
@@ -645,12 +661,83 @@ dating-app/
 │   └── main.py             # FastAPI app entry point
 ├── alembic/                # Database migrations
 ├── tests/                  # Unit and integration tests
-├── docker-compose.yml      # db, redis, minio, minio-init
-├── docker-compose.test.yml # db_test, redis_test, minio-test, minio-test-init
+├── docs/                   # Developer documentation
+├── scripts/                # Deploy, backup, restore, firewall
+├── nginx/nginx.conf        # Reverse proxy config
+├── docker-compose.yml      # App + all infrastructure
+├── docker-compose.test.yml # Test infrastructure
+├── Dockerfile
+├── entrypoint.sh           # Auto-migration + seeding on startup
 ├── .env.example
 ├── requirements.txt
-├── dev.md                  # Developer session documentation
 └── README.md
+```
+
+---
+
+## Production Deployment (VPS)
+
+### First-time setup
+
+```bash
+# 1. Clone repo on your VPS
+git clone <repo-url> && cd dating-app
+
+# 2. Configure firewall
+sudo bash firewall.sh
+
+# 3. Create production env
+cp .env.example .env
+nano .env   # fill in real secrets (SECRET_KEY, ENCRYPTION_SECRET, etc.)
+
+# 4. Deploy
+bash scripts/deploy.sh
+```
+
+App is available at `http://<your-server-ip>`
+
+### Subsequent deploys
+
+```bash
+git pull
+bash scripts/deploy.sh
+```
+
+### Database backups
+
+```bash
+# Manual backup
+bash scripts/backup.sh
+
+# Automated (daily at 2am)
+echo "0 2 * * * bash /opt/dating-app/scripts/backup.sh" | crontab -
+```
+
+### Restore from backup
+
+```bash
+bash scripts/restore.sh /opt/dating-app/backups/db_20250101_020000.sql.gz
+```
+
+### Add SSL (when you have a domain)
+
+```bash
+# 1. Point DNS to your server IP
+
+# 2. Install certbot
+apt install certbot
+
+# 3. Get certificate
+certbot certonly --standalone -d api.yourdomain.com
+
+# 4. Copy certs
+cp /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem nginx/certs/
+cp /etc/letsencrypt/live/api.yourdomain.com/privkey.pem nginx/certs/
+
+# 5. Uncomment SSL block in nginx/nginx.conf
+
+# 6. Restart nginx
+docker compose restart nginx
 ```
 
 ---

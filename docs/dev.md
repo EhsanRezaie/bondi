@@ -232,8 +232,8 @@ iranian-dating-app/
 │   ├── .env
 │   ├── .env.example
 │   ├── .env.test
-│   ├── docker-compose.yml                 # db, redis, minio, minio-init
-│   ├── docker-compose_test.yml            # db_test, redis_test, minio-test, minio-test-init
+│   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, glitchtip)
+│   ├── docker-compose.test.yml            # Test infrastructure (db_test, redis_test, minio-test)
 │   ├── requirements.txt
 │   └── Dockerfile
 │
@@ -1927,3 +1927,21 @@ Swipe and message endpoints now return updated daily limit counts so the client 
 | `app/schemas/message.py` | Added `chats_remaining_today` to `SendMessageResponse` |
 | `app/api/v1/endpoints/swipes.py` | Always return both likes + chats remaining after every swipe |
 | `app/api/v1/endpoints/messages.py` | Return `chats_remaining_today` after text message send, added `RewardService` import |
+
+---
+
+## Server Setup TODO
+
+- [ ] Purchase VPS (Hetzner CX22 or DigitalOcean droplet — 2 vCPU, 4GB RAM minimum)
+- [ ] Install Docker + Docker Compose on VPS
+- [ ] Clone repo: `git clone https://github.com/EhsanRezaie/project_d.git /opt/dating-app`
+- [ ] Configure `.env` on server (copy `.env.example`, set production secrets)
+- [ ] Run initial deploy: `bash scripts/deploy.sh`
+- [ ] Set up firewall: `sudo bash scripts/firewall.sh`
+- [ ] Add GitHub Secrets for auto-deploy:
+  - `VPS_HOST` — server IP
+  - `VPS_USERNAME` — SSH user (e.g. `root`)
+  - `VPS_SSH_KEY` — private SSH key
+- [ ] Test auto-deploy: push to main, verify server updates
+- [ ] (Optional) Point domain to server IP
+- [ ] (Optional) Set up SSL with Let's Encrypt
