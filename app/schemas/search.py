@@ -66,6 +66,7 @@ class SearchProfileResponse(BaseModel):
     is_verified: bool = False
     last_seen_at: Optional[str] = None
     is_online: Optional[bool] = None
+    current_user_action: Optional[str] = None  # "like", "pass", or null
 
     class Config:
         from_attributes = True

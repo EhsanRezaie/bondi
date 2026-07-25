@@ -1160,3 +1160,71 @@ class TestBlocks:
         user_ids_after = [u["id"] for u in users_after]
         
         assert block_user_id not in user_ids_after
+
+
+class TestSearchSwipeStatus:
+    """Test current_user_action field in search results."""
+
+    async def test_search_returns_null_for_unswiped_user(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Should return current_user_action: null for users not yet swiped."""
+        male_headers, male_id = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        res = await client.get(SEARCH_URL, headers=male_headers)
+        assert res.status_code == 200
+
+        users = res.json()["users"]
+        female_user = next(u for u in users if u["id"] == female_id)
+        assert female_user["current_user_action"] is None
+
+    async def test_search_returns_like_after_liking(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Should return current_user_action: 'like' after liking a user."""
+        male_headers, male_id = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Like the female user
+        await client.post(
+            "/api/v1/swipes",
+            json={"user_id": female_id, "direction": "like"},
+            headers=male_headers,
+        )
+
+        res = await client.get(SEARCH_URL, headers=male_headers)
+        users = res.json()["users"]
+        female_user = next(u for u in users if u["id"] == female_id)
+        assert female_user["current_user_action"] == "like"
+
+    async def test_search_returns_pass_after_passing(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Should return current_user_action: 'pass' after passing on a user."""
+        male_headers, male_id = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Pass on the female user
+        await client.post(
+            "/api/v1/swipes",
+            json={"user_id": female_id, "direction": "pass"},
+            headers=male_headers,
+        )
+
+        res = await client.get(SEARCH_URL, headers=male_headers)
+        users = res.json()["users"]
+        female_user = next(u for u in users if u["id"] == female_id)
+        assert female_user["current_user_action"] == "pass"

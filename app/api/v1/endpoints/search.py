@@ -13,6 +13,7 @@ from app.models.user_prompt import UserPrompt
 from app.models.interest import Interest
 from app.models.photo import Photo
 from app.models.block import Block
+from app.models.swipe import Swipe
 from app.core.deps import get_current_user
 from app.services.photo_service import PhotoService
 from app.core.limiter import limiter
@@ -218,6 +219,18 @@ async def search_users(
     result = await session.execute(query)
     rows = result.all()
 
+    # Batch query swipe directions for current user → all result users
+    result_user_ids = [row[0].id for row in rows]
+    swipe_map = {}
+    if result_user_ids:
+        swipe_rows = await session.execute(
+            select(Swipe.to_user, Swipe.direction).where(
+                Swipe.from_user == current_user.id,
+                Swipe.to_user.in_(result_user_ids)
+            )
+        )
+        swipe_map = {row.to_user: row.direction for row in swipe_rows}
+
     response_users = []
     for row in rows:
         user = row[0]
@@ -294,6 +307,7 @@ async def search_users(
             is_verified=profile.is_verified if profile.is_verified is not None else False,
             last_seen_at=last_seen_at,
             is_online=is_online,
+            current_user_action=swipe_map.get(user.id),
         ))
 
     return SearchResponse(
