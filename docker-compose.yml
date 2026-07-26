@@ -113,7 +113,7 @@ services:
         condition: service_healthy
 
   glitchtip:
-    image: glitchtip/glitchtip:4.0.1
+    image: glitchtip/glitchtip:6.2.2
     container_name: dating_glitchtip
     restart: unless-stopped
     environment:
@@ -134,7 +134,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:4.0.1
+    image: glitchtip/glitchtip:6.2.2
     container_name: dating_glitchtip_worker
     restart: unless-stopped
     command: python manage.py runworker --scheduler
