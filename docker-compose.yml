@@ -113,7 +113,7 @@ services:
         condition: service_healthy
 
   glitchtip:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:4.0.1
     container_name: dating_glitchtip
     restart: unless-stopped
     environment:
@@ -126,9 +126,15 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "showmigrations", "--plan"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:4.0.1
     container_name: dating_glitchtip_worker
     restart: unless-stopped
     command: python manage.py runworker --scheduler
@@ -140,7 +146,7 @@ services:
       glitchtip-db-init:
         condition: service_completed_successfully
       glitchtip:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres_data:
