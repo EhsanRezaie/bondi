@@ -48,9 +48,10 @@ jobs:
             minio/minio server /data --console-address ":9091"
           sleep 5
           docker run --rm \
-            --link minio-test \
-            minio/mc sh -c "
-              mc alias set local http://minio-test:9000 minioadmin minioadmin &&
+            --network host \
+            --entrypoint sh \
+            minio/mc -c "
+              mc alias set local http://localhost:9090 minioadmin minioadmin &&
               mc mb --ignore-existing local/photos-public-test &&
               mc mb --ignore-existing local/photos-private-test &&
               mc anonymous set download local/photos-public-test
