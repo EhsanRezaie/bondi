@@ -11,7 +11,6 @@ build/
 
 # Environment
 .env
-.env.test
 firebase-service-account.json
 maintenance.json
 version_override.json
