@@ -1,9 +1,6 @@
 #!/bin/sh
 set -e
 
-echo "Generating migrations from models..."
-alembic revision --autogenerate -m "auto: startup migration"
-
 echo "Applying migrations..."
 alembic upgrade head
 
