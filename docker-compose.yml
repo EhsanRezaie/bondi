@@ -13,6 +13,7 @@ services:
       S3_PUBLIC_BASE_URL: http://minio:9000/photos-public
     volumes:
       - uploads_data:/app/uploads
+      - alembic_versions:/app/alembic/versions
     depends_on:
       db:
         condition: service_healthy
@@ -154,3 +155,4 @@ volumes:
   uploads_data:
   redis_data:
   nginx_certs:
+  alembic_versions:
