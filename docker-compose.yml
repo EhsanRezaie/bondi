@@ -126,12 +126,6 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/api/0/health/')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
   glitchtip-worker:
     image: glitchtip/glitchtip:latest
@@ -146,7 +140,7 @@ services:
       glitchtip-db-init:
         condition: service_completed_successfully
       glitchtip:
-        condition: service_healthy
+        condition: service_started
 
 volumes:
   postgres_data:
