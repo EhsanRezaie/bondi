@@ -174,6 +174,9 @@ class RewardService:
         """
         today = date.today()
 
+        # Ensure daily limit row exists before atomic update
+        await self.get_or_create_daily_limit(user.id, today)
+
         # Atomic: increment bonuses only if under the ad limit (prevents TOCTOU race)
         stmt = (
             update(DailyLimit)

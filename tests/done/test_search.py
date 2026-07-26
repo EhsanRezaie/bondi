@@ -696,10 +696,10 @@ class TestSearch:
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         
-        # Create female user with "pop_music" interest
+        # Create female user with "pop music" interest
         female_payload_with_music = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE,
-            "interests": ["pop_music", "football"]
+            "interests": ["pop music", "football"]
         }
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, female_payload_with_music, mock_verification_code
@@ -714,10 +714,10 @@ class TestSearch:
             client, VALID_EMAIL_FEMALE2, female_payload_with_travel, mock_verification_code
         )
         
-        # Search by "pop_music" interest
+        # Search by "pop music" interest
         res = await client.get(
             SEARCH_URL,
-            params={"interests": "pop_music"},
+            params={"interests": "pop music"},
             headers=male_headers,
         )
         assert res.status_code == 200
@@ -737,28 +737,28 @@ class TestSearch:
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         
-        # Create female user with "pop_music" and "football" interests
+        # Create female user with "pop music" and "football" interests
         female_payload_with_both = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE,
-            "interests": ["pop_music", "football", "traveling"]
+            "interests": ["pop music", "football", "traveling"]
         }
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, female_payload_with_both, mock_verification_code
         )
         
-        # Create another female user with only "pop_music"
+        # Create another female user with only "pop music"
         female_payload_with_music_only = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE2,
-            "interests": ["pop_music", "painting"]
+            "interests": ["pop music", "painting"]
         }
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, female_payload_with_music_only, mock_verification_code
         )
         
-        # Search by "pop_music" AND "football" (must have both)
+        # Search by "pop music" AND "football" (must have both)
         res = await client.get(
             SEARCH_URL,
-            params={"interests": "pop_music,football"},
+            params={"interests": "pop music,football"},
             headers=male_headers,
         )
         assert res.status_code == 200

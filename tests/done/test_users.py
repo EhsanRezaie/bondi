@@ -958,7 +958,7 @@ class TestEdgeCases:
         assert data["settings"] is not None
 
     async def test_duplicate_email_cannot_register(self, client: AsyncClient, mock_verification_code):
-        """Should prevent registration with duplicate email."""
+        """Should return same response for duplicate email (anti-enumeration)."""
         await register_user_full_custom(
             client,
             mock_verification_code,
@@ -969,8 +969,9 @@ class TestEdgeCases:
             REGISTER_INIT_URL,
             json={"email": "duplicate@example.com"},
         )
-        assert res.status_code == 409
-        assert "already exists" in res.json()["detail"].lower()
+        # Anti-enumeration: always returns 200 with same message
+        assert res.status_code == 200
+        assert "verification code" in res.json()["message"].lower()
 
 
 class TestAccountReactivation:
