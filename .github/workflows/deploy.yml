@@ -1,12 +1,84 @@
-name: Deploy to Server
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [main]
 
 jobs:
-  deploy:
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
+
+    services:
+      db_test:
+        image: postgis/postgis:15-3.3
+        env:
+          POSTGRES_USER: dating_user
+          POSTGRES_PASSWORD: dating_pass
+          POSTGRES_DB: dating_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U dating_user -d dating_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis_test:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name minio-test \
+            -p 9090:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data --console-address ":9091"
+          sleep 5
+          docker run --rm \
+            --link minio-test \
+            minio/mc sh -c "
+              mc alias set local http://minio-test:9000 minioadmin minioadmin &&
+              mc mb --ignore-existing local/photos-public-test &&
+              mc mb --ignore-existing local/photos-private-test &&
+              mc anonymous set download local/photos-public-test
+            "
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/done/ -v --tb=short
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          docker rm -f minio-test 2>/dev/null || true
+
+  deploy:
+    name: Deploy to Server
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: success()
+
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -14,9 +86,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
           script: |
-            cd /opt/dating-app
-            git pull
-            docker compose build
-            docker compose up -d
-            echo "Deploy complete"
+            cd /opt/demo-bondi
+            bash scripts/deploy.sh
