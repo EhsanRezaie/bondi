@@ -232,15 +232,25 @@ class TestVideoSubmission:
 
     @pytest.mark.asyncio
     async def test_verify_challenge_type_mismatch(self, client, auth_headers, test_user, patch_redis):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
+        challenge_id = str(uuid.uuid4())
+        challenge_data = json.dumps({
+            "challenge_id": challenge_id,
+            "challenge_type": "blink",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "pending",
+        })
+        await patch_redis.set(
+            f"verify_challenge:{test_user.id}",
+            challenge_data,
+            ex=300,
+        )
 
         resp = await client.post(
             "/api/v1/users/me/verify",
             headers=auth_headers,
             files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
             params={
-                "challenge_id": challenge["challenge_id"],
+                "challenge_id": challenge_id,
                 "challenge_type": "turn_left",
             },
         )
