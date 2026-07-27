@@ -3,8 +3,8 @@ set -e
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DEPLOY_DIR="/opt/demo-bondi"
-HEALTH_URL="http://localhost/health"
-HEALTH_RETRIES=6
+HEALTH_URL="http://localhost/health/ready"
+HEALTH_RETRIES=8
 HEALTH_INTERVAL=5
 ROLLBACK_IMAGE="dating-app:rollback"
 COMPOSE_FILE="docker-compose.yml"

@@ -1316,10 +1316,12 @@ class ZarinpalService:
 - [ ] Test with `--workers 4`: verify messages, typing, and presence work across workers
 
 ### Session C — Nginx + SSL + Docker Production Config
-- [ ] Write `nginx/nginx.conf` with WebSocket proxy headers (Section 6)
-- [ ] Get SSL cert via Let's Encrypt (Section 6)
-- [ ] Add health checks to all services (Section 8)
-- [ ] Set `--workers 4` in production compose command (Section 8)
+- [x] Add health checks to all services (Section 8) ✅ Done
+- [x] Dynamic worker count via `nproc` in `entrypoint.sh` ✅ Done
+- [x] Add `/health/ready` readiness endpoint (DB + Redis) ✅ Done
+- [x] Add Docker `healthcheck` to `app` service — Python urllib, 30s interval, `start_period: 40s` ✅ Done
+- [ ] Set `--workers N` in production compose command (Section 8) — now dynamic via `nproc` in entrypoint.sh ✅ Done
+- [ ] Write `nginx/nginx.conf` with WebSocket proxy headers (Section 6) ✅ Already done
 
 ### Session D — Observability
 - [ ] Replace logging with `structlog` JSON output (Section 7)

@@ -1976,6 +1976,49 @@ Full WebSocket architecture upgrade: replaced local dict storage with Redis Pub/
 
 ---
 
+### ✅ Session 51 Complete — Docker Health Checks + Multi-Worker
+
+Production-ready Docker configuration: added health check endpoint, dynamic worker count, and Docker health check configuration.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `app/main.py` | Added `/health/ready` endpoint — checks DB + Redis connectivity (readiness probe) |
+| `entrypoint.sh` | Dynamic worker count from `nproc` — formula `(cores × 2) + 1`, capped at 8 |
+| `docker-compose.yml` | Added `healthcheck` to `app` service (Python urllib, 30s interval, `start_period: 40s`) |
+| `scripts/deploy.sh` | Health URL changed to `/health/ready`, retries increased to 8 |
+
+**Key design decisions:**
+
+| Decision | Rationale |
+|----------|-----------|
+| Dynamic workers via `nproc` | No hardcoded worker count — adapts to whatever CPU the container has |
+| Worker formula `(cores × 2) + 1` | Standard uvicorn recommendation |
+| Worker cap at 8 | Prevents excessive memory usage on large machines |
+| Health check via `urllib` | No extra packages (curl) needed in Docker image |
+| `/health/ready` checks DB + Redis | Docker container marked unhealthy if dependencies are down |
+| `start_period: 40s` | Gives entrypoint.sh time to run migrations + seed before first check |
+| No resource limits | Docker Compose `deploy.resources` ignored in non-Swarm mode; OS manages memory/CPU |
+
+**Health check flow:**
+
+```
+Container starts → entrypoint.sh runs migrations + seeds → uvicorn starts with N workers
+→ Docker waits 40s (start_period) → GET /health/ready → DB ✓ + Redis ✓ → healthy
+→ Subsequent checks every 30s, 3 retries before unhealthy → Docker restarts
+```
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/main.py` | Added `/health/ready` endpoint + imports (`Depends`, `AsyncSession`, `select`, `redis_client`) |
+| `entrypoint.sh` | Dynamic workers from `nproc`, formula `(cores × 2) + 1`, cap at 8 |
+| `docker-compose.yml` | Added `healthcheck` to `app` service |
+| `scripts/deploy.sh` | Health URL → `/health/ready`, retries → 8 |
+
+---
+
 ## Server Setup TODO
 
 - [ ] Purchase VPS (Hetzner CX22 or DigitalOcean droplet — 2 vCPU, 4GB RAM minimum)

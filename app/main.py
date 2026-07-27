@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +9,12 @@ import os
 
 from app.core.config import settings
 from app.core.limiter import limiter
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session
+
+from app.core.redis import redis_client
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.photos import router as photos_router  
@@ -126,3 +132,10 @@ app.include_router(chat_websocket_router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready(session: AsyncSession = Depends(get_session)):
+    await session.execute(select(1))
+    await redis_client.ping()
+    return {"status": "ready", "db": "ok", "redis": "ok"}
