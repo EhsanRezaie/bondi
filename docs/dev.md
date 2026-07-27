@@ -1101,6 +1101,9 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 47 | **Race condition audit — photos FOR UPDATE, double-commit fix, Redis pipeline incr+expire** | ✅ |
 | 48 | **Search API parity — search now returns same fields as discover** | ✅ |
 | 49 | **Swipe + message responses return live likes/chats remaining counts** | ✅ |
+| 50 | **WebSocket presence + typing indicators + Redis Pub/Sub** | ✅ |
+| 51 | **Docker health checks + dynamic multi-worker** | ✅ |
+| 52 | **Search `sort_by=last_seen` + Redis real-time `is_online` in search/discover** | ✅ |
 
 ---
 
@@ -1163,7 +1166,7 @@ CREATE INDEX idx_messages_match ON messages(match_id, created_at DESC);
 
 | Session | Test Files | Tests | Status |
 |---------|------------|-------|--------|
-| All | 33 test files in `tests/done/` | **584** | **✅ All passing** |
+| All | 33 test files in `tests/done/` | **627** | **✅ All passing** |
 | 25 | test_auth, test_users, test_photos, test_prompts, test_settings, test_encryption | 101 | ✅ |
 | 25 | test_swipes, test_matches, test_blocks, test_discover, test_search | 110 | ✅ |
 | 25 | test_rewards, test_referrals, test_subscriptions, test_daily_limits | 79 | ✅ |
@@ -1975,6 +1978,37 @@ Full WebSocket architecture upgrade: replaced local dict storage with Redis Pub/
 | `tests/done/test_websocket.py` | 15 tests passing (5 updated + 10 new) |
 
 ---
+
+### ✅ Session 52 Complete — Search/Discover: Last Seen Sort + Redis Presence
+
+Added real-time online presence to search and discover, plus `sort_by=last_seen` for search.
+
+| Feature | Status |
+|---------|--------|
+| `sort_by=last_seen` on `GET /search` — `ORDER BY users.last_seen_at DESC NULLS LAST` | ✅ |
+| `last_seen_at` updated on **login** (`auth.py`) | ✅ |
+| `last_seen_at` updated on **WebSocket connect + disconnect** (`matches.py`) using standalone `AsyncSessionLocal` | ✅ |
+| Search `is_online` uses Redis `online:{user_id}` (60s TTL, set by WS heartbeat) | ✅ |
+| Discover `is_online` uses same Redis presence | ✅ |
+| Privacy: `hide_online_status` → `is_online=false` (never reveals real presence) | ✅ |
+| Privacy: `hide_last_seen` → `last_seen_at=null` | ✅ |
+| Sort ignores privacy — uses actual `last_seen_at` DB value | ✅ |
+| Search schema: `sort_by` pattern now includes `last_seen` | ✅ |
+| Tests: `test_sort_by_last_seen`, `test_is_online_from_redis`, `test_is_offline_when_no_redis_key` | ✅ (3 new) |
+| All 68 search + discover tests passing | ✅ |
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/api/v1/endpoints/auth.py` | `user.last_seen_at = datetime.now(timezone.utc)` on login |
+| `app/api/v1/websocket/matches.py` | Connect/disconnect update `last_seen_at` via `AsyncSessionLocal` |
+| `app/api/v1/endpoints/search.py` | `last_seen` sort branch; Redis pipeline `EXISTS` for `online:{uid}`; privacy-aware response builder; module-level `import app.core.redis as redis_module` for test fixture swap |
+| `app/api/v1/endpoints/discover.py` | Same Redis presence + privacy logic; module-level redis import |
+| `app/schemas/search.py` | `sort_by` regex: `^(recent\|distance\|age\|name\|last_seen)$` |
+| `tests/done/test_search.py` | Added `TestSearchOnlineSort` class (3 tests) |
+
+**Files NOT Modified:**
+- `app/schemas/discover.py` — already had `last_seen_at` + `is_online` in `ProfileResponse`
 
 ### ✅ Session 51 Complete — Docker Health Checks + Multi-Worker
 
