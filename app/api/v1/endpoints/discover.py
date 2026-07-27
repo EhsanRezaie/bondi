@@ -16,7 +16,7 @@ from app.models.user_interest import UserInterest
 from app.models.user_prompt import UserPrompt
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.core.redis import redis_client
+import app.core.redis as redis_module
 from app.services.photo_service import PhotoService
 from app.core.cache import (
     pop_discover_stack, set_discover_stack, get_swiped_ids,
@@ -75,7 +75,7 @@ async def discover(
     min_birth_date = today - timedelta(days=(age_max + 1) * 365)
 
     # --- Swipe deduplication via Redis set (fast path) ---
-    swiped_ids = await get_swiped_ids(redis_client, current_user.id)
+    swiped_ids = await get_swiped_ids(redis_module.redis_client, current_user.id)
 
     blocked_user_ids = select(Block.blocked_id).where(
         Block.blocker_id == current_user.id
@@ -147,6 +147,17 @@ async def discover(
     rows = result.all()
 
     response_users = []
+
+    # Batch query Redis for real-time online presence
+    user_ids = [row[0].id for row in rows if row[0].profile]
+    online_map = {}
+    if user_ids:
+        pipe = redis_module.redis_client.pipeline()
+        for uid in user_ids:
+            pipe.exists(f"online:{uid}")
+        results = await pipe.execute()
+        online_map = {str(uid): bool(r) for uid, r in zip(user_ids, results)}
+
     for row in rows:
         user = row[0]
         distance = row[1]
@@ -177,17 +188,19 @@ async def discover(
             for up in user.prompts if up.prompt
         ] if user.prompts else []
 
-        # Privacy-respecting last_seen
+        # Privacy-respecting last_seen and online status
         last_seen_at = None
-        is_online = None
+        hide_last_seen = settings.hide_last_seen if settings else False
+        hide_online_status = settings.hide_online_status if settings else False
+
+        is_online = False if hide_online_status else online_map.get(str(user.id), False)
+
         if user.last_seen_at:
-            hide_last_seen = settings.hide_last_seen if settings else False
-            hide_online_status = settings.hide_online_status if settings else False
             if not hide_last_seen:
                 last_seen_at = user.last_seen_at.isoformat()
-            if not hide_online_status:
-                now = datetime.now(timezone.utc)
-                is_online = (now - user.last_seen_at).total_seconds() < 300
+        elif is_online:
+            if not hide_last_seen:
+                last_seen_at = datetime.now(timezone.utc).isoformat()
 
         response_users.append(ProfileResponse(
             id=user.id,

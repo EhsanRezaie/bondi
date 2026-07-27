@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, Float
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 from app.db.session import get_session
 from app.models.user import User
@@ -15,6 +15,7 @@ from app.models.photo import Photo
 from app.models.block import Block
 from app.models.swipe import Swipe
 from app.core.deps import get_current_user
+import app.core.redis as redis_module
 from app.services.photo_service import PhotoService
 from app.core.limiter import limiter
 from app.schemas.search import SearchProfileResponse, SearchResponse
@@ -64,7 +65,7 @@ async def search_users(
     political_orientation: str = Query(None, max_length=50),
     languages: str = Query(None, max_length=200),
     interests: str = Query(None, max_length=500),
-    sort_by: str = Query("recent", pattern="^(recent|distance|age|name)$"),
+    sort_by: str = Query("recent", pattern="^(recent|distance|age|name|last_seen)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
@@ -208,6 +209,9 @@ async def search_users(
     elif sort_by == "name":
         col = UserProfile.name
         query = query.order_by(col.desc() if sort_order == "desc" else col.asc())
+    elif sort_by == "last_seen":
+        col = User.last_seen_at
+        query = query.order_by(col.desc().nullslast())
     else:
         col = User.created_at
         query = query.order_by(col.desc() if sort_order == "desc" else col.asc())
@@ -230,6 +234,15 @@ async def search_users(
             )
         )
         swipe_map = {row.to_user: row.direction for row in swipe_rows}
+
+    # Batch query Redis for real-time online presence
+    online_map = {}
+    if result_user_ids:
+        pipe = redis_module.redis_client.pipeline()
+        for uid in result_user_ids:
+            pipe.exists(f"online:{uid}")
+        results = await pipe.execute()
+        online_map = {str(uid): bool(r) for uid, r in zip(result_user_ids, results)}
 
     response_users = []
     for row in rows:
@@ -264,15 +277,17 @@ async def search_users(
 
         # Privacy-respecting last_seen and online status
         last_seen_at = None
-        is_online = None
+        hide_last_seen = settings.hide_last_seen if settings else False
+        hide_online_status = settings.hide_online_status if settings else False
+
+        is_online = False if hide_online_status else online_map.get(str(user.id), False)
+
         if user.last_seen_at:
-            hide_last_seen = settings.hide_last_seen if settings else False
-            hide_online_status = settings.hide_online_status if settings else False
             if not hide_last_seen:
                 last_seen_at = user.last_seen_at.isoformat()
-            if not hide_online_status:
-                now = datetime.now(timezone.utc)
-                is_online = (now - user.last_seen_at).total_seconds() < 300
+        elif is_online:
+            if not hide_last_seen:
+                last_seen_at = datetime.now(timezone.utc).isoformat()
 
         response_users.append(SearchProfileResponse(
             id=user.id,

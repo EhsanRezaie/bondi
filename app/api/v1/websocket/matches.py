@@ -1,6 +1,10 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+from sqlalchemy import update
+from app.db.session import AsyncSessionLocal
+from app.models.user import User
 from app.services.websocket_manager import websocket_manager, HEARTBEAT_INTERVAL
 from app.core.deps import validate_ws_token
 from app.core.redis import get_redis
@@ -24,6 +28,11 @@ async def matches_websocket(
         return
 
     await websocket_manager.connect(websocket, user_id, redis)
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(User).where(User.id == user_id).values(last_seen_at=datetime.now(timezone.utc))
+        )
+        await session.commit()
     try:
         while True:
             try:
@@ -42,3 +51,8 @@ async def matches_websocket(
         pass
     finally:
         await websocket_manager.disconnect(websocket, user_id, redis)
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(User).where(User.id == user_id).values(last_seen_at=datetime.now(timezone.utc))
+            )
+            await session.commit()

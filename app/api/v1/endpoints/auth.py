@@ -385,6 +385,8 @@ async def login(
             detail="Incorrect email or password.",
         )
 
+    user.last_seen_at = datetime.now(timezone.utc)
+    await session.commit()
     return await build_login_response(user, session)
 
 

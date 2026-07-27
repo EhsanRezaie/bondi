@@ -104,7 +104,7 @@ class SearchFilters(BaseModel):
     political_orientation: Optional[str] = Field(None, max_length=50)
     languages: Optional[str] = Field(None, max_length=200, description="Comma-separated language codes")
     interests: Optional[str] = Field(None, max_length=500, description="Comma-separated interest names")
-    sort_by: str = Field("recent", pattern="^(recent|distance|age|name)$")
+    sort_by: str = Field("recent", pattern="^(recent|distance|age|name|last_seen)$")
     sort_order: str = Field("desc", pattern="^(asc|desc)$")
     limit: int = Field(20, ge=1, le=100)
     offset: int = Field(0, ge=0)

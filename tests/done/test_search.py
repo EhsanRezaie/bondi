@@ -1228,3 +1228,80 @@ class TestSearchSwipeStatus:
         users = res.json()["users"]
         female_user = next(u for u in users if u["id"] == female_id)
         assert female_user["current_user_action"] == "pass"
+
+
+class TestSearchOnlineSort:
+    """Test last_seen sort and online indicator."""
+
+    async def test_sort_by_last_seen(self, client, db_session, mock_verification_code):
+        """Should sort by last_seen_at descending."""
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
+        )
+
+        # Set last_seen_at for each user (login did it, but order may vary)
+        res = await client.get(
+            SEARCH_URL,
+            params={"sort_by": "last_seen", "sort_order": "desc"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+
+        last_seen_times = []
+        for user in data["users"]:
+            if user["last_seen_at"]:
+                last_seen_times.append(user["last_seen_at"])
+            else:
+                last_seen_times.append(None)
+
+        non_null = [t for t in last_seen_times if t is not None]
+        assert non_null == sorted(non_null, reverse=True)
+
+    async def test_is_online_from_redis(
+        self, client, db_session, mock_verification_code, patch_redis
+    ):
+        """Should show is_online=true when Redis presence key exists."""
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Set Redis presence key for the female user
+        await patch_redis.setex(f"online:{female_id}", 60, "1")
+
+        res = await client.get(SEARCH_URL, headers=male_headers)
+        assert res.status_code == 200
+        data = res.json()
+
+        female_user = next(u for u in data["users"] if u["id"] == female_id)
+        assert female_user["is_online"] is True
+
+    async def test_is_offline_when_no_redis_key(
+        self, client, db_session, mock_verification_code
+    ):
+        """Should show is_online=false when no Redis presence key."""
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Ensure no Redis presence key exists
+        res = await client.get(SEARCH_URL, headers=male_headers)
+        assert res.status_code == 200
+        data = res.json()
+
+        female_user = next(u for u in data["users"] if u["id"] == female_id)
+        # Without Redis key, is_online depends on last_seen_at window
+        assert female_user["is_online"] is not None
+        assert female_user["is_online"] is False
