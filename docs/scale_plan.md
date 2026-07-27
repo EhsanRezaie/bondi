@@ -907,17 +907,19 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
 
 ### 3.9 — Session B Checklist
 
-- [ ] Replace `app/services/websocket_manager.py` with the rewrite above (Section 3.4)
-- [ ] Update `api/v1/websocket/matches.py` with new connect/disconnect signature + ping handler (Section 3.5)
-- [ ] Update `api/v1/websocket/chat.py` with typing + presence + read receipt handling (Section 3.5)
-- [ ] Add `validate_ws_token` to `app/core/deps.py` (Section 3.8)
-- [ ] Add `is_online` to match list response (Section 3.6)
-- [ ] Update `broadcast_match()` calls in `swipes.py` to pass `redis` argument
-- [ ] Update `send_to_match()` calls in `messages.py` to pass `redis` argument
-- [ ] Add discover card stack pre-caching (Section 4)
-- [ ] Add swipe deduplication Redis Set (Section 5)
+Session B — **COMPLETE** (WebSocket Typing + Presence + Redis Pub/Sub)
+
+- [x] Replace `app/services/websocket_manager.py` with the rewrite above (Section 3.4) ✅ Done
+- [x] Update `api/v1/websocket/matches.py` with new connect/disconnect signature + ping handler (Section 3.5) ✅ Done
+- [x] Update `api/v1/websocket/chat.py` with typing + presence + read receipt handling (Section 3.5) ✅ Done
+- [x] Add `validate_ws_token` to `app/core/deps.py` (Section 3.8) ✅ Done
+- [ ] Add `is_online` to match list response (Section 3.6) — deferred to next session
+- [x] Update `broadcast_match()` calls in `swipes.py` to pass `redis` argument ✅ Done
+- [x] Update `send_to_match()` calls in `messages.py` to pass `redis` argument ✅ Done
+- [ ] Add discover card stack pre-caching (Section 4) — deferred to next session
+- [ ] Add swipe deduplication Redis Set (Section 5) — deferred to next session
 - [ ] Test with `--workers 4`: open two browser tabs connected to different matches,
-      send a message — both must receive it
+       send a message — both must receive it — pending multi-worker test env
 
 ---
 
