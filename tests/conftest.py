@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import uuid
 import json
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 load_dotenv(".env.test", override=True)
@@ -30,8 +31,43 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 
-TEST_DATABASE_URL = os.environ["DATABASE_URL"]
+BASE_DATABASE_URL = os.environ["DATABASE_URL"]
 TEST_REDIS_URL = os.environ["REDIS_URL"]
+
+# ---------------------------------------------------------------------------
+# Per-xdist-worker DB name → each worker gets isolated DB, no cross-worker
+# deadlocks on shared teardown DELETEs.
+# ---------------------------------------------------------------------------
+
+WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "master")
+
+
+def _split_url(url: str):
+    parts = urlsplit(url)
+    base_db_name = parts.path.lstrip("/")
+    return parts, base_db_name
+
+
+def _worker_db_name() -> str:
+    _, base_db_name = _split_url(BASE_DATABASE_URL)
+    if WORKER_ID == "master":
+        return base_db_name
+    return f"{base_db_name}_{WORKER_ID}"
+
+
+def _worker_db_url() -> str:
+    parts, _ = _split_url(BASE_DATABASE_URL)
+    new_path = f"/{_worker_db_name()}"
+    return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+
+
+def _admin_db_url() -> str:
+    """URL pointing at 'postgres' maintenance DB, for CREATE/DROP DATABASE."""
+    parts, _ = _split_url(BASE_DATABASE_URL)
+    return urlunsplit((parts.scheme, parts.netloc, "/postgres", parts.query, parts.fragment))
+
+
+TEST_DATABASE_URL = _worker_db_url()
 
 
 def make_engine():
@@ -39,7 +75,49 @@ def make_engine():
 
 
 def make_redis():
-    return aioredis.from_url(TEST_REDIS_URL, encoding="utf-8", decode_responses=True)
+    # Separate Redis DB index per worker too, avoid flushdb races across workers.
+    worker_num = 0 if WORKER_ID == "master" else int(WORKER_ID.replace("gw", "") or 0)
+    url = TEST_REDIS_URL
+    if "/0" in url or url.rstrip("/").split("/")[-1].isdigit():
+        base = url.rsplit("/", 1)[0]
+        url = f"{base}/{worker_num}"
+    return aioredis.from_url(url, encoding="utf-8", decode_responses=True)
+
+
+async def _create_worker_database():
+    if WORKER_ID == "master":
+        return
+    admin_engine = create_async_engine(
+        _admin_db_url(), poolclass=NullPool, isolation_level="AUTOCOMMIT"
+    )
+    async with admin_engine.connect() as conn:
+        db_name = _worker_db_name()
+        exists = await conn.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"),
+            {"name": db_name},
+        )
+        if not exists.scalar():
+            await conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+    await admin_engine.dispose()
+
+
+async def _drop_worker_database():
+    if WORKER_ID == "master":
+        return
+    admin_engine = create_async_engine(
+        _admin_db_url(), poolclass=NullPool, isolation_level="AUTOCOMMIT"
+    )
+    async with admin_engine.connect() as conn:
+        db_name = _worker_db_name()
+        await conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = :name AND pid <> pg_backend_pid()"
+            ),
+            {"name": db_name},
+        )
+        await conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}"'))
+    await admin_engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -49,17 +127,17 @@ def make_redis():
 async def seed_interests(conn):
     """Seed interests from JSON file into the database."""
     json_path = Path(__file__).parent.parent / "app" / "db" / "seed_data" / "interests.json"
-    
+
     if not json_path.exists():
         print(f"⚠️ Interests file not found: {json_path}")
         return
-    
+
     with open(json_path, "r", encoding="utf-8") as f:
         interests_data = json.load(f)
-    
+
     # First, delete all existing interests (clean slate)
     await conn.execute(text("DELETE FROM interests"))
-    
+
     for item in interests_data:
         await conn.execute(
             text("""
@@ -72,7 +150,7 @@ async def seed_interests(conn):
                 "icon": item.get("icon"),
             }
         )
-    
+
     print(f"✅ Seeded {len(interests_data)} interests")
 
 
@@ -82,17 +160,19 @@ async def seed_interests(conn):
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_database():
+    await _create_worker_database()
+
     engine = make_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-        
+
         # ✅ Seed interests after tables are created
         await seed_interests(conn)
-        
+
         # Create admin user for tests
         admin_id = uuid.uuid4()
-        
+
         # Insert into users table
         await conn.execute(
             text("""
@@ -109,7 +189,7 @@ async def setup_database():
             """),
             {"id": admin_id, "password": hash_password("admin123")}
         )
-        
+
         # Insert into user_profiles table
         await conn.execute(
             text("""
@@ -127,7 +207,7 @@ async def setup_database():
             """),
             {"id": uuid.uuid4(), "user_id": admin_id}
         )
-        
+
         # Insert into user_settings table
         await conn.execute(
             text("""
@@ -143,13 +223,14 @@ async def setup_database():
             """),
             {"id": uuid.uuid4(), "user_id": admin_id}
         )
-        
+
     await engine.dispose()
     yield
     engine = make_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+    await _drop_worker_database()
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +246,10 @@ async def reset_state():
         for table in reversed(Base.metadata.sorted_tables):
             if table.name not in ['users', 'user_profiles', 'user_settings']:
                 await conn.execute(table.delete())
-        
+
         # ✅ Re-seed interests after deletion
         await seed_interests(conn)
-        
+
         # Delete non-admin users and their related data
         await conn.execute(text("DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE email != 'admin@test.com')"))
         await conn.execute(text("DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE email != 'admin@test.com')"))
@@ -225,9 +306,12 @@ def disable_rate_limiting():
 
 @pytest_asyncio.fixture(autouse=True)
 def mock_websocket_manager():
-    with patch("app.api.v1.endpoints.swipes.websocket_manager") as mock:
+    with (patch("app.api.v1.endpoints.swipes.websocket_manager") as mock,
+          patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs):
         mock.broadcast_match = AsyncMock()
         mock.send_to_match = AsyncMock()
+        mock_msgs.broadcast_match = AsyncMock()
+        mock_msgs.send_to_match = AsyncMock()
         yield mock
 
 
