@@ -1930,6 +1930,52 @@ Swipe and message endpoints now return updated daily limit counts so the client 
 
 ---
 
+### ✅ Session 50 Complete — WebSocket Typing Indicators + Presence + Redis Pub/Sub
+
+Full WebSocket architecture upgrade: replaced local dict storage with Redis Pub/Sub for multi-worker support, added typing indicators with 5s TTL, added presence tracking with 60s TTL heartbeat, and wired up typing/typing_stopped events in the chat WebSocket handler.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `app/core/redis.py` | Added `get_redis` async FastAPI dependency (yields `redis_client`) |
+| `app/core/deps.py` | Added `validate_ws_token(token, redis)` helper — JWT decode for WebSocket connections without DB query |
+| `app/services/websocket_manager.py` | Full rewrite — Redis Pub/Sub + presence + typing + heartbeat; all methods now take `redis: Redis` param |
+| `app/api/v1/websocket/matches.py` | Updated: `validate_ws_token`, `redis=Depends(get_redis)`, `heartbeat` on ping, 40s receive timeout |
+| `app/api/v1/websocket/chat.py` | Updated: `validate_ws_token`, `redis=Depends(get_redis)`, `db=Depends(get_db)`, IDOR protection, `typing`/`typing_stopped` handlers, `user_online`/`user_offline` events, `read` receipt handler, `clear_typing` on disconnect |
+| `app/api/v1/endpoints/swipes.py` | `_background_match_notification` passes `redis_client` to `broadcast_match()` |
+| `app/api/v1/endpoints/messages.py` | `_background_websocket_send` passes `redis_client` to `send_to_match()`; updated all 3 `background_tasks.add_task` calls |
+| `tests/conftest.py` | Updated `mock_websocket_manager` fixture to also mock `send_to_match` |
+| `tests/done/test_websocket.py` | Updated 5 existing unit tests for new signatures; added 10 new unit tests for typing, presence, heartbeat |
+
+**Redis keys introduced:**
+| Key | Type | TTL | Purpose |
+|-----|------|-----|---------|
+| `ws:user:{user_id}` | Pub/Sub channel | — | Per-user message delivery |
+| `ws:chat:{match_id}` | Pub/Sub channel | — | Per-match message delivery |
+| `online:{user_id}` | String | 60s | Presence — refreshed by heartbeat |
+| `typing:{match_id}:{user_id}` | String | 5s | Typing indicator — auto-expires |
+
+**Messages passed over WebSocket:**
+- `typing` / `typing_stopped` — other user started/stopped typing
+- `user_online` / `user_offline` — other user opened/closed chat
+- `messages_read` — read receipts
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/core/redis.py` | Added `get_redis` dependency |
+| `app/core/deps.py` | Added `validate_ws_token` |
+| `app/services/websocket_manager.py` | Full rewrite |
+| `app/api/v1/websocket/matches.py` | Updated for Redis Pub/Sub + heartbeat |
+| `app/api/v1/websocket/chat.py` | Updated for typing/presence/IDOR |
+| `app/api/v1/endpoints/swipes.py` | Added `redis_client` to `broadcast_match` call |
+| `app/api/v1/endpoints/messages.py` | Added `redis_client` to `send_to_match` call |
+| `tests/conftest.py` | Updated mock fixture |
+| `tests/done/test_websocket.py` | 15 tests passing (5 updated + 10 new) |
+
+---
+
 ## Server Setup TODO
 
 - [ ] Purchase VPS (Hetzner CX22 or DigitalOcean droplet — 2 vCPU, 4GB RAM minimum)
@@ -1942,6 +1988,3 @@ Swipe and message endpoints now return updated daily limit counts so the client 
   - `VPS_HOST` — server IP
   - `VPS_USERNAME` — SSH user (e.g. `root`)
   - `VPS_SSH_KEY` — private SSH key
-- [ ] Test auto-deploy: push to main, verify server updates
-- [ ] (Optional) Point domain to server IP
-- [ ] (Optional) Set up SSL with Let's Encrypt

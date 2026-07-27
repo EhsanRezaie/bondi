@@ -30,6 +30,7 @@ from app.services.notification_service import NotificationService
 from app.services.reward_service import RewardService
 from app.services.websocket_manager import websocket_manager
 import app.core.redis as redis
+from app.core.redis import redis_client
 
 from app.core.logging import get_logger
 
@@ -71,13 +72,14 @@ async def get_match_or_chat(session: AsyncSession, identifier: UUID, user_id: UU
     return None, None, None
 
 
-async def _background_websocket_send(match_id_str: str, sender_id_str: str, message_data: dict, other_user_id_str: str):
+async def _background_websocket_send(match_id_str: str, sender_id_str: str, message_data: dict, other_user_id_str: str, redis_client):
     """Send WebSocket notification after response is sent."""
     await websocket_manager.send_to_match(
         match_id_str,
         sender_id_str,
         message_data,
-        other_user_id=other_user_id_str,
+        other_user_id_str,
+        redis_client,
     )
 
 
@@ -321,6 +323,7 @@ async def send_text_message(
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
+        redis_client=redis_client,
     )
 
     return SendMessageResponse(
@@ -403,6 +406,7 @@ async def send_photo_message(
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
+        redis_client=redis_client,
     )
 
     return SendMessageResponse(
@@ -484,6 +488,7 @@ async def send_voice_message(
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
+        redis_client=redis_client,
     )
 
     return SendMessageResponse(

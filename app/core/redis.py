@@ -213,6 +213,11 @@ async def delete_verification_code(email: str) -> bool:
         logger.error("Failed to delete verification code", error=str(e))
         return False
 
+async def get_redis():
+    """FastAPI dependency that yields the Redis client."""
+    yield redis_client
+
+
 async def health_check() -> bool:
     """Check if Redis is reachable."""
     try:

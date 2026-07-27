@@ -1,8 +1,9 @@
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_session
-from app.core.deps import get_current_user_ws
-from app.services.websocket_manager import websocket_manager
+import asyncio
+import json
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+from app.services.websocket_manager import websocket_manager, HEARTBEAT_INTERVAL
+from app.core.deps import validate_ws_token
+from app.core.redis import get_redis
 from app.core.logging import get_logger
 
 logger = get_logger("websocket")
@@ -11,40 +12,33 @@ router = APIRouter()
 
 
 @router.websocket("/ws/matches")
-async def websocket_matches(
+async def matches_websocket(
     websocket: WebSocket,
-    token: str,
+    token: str = Query(...),
+    redis=Depends(get_redis),
 ):
-    """
-    WebSocket endpoint for real-time match notifications.
-    Connect with: ws://localhost:8000/ws/matches?token={access_token}
-    """
-    
-    # Authenticate user
-    user_id = await get_current_user_ws(token)
-    if not user_id:
-        await websocket.close(code=4001, reason="Invalid token")
-        return
-    
-    # Accept connection and add to manager
-    await websocket_manager.connect(websocket, str(user_id))
-    
     try:
-        # Keep connection alive and listen for messages
+        user_id = await validate_ws_token(token, redis)
+    except Exception:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
+    await websocket_manager.connect(websocket, user_id, redis)
+    try:
         while True:
-            # Wait for any message from client (ping/pong)
-            data = await websocket.receive_text()
-            
-            # Handle ping/pong
-            if data == "ping":
-                await websocket.send_text("pong")
-            else:
-                # Log other messages but don't process
-                logger.debug("Received message", user_id=user_id, data=data)
-                
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=40.0)
+                data = json.loads(raw)
+
+                if data.get("type") == "ping":
+                    await websocket_manager.heartbeat(user_id, redis)
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+
+            except asyncio.TimeoutError:
+                break
+            except Exception:
+                break
     except WebSocketDisconnect:
-        await websocket_manager.disconnect(websocket, str(user_id))
-        logger.info("WebSocket disconnected", user_id=user_id)
-    except Exception as e:
-        logger.error("WebSocket error", user_id=user_id, error=str(e))
-        await websocket_manager.disconnect(websocket, str(user_id))
+        pass
+    finally:
+        await websocket_manager.disconnect(websocket, user_id, redis)

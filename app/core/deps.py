@@ -5,12 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from jose import JWTError, jwt
 from uuid import UUID
+from redis.asyncio import Redis
 
 from sqlalchemy.orm import selectinload
 from app.db.session import get_session
 from app.models.user import User
 from app.core.config import settings
-from app.core.security import decode_token, ACCESS_TOKEN_TYPE
+from app.core.security import decode_token, decode_access_token, ACCESS_TOKEN_TYPE
 from app.core.logging import get_logger
 
 logger = get_logger("core.deps")
@@ -148,6 +149,22 @@ async def get_current_user_ws(token: str) -> str | None:
     """Get current user ID from WebSocket token"""
     from app.core.security import decode_access_token
     return decode_access_token(token)
+
+
+async def validate_ws_token(token: str, redis: Redis) -> str:
+    """
+    Validate JWT for WebSocket connections.
+    Returns user_id string or raises Exception (caller closes with 4001).
+    Does NOT use get_current_user — WebSocket doesn't need full profile load.
+    """
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            raise ValueError("No sub in token")
+        return user_id
+    except Exception:
+        raise ValueError("Invalid token")
 
 
 async def get_admin_user(

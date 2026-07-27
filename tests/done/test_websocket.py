@@ -127,9 +127,9 @@ class TestWebSocketMatchPush:
 
         call_args = mock_websocket_manager.broadcast_match.call_args
         args, kwargs = call_args
-        # (user1_id, user2_id, match_id, user1_data, user2_data)
-        assert len(args) == 5
-        user1_id, user2_id, match_id, user1_data, user2_data = args
+        # (user1_id, user2_id, match_id, user1_data, user2_data, redis)
+        assert len(args) == 6
+        user1_id, user2_id, match_id, user1_data, user2_data = args[:5]
 
         # Verify user1_data shape
         for key in ("id", "name", "age", "main_photo_url"):
@@ -322,9 +322,9 @@ class TestWebSocketManagerUnit:
         self.manager.chat_connections = {}
 
     async def test_broadcast_match_envelope(self):
-        """broadcast_match should build correct new_match JSON envelope."""
-        mock_ws = MagicMock()
-        mock_ws.send_text = AsyncMock()
+        """broadcast_match should publish correct new_match JSON to Redis."""
+        mock_redis = AsyncMock()
+        mock_pubsub = AsyncMock()
 
         user1_id = "u1"
         user2_id = "u2"
@@ -332,17 +332,16 @@ class TestWebSocketManagerUnit:
         user1_data = {"id": "u1", "name": "Alice", "age": 25, "main_photo_url": None}
         user2_data = {"id": "u2", "name": "Bob", "age": 30, "main_photo_url": "http://photo.url"}
 
-        # Register mock connections
-        self.manager.active_connections[user1_id] = {mock_ws}
-        self.manager.active_connections[user2_id] = {mock_ws}
+        await self.manager.broadcast_match(
+            user1_id, user2_id, match_id, user1_data, user2_data, mock_redis,
+        )
 
-        await self.manager.broadcast_match(user1_id, user2_id, match_id, user1_data, user2_data)
+        assert mock_redis.publish.call_count == 2
 
-        assert mock_ws.send_text.call_count == 2
-
-        # First call -> user1 gets user2's data
-        call1 = mock_ws.send_text.call_args_list[0]
-        payload1 = json.loads(call1[0][0])
+        # First publish -> user1 gets user2's data
+        call1 = mock_redis.publish.call_args_list[0]
+        channel1, raw1 = call1[0]
+        payload1 = json.loads(raw1)
         assert payload1["type"] == "new_match"
         assert payload1["data"]["match_id"] == match_id
         assert payload1["data"]["user"]["id"] == "u2"
@@ -350,9 +349,10 @@ class TestWebSocketManagerUnit:
         assert payload1["data"]["user"]["age"] == 30
         assert payload1["data"]["user"]["main_photo_url"] == "http://photo.url"
 
-        # Second call -> user2 gets user1's data
-        call2 = mock_ws.send_text.call_args_list[1]
-        payload2 = json.loads(call2[0][0])
+        # Second publish -> user2 gets user1's data
+        call2 = mock_redis.publish.call_args_list[1]
+        channel2, raw2 = call2[0]
+        payload2 = json.loads(raw2)
         assert payload2["type"] == "new_match"
         assert payload2["data"]["match_id"] == match_id
         assert payload2["data"]["user"]["id"] == "u1"
@@ -361,16 +361,12 @@ class TestWebSocketManagerUnit:
         assert payload2["data"]["user"]["main_photo_url"] is None
 
     async def test_send_to_match_envelope(self):
-        """send_to_match should build correct new_message JSON envelope."""
-        mock_ws = MagicMock()
-        mock_ws.send_text = AsyncMock()
+        """send_to_match should publish correct new_message JSON to Redis."""
+        mock_redis = AsyncMock()
 
         match_id = "m1"
         sender_id = "sender1"
         other_user_id = "receiver1"
-
-        self.manager.chat_connections[f"chat:{match_id}:{sender_id}"] = {mock_ws}
-        self.manager.chat_connections[f"chat:{match_id}:{other_user_id}"] = {mock_ws}
 
         message_data = {
             "type": "new_message",
@@ -383,29 +379,34 @@ class TestWebSocketManagerUnit:
             }
         }
 
-        await self.manager.send_to_match(match_id, sender_id, message_data, other_user_id=other_user_id)
+        await self.manager.send_to_match(
+            match_id, sender_id, message_data, other_user_id, mock_redis,
+        )
 
-        assert mock_ws.send_text.call_count == 2
-        for call_args in mock_ws.send_text.call_args_list:
-            payload = json.loads(call_args[0][0])
+        assert mock_redis.publish.call_count == 2
+
+        for call_args in mock_redis.publish.call_args_list:
+            channel, raw = call_args[0]
+            payload = json.loads(raw)
             assert payload["type"] == "new_message"
             assert payload["data"]["id"] == "msg1"
             assert payload["data"]["message_type"] == "text"
             assert payload["data"]["content"] == "Hello"
 
     async def test_send_personal_message_envelope(self):
-        """send_personal_message sends correct JSON."""
-        mock_ws = MagicMock()
-        mock_ws.send_text = AsyncMock()
+        """send_personal_message publishes correct JSON to Redis."""
+        mock_redis = AsyncMock()
 
         user_id = "u1"
-        self.manager.active_connections[user_id] = {mock_ws}
-
         message = {"type": "test_event", "data": {"key": "value"}}
-        await self.manager.send_personal_message(user_id, message)
+        await self.manager.send_personal_message(user_id, message, mock_redis)
 
-        mock_ws.send_text.assert_called_once()
-        sent = json.loads(mock_ws.send_text.call_args[0][0])
+        mock_redis.publish.assert_called_once()
+        call = mock_redis.publish.call_args
+        channel = call[0][0]
+        raw = call[0][1]
+        assert channel == f"ws:user:{user_id}"
+        sent = json.loads(raw)
         assert sent["type"] == "test_event"
         assert sent["data"]["key"] == "value"
 
@@ -415,10 +416,81 @@ class TestWebSocketManagerUnit:
         user_id = "u1"
         self.manager.active_connections[user_id] = {mock_ws}
 
-        await self.manager.disconnect(mock_ws, user_id)
+        mock_redis = AsyncMock()
+        await self.manager.disconnect(mock_ws, user_id, mock_redis)
         assert user_id not in self.manager.active_connections
 
     async def test_send_personal_message_no_connection(self):
         """Should not raise when user has no active connection."""
-        await self.manager.send_personal_message("nonexistent", {"type": "test"})
-        # No error means success
+        mock_redis = AsyncMock()
+        await self.manager.send_personal_message("nonexistent", {"type": "test"}, mock_redis)
+
+    async def test_set_typing(self):
+        """set_typing publishes typing event and sets Redis key."""
+        mock_redis = AsyncMock()
+        match_id = "m1"
+        user_id = "u1"
+
+        await self.manager.set_typing(match_id, user_id, mock_redis)
+
+        assert mock_redis.setex.call_count == 1
+        assert mock_redis.publish.call_count == 1
+        channel, raw = mock_redis.publish.call_args[0]
+        payload = json.loads(raw)
+        assert payload["type"] == "typing"
+        assert payload["match_id"] == match_id
+        assert payload["user_id"] == user_id
+
+    async def test_clear_typing(self):
+        """clear_typing deletes Redis key and publishes typing_stopped."""
+        mock_redis = AsyncMock()
+        match_id = "m1"
+        user_id = "u1"
+
+        await self.manager.clear_typing(match_id, user_id, mock_redis)
+
+        assert mock_redis.delete.call_count == 1
+        assert mock_redis.publish.call_count == 1
+        channel, raw = mock_redis.publish.call_args[0]
+        payload = json.loads(raw)
+        assert payload["type"] == "typing_stopped"
+        assert payload["match_id"] == match_id
+        assert payload["user_id"] == user_id
+
+    async def test_is_typing(self):
+        """is_typing checks Redis key existence."""
+        mock_redis = AsyncMock()
+        mock_redis.exists.return_value = 1
+
+        result = await self.manager.is_typing("m1", "u1", mock_redis)
+        assert result is True
+        mock_redis.exists.assert_called_once_with("typing:m1:u1")
+
+    async def test_is_online(self):
+        """is_online checks Redis key existence."""
+        mock_redis = AsyncMock()
+        mock_redis.exists.return_value = 1
+
+        result = await self.manager.is_online("u1", mock_redis)
+        assert result is True
+        mock_redis.exists.assert_called_once_with("online:u1")
+
+    async def test_heartbeat(self):
+        """heartbeat refreshes online TTL."""
+        mock_redis = AsyncMock()
+        await self.manager.heartbeat("u1", mock_redis)
+        mock_redis.setex.assert_called_once_with("online:u1", 60, "1")
+
+    async def test_get_online_status_bulk(self):
+        """get_online_status_bulk returns correct map."""
+        mock_redis = MagicMock()
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[1, 0, 1])
+        mock_redis.pipeline.return_value = mock_pipe
+
+        result = await self.manager.get_online_status_bulk(
+            ["u1", "u2", "u3"], mock_redis,
+        )
+        assert result == {"u1": True, "u2": False, "u3": True}
+        mock_redis.pipeline.assert_called_once()
+        mock_pipe.execute.assert_called_once()

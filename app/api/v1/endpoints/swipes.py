@@ -81,6 +81,7 @@ async def _background_match_notification(
         str(match_id),
         user1_data,
         user2_data,
+        redis_client,
     )
 
 

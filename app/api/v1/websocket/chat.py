@@ -1,6 +1,13 @@
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Query
+import asyncio
+import json
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.services.websocket_manager import websocket_manager
-from app.core.security import decode_access_token
+from app.core.deps import validate_ws_token
+from app.core.redis import get_redis
+from app.db.session import get_db
+from app.models.match import Match
 from app.core.logging import get_logger
 
 logger = get_logger("websocket")
@@ -9,59 +16,89 @@ router = APIRouter()
 
 
 @router.websocket("/ws/chat/{match_id}")
-async def websocket_chat(
+async def chat_websocket(
     websocket: WebSocket,
     match_id: str,
     token: str = Query(...),
+    redis=Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    WebSocket endpoint for real-time chat.
-    Connect with: ws://localhost:8000/ws/chat/{match_id}?token={access_token}
-    """
-
-    # Authenticate user
-    user_id = decode_access_token(token)
-    if not user_id:
-        await websocket.close(code=4001, reason="Invalid token")
+    try:
+        user_id = await validate_ws_token(token, redis)
+    except Exception:
+        await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    # Convert to string
-    user_id_str = str(user_id)
+    match = await db.execute(
+        select(Match).where(
+            Match.id == match_id,
+            Match.is_active == True,
+        )
+    )
+    match_obj = match.scalar_one_or_none()
+    if not match_obj:
+        await websocket.close(code=4003, reason="Access denied")
+        return
 
-    # Accept connection and add to manager
-    await websocket_manager.add_chat_connection(match_id, user_id_str, websocket)
+    other_user_id = (
+        str(match_obj.user2_id) if str(match_obj.user1_id) == user_id
+        else str(match_obj.user1_id)
+    )
+
+    await websocket_manager.add_chat_connection(websocket, match_id, user_id, redis)
+
+    await websocket_manager.send_to_match(
+        match_id=match_id,
+        sender_id=user_id,
+        message={"type": "user_online", "user_id": user_id},
+        other_user_id=other_user_id,
+        redis=redis,
+    )
 
     try:
         while True:
-            data = await websocket.receive_text()
-
-            # Parse message
-            import json
             try:
-                message = json.loads(data)
-            except:
-                await websocket.send_text(json.dumps({"type": "error", "message": "Invalid JSON"}))
-                continue
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=40.0)
+                data = json.loads(raw)
+                msg_type = data.get("type")
 
-            msg_type = message.get("type")
+                if msg_type == "ping":
+                    await websocket_manager.heartbeat(user_id, redis)
+                    await websocket.send_text(json.dumps({"type": "pong"}))
 
-            if msg_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
+                elif msg_type == "typing":
+                    await websocket_manager.set_typing(match_id, user_id, redis)
 
-            elif msg_type == "typing":
-                # Broadcast typing indicator to other user
-                # For now, just log - we need to know other user ID
-                logger.debug("User typing in chat", user_id=user_id_str, match_id=match_id)
+                elif msg_type == "typing_stopped":
+                    await websocket_manager.clear_typing(match_id, user_id, redis)
 
-            elif msg_type == "delivery_ack":
-                logger.debug("Delivery ack for messages", message_ids=message.get("message_ids"))
+                elif msg_type == "read":
+                    message_ids = data.get("message_ids", [])
+                    await websocket_manager.send_to_match(
+                        match_id=match_id,
+                        sender_id=user_id,
+                        message={
+                            "type": "messages_read",
+                            "message_ids": message_ids,
+                            "reader_id": user_id,
+                        },
+                        other_user_id=other_user_id,
+                        redis=redis,
+                    )
 
-            elif msg_type == "read_ack":
-                logger.debug("Read ack for messages", message_ids=message.get("message_ids"))
-
+            except asyncio.TimeoutError:
+                break
+            except Exception:
+                break
     except WebSocketDisconnect:
-        await websocket_manager.remove_chat_connection(match_id, user_id_str, websocket)
-        logger.info("Chat WebSocket disconnected", user_id=user_id_str, match_id=match_id)
-    except Exception as e:
-        logger.error("Chat WebSocket error", error=str(e))
-        await websocket_manager.remove_chat_connection(match_id, user_id_str, websocket)
+        pass
+    finally:
+        await websocket_manager.send_to_match(
+            match_id=match_id,
+            sender_id=user_id,
+            message={"type": "user_offline", "user_id": user_id},
+            other_user_id=other_user_id,
+            redis=redis,
+        )
+        await websocket_manager.clear_typing(match_id, user_id, redis)
+        await websocket_manager.remove_chat_connection(websocket, match_id, user_id, redis)

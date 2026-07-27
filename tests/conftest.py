@@ -227,6 +227,7 @@ def disable_rate_limiting():
 def mock_websocket_manager():
     with patch("app.api.v1.endpoints.swipes.websocket_manager") as mock:
         mock.broadcast_match = AsyncMock()
+        mock.send_to_match = AsyncMock()
         yield mock
 
 
