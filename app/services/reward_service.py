@@ -57,7 +57,18 @@ class RewardService:
         ).returning(DailyLimit)
 
         result = await self.db.execute(stmt)
-        daily_limit = result.scalar_one()
+        daily_limit = result.scalar_one_or_none()
+
+        if not daily_limit:
+            # Row already existed (conflict) — fetch existing
+            result = await self.db.execute(
+                select(DailyLimit).where(
+                    DailyLimit.user_id == user_id,
+                    DailyLimit.date == target_date,
+                )
+            )
+            daily_limit = result.scalar_one()
+
         await self.db.flush()
 
         # Cache for the rest of the day

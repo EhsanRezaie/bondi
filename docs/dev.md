@@ -1909,6 +1909,23 @@ Search endpoint now returns the same response shape as discover.
 | `app/api/v1/endpoints/search.py` | Added `UserPrompt` eager load, populate sexual_orientation/photos/interests/prompts/is_online, privacy-aware last_seen_at/is_online |
 | `dev.md` | Session 48 notes |
 
+### ✅ Session 50 Complete — Demo Bug Fixes (Error Logging, DailyLimit Crash, Flaky Test)
+
+**Fixes from demo server error logs:**
+
+| # | Issue | Root Cause | Fix |
+|---|-------|-----------|-----|
+| 1 | `database_session_rollback` logged at ERROR for 401/403/429 | `session.py` caught all exceptions including expected HTTP client errors | Added `except StarletteHTTPException: raise` before general `except Exception` — also catches `RateLimitExceeded` (429) from slowapi |
+| 2 | `NoResultFound` in `get_or_create_daily_limit` | `on_conflict_do_nothing()` + `.returning()` returns no rows on conflict, but `.scalar_one()` requires exactly one | Changed to `.scalar_one_or_none()` with fallback SELECT to fetch existing row |
+| 3 | `test_verify_challenge_type_mismatch` test hangs/flakes | Hardcoded `"turn_left"` matches random challenge 20% chance → code proceeds to OpenCV video processing and hangs | Dynamic wrong type: picks a type guaranteed to differ from the generated challenge |
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `app/db/session.py` | `except HTTPException: raise` → `except StarletteHTTPException: raise` (catches both fastapi.HTTPException + slowapi RateLimitExceeded) |
+| `app/services/reward_service.py` | `.scalar_one()` → `.scalar_one_or_none()` + fallback SELECT when row exists |
+| `tests/done/test_face_verification.py` | Hardcoded `"turn_left"` → dynamic `wrong_type` based on generated challenge |
+
 ### ✅ Session 49 Complete — Live Likes/Chats Remaining in API Responses
 
 Swipe and message endpoints now return updated daily limit counts so the client stays in sync without extra API calls.

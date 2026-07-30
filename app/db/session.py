@@ -1,3 +1,4 @@
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -22,6 +23,8 @@ async def get_session() -> AsyncSession:
         try:
             yield session
             await session.commit()
+        except StarletteHTTPException:
+            raise
         except Exception:
             await session.rollback()
             logger.exception("database_session_rollback")
