@@ -65,15 +65,21 @@ fi
 log "Pulling latest code..."
 git pull origin main
 
-# 3. Build new image
+# 3. Login to Docker Hub (if credentials provided)
+if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+    log "Logging in to Docker Hub..."
+    echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+fi
+
+# 4. Build new image
 log "Building..."
 docker compose build app
 
-# 4. Deploy
+# 5. Deploy
 log "Starting services..."
 docker compose up -d --no-deps app
 
-# 5. Health check
+# 6. Health check
 log "Running health check..."
 if wait_for_health; then
     ok "Deploy successful — app is healthy"
