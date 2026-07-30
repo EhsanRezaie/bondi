@@ -652,6 +652,15 @@ Constraints: unique(`user_id`, `token`), index on `user_id`
 | `/search` | GET | Supports pagination with `limit` and `offset` |
 | `/search` | GET | Supports sorting by recent, distance, age, name |
 
+### Swipes Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/swipes` | POST | Swipe right (like) or left (pass) on a user |
+| `/swipes/stats` | GET | Get swipe statistics for current user |
+| `/swipes/liked` | GET | Get paginated list of users the current user has liked |
+| `/swipes/likers` | GET | Get paginated list of users who liked the current user (excludes matches) |
+
 ### Interests Endpoint
 
 | Endpoint | Method | Description |
@@ -1104,6 +1113,7 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 50 | **WebSocket presence + typing indicators + Redis Pub/Sub** | ✅ |
 | 51 | **Docker health checks + dynamic multi-worker** | ✅ |
 | 52 | **Search `sort_by=last_seen` + Redis real-time `is_online` in search/discover** | ✅ |
+| 53 | **Swipes liked/likers endpoints — GET /swipes/liked & GET /swipes/likers with pagination** | ✅ |
 
 ---
 

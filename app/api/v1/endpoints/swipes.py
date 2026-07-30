@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.swipe import Swipe
 from app.models.match import Match
+from app.models.block import Block
 from app.services.photo_service import PhotoService
 from app.models.photo import Photo
 from app.core.deps import get_current_user, get_current_user_id
@@ -20,7 +21,7 @@ from app.core.limiter import limiter
 from app.core.redis import redis_client
 from app.core.cache import record_swipe_cache
 from app.schemas.discover import SwipeRequest, SwipeResponse
-from app.schemas.swipe import SwipeStatsResponse
+from app.schemas.swipe import SwipeStatsResponse, LikedUsersResponse, LikedUserResponse
 from app.services.websocket_manager import websocket_manager
 
 from app.core.logging import get_logger
@@ -313,3 +314,199 @@ async def get_swipe_stats(
         "ads_watched_today": stats["ads_watched_today"],
         "max_ads_per_day": stats["max_ads_per_day"],
     }
+
+
+@router.get("/liked", response_model=LikedUsersResponse)
+@limiter.limit("60/minute")
+async def get_liked_users(
+    request: Request,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> LikedUsersResponse:
+    """
+    Get paginated list of users the current user has liked (swiped right on).
+    
+    Returns users sorted by most recent swipe first.
+    Excludes blocked users and inactive users.
+    """
+    
+    # Users this user has liked
+    liked_user_ids = select(Swipe.to_user).where(
+        Swipe.from_user == current_user_id,
+        Swipe.direction == "like"
+    ).subquery()
+    
+    # Blocked by current user
+    blocked_by_me = select(Block.blocked_id).where(
+        Block.blocker_id == current_user_id
+    ).subquery()
+    
+    # Users who blocked current user
+    blocked_me = select(Block.blocker_id).where(
+        Block.blocked_id == current_user_id
+    ).subquery()
+    
+    # Get total count first
+    count_query = select(func.count()).select_from(
+        select(User.id)
+        .join(UserProfile, User.id == UserProfile.user_id)
+        .where(
+            User.id.in_(select(liked_user_ids.c.to_user)),
+            User.is_active == True,
+            User.id.not_in(select(blocked_by_me.c.blocked_id)),
+            User.id.not_in(select(blocked_me.c.blocker_id)),
+        )
+        .subquery()
+    )
+    total = await session.scalar(count_query)
+    
+    # Get paginated results with profile data and swipe timestamp
+    query = (
+        select(User, UserProfile, Swipe.created_at)
+        .join(UserProfile, User.id == UserProfile.user_id)
+        .join(Swipe, Swipe.to_user == User.id)
+        .where(
+            Swipe.from_user == current_user_id,
+            Swipe.direction == "like",
+            User.is_active == True,
+            User.id.not_in(select(blocked_by_me.c.blocked_id)),
+            User.id.not_in(select(blocked_me.c.blocker_id)),
+        )
+        .order_by(Swipe.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await session.execute(query)
+    rows = result.all()
+    
+    users = []
+    for user, profile, swiped_at in rows:
+        # Get main photo URL
+        main_photo_url = await get_user_main_photo_url(session, user.id)
+        
+        users.append({
+            "id": user.id,
+            "name": profile.name,
+            "age": profile.age,
+            "main_photo_url": main_photo_url,
+            "is_premium": profile.is_premium,
+            "is_verified": user.phone_verified if user.phone_verified is not None else False,
+            "swiped_at": swiped_at,
+        })
+    
+    next_offset = offset + limit if offset + limit < total else None
+    
+    return LikedUsersResponse(
+        users=users,
+        total=total,
+        next_offset=next_offset,
+    )
+
+
+@router.get("/likers", response_model=LikedUsersResponse)
+@limiter.limit("60/minute")
+async def get_likers(
+    request: Request,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> LikedUsersResponse:
+    """
+    Get paginated list of users who liked (swiped right on) the current user.
+    
+    Excludes:
+    - Users already matched with
+    - Blocked users (both directions)
+    - Inactive users
+    
+    Returns users sorted by most recent like first.
+    """
+    
+    # Users who liked current user
+    liker_ids = select(Swipe.from_user).where(
+        Swipe.to_user == current_user_id,
+        Swipe.direction == "like"
+    ).subquery()
+    
+    # Matched users (both directions)
+    matched_as_user1 = select(Match.user2_id).where(
+        Match.user1_id == current_user_id,
+        Match.is_active == True
+    )
+    matched_as_user2 = select(Match.user1_id).where(
+        Match.user2_id == current_user_id,
+        Match.is_active == True
+    )
+    matched_user_ids = matched_as_user1.union(matched_as_user2).subquery()
+    
+    # Blocked by current user
+    blocked_by_me = select(Block.blocked_id).where(
+        Block.blocker_id == current_user_id
+    ).subquery()
+    
+    # Users who blocked current user
+    blocked_me = select(Block.blocker_id).where(
+        Block.blocked_id == current_user_id
+    ).subquery()
+    
+    # Get total count
+    count_query = select(func.count()).select_from(
+        select(User.id)
+        .join(UserProfile, User.id == UserProfile.user_id)
+        .where(
+            User.id.in_(select(liker_ids.c.from_user)),
+            User.is_active == True,
+            User.id.not_in(select(matched_user_ids.c.user2_id)),
+            User.id.not_in(select(blocked_by_me.c.blocked_id)),
+            User.id.not_in(select(blocked_me.c.blocker_id)),
+        )
+        .subquery()
+    )
+    total = await session.scalar(count_query)
+    
+    # Get paginated results
+    query = (
+        select(User, UserProfile, Swipe.created_at)
+        .join(UserProfile, User.id == UserProfile.user_id)
+        .join(Swipe, Swipe.from_user == User.id)
+        .where(
+            Swipe.to_user == current_user_id,
+            Swipe.direction == "like",
+            User.is_active == True,
+            User.id.not_in(select(matched_user_ids.c.user2_id)),
+            User.id.not_in(select(blocked_by_me.c.blocked_id)),
+            User.id.not_in(select(blocked_me.c.blocker_id)),
+        )
+        .order_by(Swipe.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await session.execute(query)
+    rows = result.all()
+    
+    users = []
+    for user, profile, swiped_at in rows:
+        main_photo_url = await get_user_main_photo_url(session, user.id)
+        
+        users.append({
+            "id": user.id,
+            "name": profile.name,
+            "age": profile.age,
+            "main_photo_url": main_photo_url,
+            "is_premium": profile.is_premium,
+            "is_verified": user.phone_verified if user.phone_verified is not None else False,
+            "swiped_at": swiped_at,
+        })
+    
+    next_offset = offset + limit if offset + limit < total else None
+    
+    return LikedUsersResponse(
+        users=users,
+        total=total,
+        next_offset=next_offset,
+    )
