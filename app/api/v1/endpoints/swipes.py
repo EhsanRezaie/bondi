@@ -19,12 +19,13 @@ from app.models.photo import Photo
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
 from app.core.redis import redis_client
-from app.core.cache import record_swipe_cache
+from app.core.cache import record_swipe_cache, get_swiped_ids
 from app.schemas.discover import SwipeRequest, SwipeResponse
 from app.schemas.swipe import SwipeStatsResponse, LikedUsersResponse, LikedUserResponse
 from app.services.websocket_manager import websocket_manager
 
 from app.core.logging import get_logger
+from sqlalchemy.exc import IntegrityError
 
 logger = get_logger("swipes")
 
@@ -141,7 +142,15 @@ async def swipe(
             detail="User not found"
         )
     
-    # Check if already swiped
+    # Check Redis set first (fast path)
+    swiped_ids = await get_swiped_ids(redis_client, current_user_id)
+    if str(body.user_id) in swiped_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Already swiped on this user"
+        )
+
+    # Check if already swiped (DB check for race condition safety)
     existing_result = await session.execute(
         select(Swipe).where(
             Swipe.from_user == current_user_id,
@@ -149,7 +158,7 @@ async def swipe(
         )
     )
     existing_swipe = existing_result.scalar_one_or_none()
-    
+
     if existing_swipe:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -196,7 +205,23 @@ async def swipe(
         direction=body.direction,
     )
     session.add(new_swipe)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        existing = await session.execute(
+            select(Swipe).where(
+                Swipe.from_user == current_user_id,
+                Swipe.to_user == body.user_id
+            )
+        )
+        dup = existing.scalar_one_or_none()
+        if dup:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Already swiped {dup.direction} on this user"
+            )
+        raise
 
     # Record swipe in Redis set for fast discover exclusion
     await record_swipe_cache(redis_client, current_user_id, body.user_id)
