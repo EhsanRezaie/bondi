@@ -83,8 +83,28 @@ async def update_me(
             detail="No fields to update",
         )
     
+    # Lock user row for update to prevent lost-update race conditions
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.user_interests).selectinload(UserInterest.interest),
+            selectinload(User.prompts).selectinload(UserPrompt.prompt),
+        )
+        .where(User.id == current_user.id)
+        .with_for_update()
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
     # Update profile fields (they are in UserProfile, not User)
-    profile = current_user.profile
+    profile = user.profile
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -103,13 +123,13 @@ async def update_me(
             setattr(profile, field, value)
         else:
             # Fields that belong to User (like age is computed from birth_date)
-            setattr(current_user, field, value)
+            setattr(user, field, value)
     
     # Update last_seen
-    current_user.last_seen_at = datetime.now(timezone.utc)
+    user.last_seen_at = datetime.now(timezone.utc)
     
     await session.commit()
-    await session.refresh(current_user)
+    await session.refresh(user)
     
     await invalidate_user_cache(redis_client, current_user.id)
 
@@ -142,7 +162,7 @@ async def update_settings(
     All fields are optional - only provided fields will be updated.
     """
     result = await session.execute(
-        select(UserSettings).where(UserSettings.user_id == current_user.id)
+        select(UserSettings).where(UserSettings.user_id == current_user.id).with_for_update()
     )
     settings = result.scalar_one_or_none()
     

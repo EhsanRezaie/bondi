@@ -253,13 +253,20 @@ async def swipe(
         
         if mutual_swipe:
             # Create match
-            new_match = Match(
-                user1_id=current_user_id,
-                user2_id=body.user_id,
-                is_active=True,
-            )
-            session.add(new_match)
-            await session.flush()
+            try:
+                new_match = Match(
+                    user1_id=current_user_id,
+                    user2_id=body.user_id,
+                    is_active=True,
+                )
+                session.add(new_match)
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Already matched with this user",
+                )
             
             matched = True
             match_id = new_match.id

@@ -124,7 +124,7 @@ async def verify_payment(
         )
     
     result = await session.execute(
-        select(User).options(selectinload(User.profile)).where(User.id == user_id)
+        select(User).options(selectinload(User.profile)).where(User.id == user_id).with_for_update()
     )
     user = result.scalar_one_or_none()
     

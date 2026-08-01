@@ -240,9 +240,9 @@ async def admin_grant_premium(
     admin: User = Depends(get_admin_user),
 ):
     """Admin: Grant premium days to user"""
-
+ 
     result = await session.execute(
-        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(User.id == user_id)
+        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(User.id == user_id).with_for_update()
     )
     user = result.scalar_one_or_none()
 

@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -68,6 +69,14 @@ async def block_user(
         blocked_id=user_id,
     )
     session.add(block)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User already blocked",
+        )
     await session.commit()
 
 

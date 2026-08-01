@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 import random
@@ -234,7 +235,14 @@ async def register_verify(
         referral_code=generate_referral_code(),
     )
     session.add(user)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
     
     await create_user_profile(user, session)
     await create_user_settings(user, session)
@@ -421,15 +429,27 @@ async def google_auth(
         if user:
             user.google_id = google_id
         else:
-            user = User(
-                email=email,
-                google_id=google_id,
-                registration_status="email_verified",
-                token_version=1,
-                referral_code=generate_referral_code(),
-            )
-            session.add(user)
-            await session.flush()
+            try:
+                user = User(
+                    email=email,
+                    google_id=google_id,
+                    registration_status="email_verified",
+                    token_version=1,
+                    referral_code=generate_referral_code(),
+                )
+                session.add(user)
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                existing_user = await get_user_by_email(session, email)
+                if existing_user:
+                    existing_user.google_id = google_id
+                    user = existing_user
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An account with this email already exists.",
+                    )
             
             profile = await create_user_profile(user, session)
             profile.name = name
