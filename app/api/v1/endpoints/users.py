@@ -335,11 +335,22 @@ async def update_interests(
             detail=f"Invalid interests: {', '.join(missing_names)}"
         )
     
+    # Lock user row to prevent lost-update race conditions on interests/ prompts
+    result = await session.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = result.scalar_one_or_none()
+    if not locked_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
     # Delete all existing user interests
     await session.execute(
         delete(UserInterest).where(UserInterest.user_id == current_user.id)
     )
-    
+
     # Create new user interests
     for interest in existing_interests:
         user_interest = UserInterest(
@@ -347,7 +358,7 @@ async def update_interests(
             interest_id=interest.id,
         )
         session.add(user_interest)
-    
+
     await session.commit()
     await session.refresh(current_user)
     await invalidate_user_cache(redis_client, current_user.id)
@@ -380,11 +391,22 @@ async def update_prompts(
     Update current user's prompts.
     Replaces all existing prompts with the new list.
     """
+    # Lock user row to prevent lost-update race conditions on prompts
+    result = await session.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = result.scalar_one_or_none()
+    if not locked_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
     # Delete all existing user prompts
     await session.execute(
         delete(UserPrompt).where(UserPrompt.user_id == current_user.id)
     )
-    
+
     # Create new user prompts
     for prompt_data in update_data.prompts:
         user_prompt = UserPrompt(
@@ -393,7 +415,7 @@ async def update_prompts(
             answer=prompt_data["answer"],
         )
         session.add(user_prompt)
-    
+
     await session.commit()
     await session.refresh(current_user)
     await invalidate_user_cache(redis_client, current_user.id)
