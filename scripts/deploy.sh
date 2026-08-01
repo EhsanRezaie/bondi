@@ -65,7 +65,13 @@ fi
 log "Pulling latest code..."
 git pull origin main
 
-# 3. Login to Docker Hub (if credentials provided)
+# 3. Check FCM service account file
+if [ ! -f firebase-service-account.json ]; then
+    fail "firebase-service-account.json not found — push notifications will be disabled"
+    log "Place the file in $DEPLOY_DIR/ or set FCM_SERVICE_ACCOUNT_PATH in .env"
+fi
+
+# 4. Login to Docker Hub (if credentials provided)
 if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
     log "Logging in to Docker Hub..."
     echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin

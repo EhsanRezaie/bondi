@@ -87,10 +87,18 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           password: ${{ secrets.VPS_PASSWORD }}
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,FCM_SERVICE_ACCOUNT_JSON
           script: |
             cd /opt/demo-bondi
+            if [ -n "$FCM_SERVICE_ACCOUNT_JSON" ]; then
+              echo "$FCM_SERVICE_ACCOUNT_JSON" > firebase-service-account.json
+              chmod 600 firebase-service-account.json
+              log "FCM service account uploaded"
+            else
+              log "WARNING: FCM_SERVICE_ACCOUNT_JSON not set, push notifications will fail"
+            fi
             bash scripts/deploy.sh
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}

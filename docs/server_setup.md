@@ -177,6 +177,22 @@ docker exec dating_app python -m app.db.scripts.seed_dummy_users
 
 ---
 
+## Firebase Push Notifications
+
+Before push notifications work, place the Firebase service account JSON file on the VPS:
+
+```bash
+# Upload the JSON file to the server (from your local machine)
+scp firebase-service-account.json root@YOUR_SERVER_IP:/opt/demo-bondi/
+
+# Set restrictive permissions
+ssh root@YOUR_SERVER_IP "chmod 600 /opt/demo-bondi/firebase-service-account.json"
+```
+
+The file is gitignored — it is never committed to the repository. For CI/CD deploys, store the JSON content as the `FCM_SERVICE_ACCOUNT_JSON` GitHub Actions secret. The deploy workflow will write it to the VPS automatically.
+
+---
+
 ## Useful Commands
 
 ```bash
