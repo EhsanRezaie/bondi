@@ -1,3 +1,5 @@
+import asyncio
+
 import firebase_admin
 from firebase_admin import credentials, messaging
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +66,11 @@ class PushService:
         )
 
         try:
-            response = messaging.send_each_for_multicast(message)
+            # messaging.send_each_for_multicast() is a synchronous HTTP call to
+            # Google FCM — run it in a thread so it never blocks the event loop
+            # (a burst of matches/likes would otherwise stall every connection
+            # on this worker for the duration of each FCM round-trip).
+            response = await asyncio.to_thread(messaging.send_each_for_multicast, message)
             logger.info(
                 "push_sent",
                 user_id=str(user_id),

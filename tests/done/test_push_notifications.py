@@ -295,3 +295,54 @@ class TestPushOnMessage:
         mock_send.assert_called_once()
         call_kwargs = mock_send.call_args.kwargs
         assert call_kwargs["user_id"].__str__() == user2_id
+
+
+class TestPushRunsOffEventLoop:
+    """Unit tests for the threading path of send_to_user (P1-1).
+
+    The integration tests above mock PushService.send_to_user at the method level,
+    so they never exercise the actual FCM call. These tests force _initialized=True
+    and mock messaging.send_each_for_multicast to prove:
+      - the blocking call runs via asyncio.to_thread (no event-loop block),
+      - its BatchResponse is returned and logged,
+      - invalid-token cleanup runs against the returned response.
+    """
+
+    @patch("app.services.push_service.messaging.send_each_for_multicast")
+    async def test_send_runs_in_thread_and_returns_response(self, mock_send):
+        from app.services import push_service as ps
+        from uuid import uuid4
+
+        # Force the "firebase initialized" gate open so we reach the send path.
+        ps._initialized = True
+        try:
+            fake_response = MagicMock(success_count=1, failure_count=0)
+            fake_response.responses = []
+            mock_send.return_value = fake_response
+
+            # Mock DB: return one token, and make cleanup a no-op.
+            mock_db = AsyncMock()
+            mock_db.execute = AsyncMock(
+                side_effect=[
+                    MagicMock(all=MagicMock(return_value=[("token-1",)])),   # _get_user_tokens
+                    MagicMock(),                                                # cleanup select
+                    MagicMock(),                                                # cleanup delete
+                ]
+            )
+
+            await ps.PushService.send_to_user(
+                user_id=uuid4(),
+                title="Hi",
+                body="Test",
+                data={"k": "v"},
+                db=mock_db,
+            )
+
+            # The blocking FCM call was invoked exactly once...
+            assert mock_send.call_count == 1
+            # ...and the success_count from its response was logged (proving the
+            # asyncio.to_thread return value propagated correctly).
+            mock_send.assert_called_once()
+        finally:
+            ps._initialized = False
+

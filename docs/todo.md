@@ -433,7 +433,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-1 — FCM push send is synchronous/blocking inside async code · `S` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/services/push_service.py:62` calls `messaging.send_each_for_multicast(message)` (a **blocking** HTTP call to Google FCM v1) directly inside an `async` function — no `run_in_executor`. It's called from `notification_service.py` inside `BackgroundTasks`.
 
