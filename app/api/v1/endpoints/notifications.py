@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -129,7 +130,22 @@ async def register_device_token(
             platform=body.platform,
         )
         session.add(token_obj)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            existing = await session.execute(
+                select(DeviceToken).where(
+                    DeviceToken.user_id == current_user.id,
+                    DeviceToken.token == body.token,
+                )
+            )
+            token_obj = existing.scalar_one_or_none()
+            if token_obj:
+                token_obj.platform = body.platform
+                await session.flush()
+            else:
+                raise
 
     return DeviceTokenResponse(
         id=token_obj.id,

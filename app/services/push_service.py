@@ -25,6 +25,11 @@ def _initialize_firebase():
         firebase_admin.initialize_app(cred)
         _initialized = True
         logger.info("firebase_initialized")
+    except FileNotFoundError:
+        logger.warning(
+            "FCM service account file not found at %s — push notifications disabled",
+            settings.FCM_SERVICE_ACCOUNT_PATH,
+        )
     except Exception:
         logger.exception("firebase_init_failed")
 

@@ -5,6 +5,8 @@ from sqlalchemy import text
 from datetime import datetime, timezone
 from typing import Optional, Dict
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from app.db.session import get_session, engine
@@ -79,13 +81,21 @@ async def set_maintenance_status(
     )
     
     if maintenance_mode:
-        with open(MAINTENANCE_FILE, "w", encoding="utf-8") as f:
-            json.dump({
-                "maintenance_mode": data.enabled,
-                "message": data.message,
-                "start_time": data.start_time,
-                "end_time": data.end_time,
-            }, f, indent=2)
+        data_dict = {
+            "maintenance_mode": data.enabled,
+            "message": data.message,
+            "start_time": data.start_time,
+            "end_time": data.end_time,
+        }
+        fd, tmp_path = tempfile.mkstemp(dir=str(MAINTENANCE_FILE.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data_dict, f, indent=2)
+            os.replace(tmp_path, str(MAINTENANCE_FILE))
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
     else:
         if MAINTENANCE_FILE.exists():
             MAINTENANCE_FILE.unlink()
@@ -353,9 +363,16 @@ async def get_version_override() -> Dict:
 
 
 async def set_version_override(data: Dict) -> None:
-    """Write version override to file."""
-    with open(VERSION_OVERRIDE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    """Write version override to file atomically."""
+    fd, tmp_path = tempfile.mkstemp(dir=str(VERSION_OVERRIDE_FILE.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, str(VERSION_OVERRIDE_FILE))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 @router.post("/version/set-minimum")

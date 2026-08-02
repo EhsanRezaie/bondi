@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 import random
 import string
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -108,7 +109,14 @@ async def claim_referral(
         source="referral"
     )
     
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Referral already claimed",
+        )
     
     return {
         "success": True,
