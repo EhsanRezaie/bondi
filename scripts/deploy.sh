@@ -9,7 +9,7 @@ HEALTH_INTERVAL=5
 ROLLBACK_IMAGE="dating-app:rollback"
 COMPOSE_FILE="docker-compose.yml"
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 log()  { echo -e "\033[1;34m>>>\033[0m $1"; }
 ok()   { echo -e "\033[1;32m✅\033[0m $1"; }
 fail() { echo -e "\033[1;31m❌\033[0m $1"; }
@@ -48,7 +48,7 @@ cleanup_rollback_file() {
     git checkout -- "$COMPOSE_FILE" 2>/dev/null || true
 }
 
-# ── Deploy ──────────────────────────────────────────────────────────────────
+# ── Deploy ────────────────────────────────────────────────────────────────────
 cd "$DEPLOY_DIR"
 log "Deploy started at $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -65,43 +65,35 @@ fi
 log "Pulling latest code..."
 git pull origin main
 
-# 3. Remove any pulled migration files — server generates its own deploy migration
-#    This keeps the server independent of git migration history.
-rm -f alembic/versions/*.py
-
-# 4. Generate a fresh migration capturing the diff between current DB state and target models
-log "Generating deploy migration..."
-docker compose run --rm migrate alembic revision --autogenerate -m "deploy:$(date '+%Y%m%d%H%M%S')" || true
-
-# 5. Check FCM service account file
+# 3. Check FCM service account file
 if [ ! -f firebase-service-account.json ]; then
     fail "firebase-service-account.json not found — push notifications will be disabled"
     log "Place the file in $DEPLOY_DIR/ or set FCM_SERVICE_ACCOUNT_PATH in .env"
 fi
 
-# 6. Login to Docker Hub (if credentials provided)
+# 4. Login to Docker Hub (if credentials provided)
 if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
     log "Logging in to Docker Hub..."
     echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 fi
 
-# 7. Build/refresh base image (deps) — no-op unless requirements.txt changed
+# 4. Build/refresh base image (deps) — no-op unless requirements.txt changed
 log "Ensuring base image (deps)..."
 bash scripts/build-base.sh
 
-# 8. Build new image (thin — skips pip, takes seconds)
+# 5. Build new image (thin — skips pip, takes seconds)
 log "Building..."
 docker compose build app
 
-# 9. Run migrations (one-shot) — applies the fresh deploy migration
+# 5b. Run migrations (one-shot) before starting the app
 log "Applying migrations..."
 docker compose run --rm migrate
 
-# 10. Deploy
+# 6. Deploy
 log "Starting services..."
 docker compose up -d --no-deps app
 
-# 11. Health check
+# 7. Health check
 log "Running health check..."
 if wait_for_health; then
     ok "Deploy successful — app is healthy"
