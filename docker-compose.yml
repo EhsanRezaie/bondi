@@ -39,6 +39,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
     entrypoint: ["alembic", "upgrade", "head"]
+    volumes:
+      - ./alembic/versions:/app/alembic/versions
     depends_on:
       db:
         condition: service_healthy
