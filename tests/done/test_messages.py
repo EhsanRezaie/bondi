@@ -1452,3 +1452,109 @@ class TestCursorPagination:
         data = res.json()
         assert len(data["messages"]) == 0
         assert data["total"] == 0
+
+class TestSendResponseContract:
+    """Verify send endpoints return the full message object (fix for empty bubbles)."""
+
+    async def test_send_text_returns_full_message(
+        self, client, mock_verification_code, db_session
+    ):
+        male_headers, male_id = await register_and_get_headers(
+            client, "contract_text_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "contract_text_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        result = await db_session.execute(
+            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
+        )
+        result.scalars().all()
+
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        match_id = match_res.json()["match_id"]
+
+        res = await client.post(
+            f"{MESSAGES_URL}/{match_id}/text",
+            json={"content": "Contract hello"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["message"] is not None
+        msg = data["message"]
+        assert msg["content"] == "Contract hello"
+        assert msg["sender_id"] == male_id
+        assert msg["receiver_id"] == female_id
+        assert msg["match_id"] == match_id
+        assert msg["message_type"] == "text"
+        assert msg["id"] == data["id"]
+
+    async def test_send_photo_returns_media_url(
+        self, client, mock_verification_code, db_session
+    ):
+        male_headers, male_id = await register_and_get_headers(
+            client, "contract_photo_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "contract_photo_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        result = await db_session.execute(
+            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
+        )
+        result.scalars().all()
+
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        match_id = match_res.json()["match_id"]
+
+        res = await client.post(
+            f"{MESSAGES_URL}/{match_id}/photo",
+            files={
+                "file": ("photo.jpg", create_test_image(), "image/jpeg"),
+            },
+            data={"caption": "nice pic"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["message"] is not None
+        msg = data["message"]
+        assert msg["message_type"] == "photo"
+        assert msg["media_url"] is not None and "photo" in msg["media_url"]
+        assert msg["content"] == "nice pic"
+
+    async def test_send_voice_returns_duration_and_url(
+        self, client, mock_verification_code, db_session
+    ):
+        male_headers, male_id = await register_and_get_headers(
+            client, "contract_voice_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "contract_voice_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        result = await db_session.execute(
+            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
+        )
+        result.scalars().all()
+
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        match_id = match_res.json()["match_id"]
+
+        res = await client.post(
+            f"{MESSAGES_URL}/{match_id}/voice",
+            files={"file": ("voice.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 5},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["message"] is not None
+        msg = data["message"]
+        assert msg["message_type"] == "voice"
+        assert msg["media_duration"] == 5
+        assert msg["media_url"] is not None

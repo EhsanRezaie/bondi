@@ -72,14 +72,57 @@ async def get_match_or_chat(session: AsyncSession, identifier: UUID, user_id: UU
     return None, None, None
 
 
-async def _background_websocket_send(match_id_str: str, sender_id_str: str, message_data: dict, other_user_id_str: str, redis_client):
-    """Send WebSocket notification after response is sent."""
-    await websocket_manager.send_to_match(
-        match_id_str,
+async def _background_websocket_send(
+    channel: str,
+    sender_id_str: str,
+    message_data: dict,
+    other_user_id_str: str,
+    redis_client,
+):
+    """Send WebSocket notification after response is sent via resolved channel."""
+    await websocket_manager.send_to_conversation(
+        channel,
         sender_id_str,
         message_data,
         other_user_id_str,
         redis_client,
+    )
+
+
+def _conversation_channel(match_id, current_user_id, other_user_id) -> str:
+    """Resolve the pub/sub channel for a matched or unmatched conversation."""
+    if match_id:
+        return websocket_manager.conversation_channel(str(match_id), str(current_user_id), None)
+    return websocket_manager.conversation_channel(None, str(current_user_id), str(other_user_id))
+
+
+def _build_message_response(
+    msg: Message,
+    decrypted_content: Optional[str] = None,
+    reply_to_data: Optional[dict] = None,
+) -> MessageResponse:
+    """Build a full MessageResponse from a Message row."""
+    from app.schemas.message import ReplyToResponse
+    reply = None
+    if reply_to_data:
+        reply = ReplyToResponse(**reply_to_data)
+    return MessageResponse(
+        id=msg.id,
+        match_id=msg.match_id,
+        sender_id=msg.sender_id,
+        receiver_id=msg.receiver_id,
+        message_type=msg.message_type,
+        content=decrypted_content if decrypted_content is not None else (msg.content if msg.match_id else msg._content),
+        media_url=msg.media_url,
+        media_duration=msg.media_duration,
+        reply_to=reply,
+        is_sent=msg.is_sent,
+        is_delivered=msg.is_delivered,
+        is_read=msg.is_read,
+        is_accepted=msg.is_accepted,
+        sent_at=msg.sent_at,
+        delivered_at=msg.delivered_at,
+        read_at=msg.read_at,
     )
 
 
@@ -319,7 +362,7 @@ async def send_text_message(
     }
     background_tasks.add_task(
         _background_websocket_send,
-        match_id_str=str(match_id) if match_id else str(other_user_id),
+        channel=_conversation_channel(match_id, current_user.id, other_user_id),
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
@@ -332,6 +375,7 @@ async def send_text_message(
         requires_acceptance=not is_accepted and not match_id,
         chat_accepted=is_accepted or match_id is not None,
         chats_remaining_today=chats_remaining,
+        message=_build_message_response(new_message, decrypted_content=decrypted_content),
     )
 
 
@@ -402,7 +446,7 @@ async def send_photo_message(
     }
     background_tasks.add_task(
         _background_websocket_send,
-        match_id_str=str(match_id) if match_id else str(other_user_id),
+        channel=_conversation_channel(match_id, current_user.id, other_user_id),
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
@@ -413,7 +457,8 @@ async def send_photo_message(
         id=new_message.id,
         sent_at=new_message.sent_at,
         requires_acceptance=False,
-        chat_accepted=True
+        chat_accepted=True,
+        message=_build_message_response(new_message, decrypted_content=new_message.content if new_message.match_id else new_message._content),
     )
 
 
@@ -484,7 +529,7 @@ async def send_voice_message(
     }
     background_tasks.add_task(
         _background_websocket_send,
-        match_id_str=str(match_id) if match_id else str(other_user_id),
+        channel=_conversation_channel(match_id, current_user.id, other_user_id),
         sender_id_str=str(current_user.id),
         message_data=message_data,
         other_user_id_str=str(other_user_id),
@@ -495,7 +540,8 @@ async def send_voice_message(
         id=new_message.id,
         sent_at=new_message.sent_at,
         requires_acceptance=False,
-        chat_accepted=True
+        chat_accepted=True,
+        message=_build_message_response(new_message, decrypted_content=None),
     )
 
 

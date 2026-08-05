@@ -310,8 +310,12 @@ def mock_websocket_manager():
           patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs):
         mock.broadcast_match = AsyncMock()
         mock.send_to_match = AsyncMock()
+        mock.send_to_conversation = AsyncMock()
+        mock.get_online_status_bulk = AsyncMock(return_value={})
         mock_msgs.broadcast_match = AsyncMock()
         mock_msgs.send_to_match = AsyncMock()
+        mock_msgs.send_to_conversation = AsyncMock()
+        mock_msgs.get_online_status_bulk = AsyncMock(return_value={})
         yield mock
 
 

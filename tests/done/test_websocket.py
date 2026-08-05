@@ -178,7 +178,7 @@ class TestWebSocketMessagePush:
         await asyncio.sleep(0.1)
 
         # Patch messages module's send_to_match
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_match", new_callable=AsyncMock) as mock_send:
+        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
             await client.post(
                 f"{MESSAGES_URL}/{match_id}/text",
                 json={"content": "Hello WS"},
@@ -230,7 +230,7 @@ class TestWebSocketMessagePush:
         import asyncio
         await asyncio.sleep(0.1)
 
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_match", new_callable=AsyncMock) as mock_send:
+        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
             files = {"file": ("test.jpg", create_jpeg(), "image/jpeg")}
             data = {"caption": "Photo caption"}
             await client.post(
@@ -280,7 +280,7 @@ class TestWebSocketMessagePush:
         import asyncio
         await asyncio.sleep(0.1)
 
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_match", new_callable=AsyncMock) as mock_send:
+        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
             files = {"file": ("test.mp3", create_mp3(), "audio/mpeg")}
             data = {"duration": 30}
             await client.post(
@@ -438,7 +438,7 @@ class TestWebSocketManagerUnit:
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
         assert payload["type"] == "typing"
-        assert payload["match_id"] == match_id
+        assert payload["channel"] == match_id
         assert payload["user_id"] == user_id
 
     async def test_clear_typing(self):
@@ -454,7 +454,7 @@ class TestWebSocketManagerUnit:
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
         assert payload["type"] == "typing_stopped"
-        assert payload["match_id"] == match_id
+        assert payload["channel"] == match_id
         assert payload["user_id"] == user_id
 
     async def test_is_typing(self):
@@ -494,3 +494,63 @@ class TestWebSocketManagerUnit:
         assert result == {"u1": True, "u2": False, "u3": True}
         mock_redis.pipeline.assert_called_once()
         mock_pipe.execute.assert_called_once()
+
+
+class TestUnmatchedChatChannel:
+    """Conversation channel resolution + delivery for unmatched chats."""
+
+    @pytest.fixture(autouse=True)
+    def _cleanup(self):
+        self.manager = WebSocketManager()
+        self.manager.active_connections = {}
+        self.manager.chat_connections = {}
+
+    def test_matched_channel_uses_match_id(self):
+        channel = self.manager.conversation_channel("m1", "u1", None)
+        assert channel == "ws:chat:m1"
+
+    def test_unmatched_channel_is_sorted_pair(self):
+        ch_a = self.manager.conversation_channel(None, "u2", "u1")
+        ch_b = self.manager.conversation_channel(None, "u1", "u2")
+        assert ch_a == ch_b
+        assert ch_a.startswith("ws:chat:unmatched:")
+        # sorted so both directions share one channel
+        assert ch_a == "ws:chat:unmatched:u1:u2"
+
+    async def test_send_to_conversation_publishes_pair_channel(self):
+        """send_to_conversation publishes sender + receiver frames on one channel."""
+        mock_redis = AsyncMock()
+        channel = self.manager.conversation_channel(None, "u1", "u2")
+        message = {"type": "new_message", "data": {"id": "m1", "content": "hi"}}
+
+        await self.manager.send_to_conversation(channel, "u1", message, "u2", mock_redis)
+
+        assert mock_redis.publish.call_count == 2
+        published_channels = [call[0][0] for call in mock_redis.publish.call_args_list]
+        assert all(c == channel for c in published_channels)
+        payloads = [json.loads(call[0][1]) for call in mock_redis.publish.call_args_list]
+        targets = {p["_target_user"] for p in payloads}
+        assert targets == {"u1", "u2"}
+
+    async def test_add_chat_connection_uses_channel_keys(self):
+        """chat_connections are keyed by (channel, user) so unmatched chats coexist."""
+        mock_redis = AsyncMock()
+        mock_ws = AsyncMock()
+        channel = self.manager.conversation_channel(None, "u1", "u2")
+
+        await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
+
+        assert (channel, "u1") in self.manager.chat_connections
+        assert mock_redis.setex.called
+
+    async def test_remove_chat_connection_cleans_channel(self):
+        """Removing last connection cancels listener and deletes online key."""
+        mock_redis = AsyncMock()
+        mock_ws = AsyncMock()
+        channel = self.manager.conversation_channel(None, "u1", "u2")
+
+        await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
+        await self.manager.remove_chat_connection(mock_ws, channel, "u1", mock_redis)
+
+        assert (channel, "u1") not in self.manager.chat_connections
+        assert mock_redis.delete.called

@@ -198,3 +198,32 @@ class TestMatches:
         """Should return 401 without token"""
         res = await client.get(MATCHES_URL)
         assert res.status_code == 401
+
+class TestMatchPresence:
+    """Match list should include online status + last seen."""
+
+    async def test_get_matches_includes_online_status(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        import app.core.redis as redis_module
+
+        male_headers, male_id = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_FEMALE, mock_verification_code
+        )
+
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+
+        # Mark the female user online in Redis
+        await redis_module.redis_client.setex(f"online:{female_id}", 60, "1")
+
+        res = await client.get(MATCHES_URL, headers=male_headers)
+        assert res.status_code == 200
+        data = res.json()
+        match = data["matches"][0]
+        assert "is_online" in match["user"]
+        assert match["user"]["is_online"] is True
+        assert "last_seen_at" in match["user"]

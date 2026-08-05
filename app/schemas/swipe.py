@@ -23,6 +23,8 @@ class LikedUserResponse(BaseModel):
     main_photo_url: Optional[str] = None
     is_premium: bool = False
     is_verified: bool = False
+    is_online: bool = False
+    last_seen_at: Optional[datetime] = None
     swiped_at: datetime
 
     class Config:

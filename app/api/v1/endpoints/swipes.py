@@ -413,7 +413,15 @@ async def get_liked_users(
     
     result = await session.execute(query)
     rows = result.all()
-    
+
+    # Resolve online status for the page (bulk Redis lookup)
+    from app.services.websocket_manager import websocket_manager
+    online_map = {}
+    if rows:
+        online_map = await websocket_manager.get_online_status_bulk(
+            [str(r[0].id) for r in rows], redis_client
+        )
+
     users = []
     for user, profile, swiped_at in rows:
         # Get main photo URL
@@ -426,6 +434,8 @@ async def get_liked_users(
             "main_photo_url": main_photo_url,
             "is_premium": profile.is_premium,
             "is_verified": user.phone_verified if user.phone_verified is not None else False,
+            "is_online": online_map.get(str(user.id), False),
+            "last_seen_at": user.last_seen_at,
             "swiped_at": swiped_at,
         })
     
@@ -520,7 +530,15 @@ async def get_likers(
     
     result = await session.execute(query)
     rows = result.all()
-    
+
+    # Resolve online status for the page (bulk Redis lookup)
+    from app.services.websocket_manager import websocket_manager
+    online_map = {}
+    if rows:
+        online_map = await websocket_manager.get_online_status_bulk(
+            [str(r[0].id) for r in rows], redis_client
+        )
+
     users = []
     for user, profile, swiped_at in rows:
         main_photo_url = await get_user_main_photo_url(session, user.id)
@@ -532,6 +550,8 @@ async def get_likers(
             "main_photo_url": main_photo_url,
             "is_premium": profile.is_premium,
             "is_verified": user.phone_verified if user.phone_verified is not None else False,
+            "is_online": online_map.get(str(user.id), False),
+            "last_seen_at": user.last_seen_at,
             "swiped_at": swiped_at,
         })
     

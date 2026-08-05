@@ -56,6 +56,20 @@ async def get_matches(
     result = await session.execute(query)
     matches = result.scalars().all()
 
+    # Resolve online status for all matched users (bulk Redis lookup)
+    online_map = {}
+    if matches:
+        other_ids = [
+            (m.user2_id if m.user1_id == current_user.id else m.user1_id).__str__()
+            for m in matches
+        ]
+        if other_ids:
+            from app.services.websocket_manager import websocket_manager
+            import app.core.redis as redis_module
+            online_map = await websocket_manager.get_online_status_bulk(
+                other_ids, redis_module.redis_client
+            )
+
     # Single query for all last messages (eliminates N+1)
     last_messages = {}
     if matches:
@@ -98,6 +112,8 @@ async def get_matches(
                 name=other_user.profile.name,
                 age=other_user.profile.age,
                 main_photo_url=main_photo_url,
+                is_online=online_map.get(str(other_user.id), False),
+                last_seen_at=other_user.last_seen_at,
             ),
             last_message=last_message
         ))

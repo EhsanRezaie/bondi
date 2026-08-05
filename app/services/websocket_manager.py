@@ -36,7 +36,7 @@ class WebSocketManager:
 
     def __init__(self):
         self.active_connections: Dict[str, Set[WebSocket]] = {}
-        self.chat_connections: Dict[str, Set[WebSocket]] = {}
+        self.chat_connections: Dict[tuple, Set[WebSocket]] = {}
         self._listener_tasks: Dict[str, asyncio.Task] = {}
 
     # ── Match Notification Channel ──────────────────────────────────────
@@ -104,83 +104,96 @@ class WebSocketManager:
 
     # ── Chat Channel ──────────────────────────────────────────────────
 
+    def conversation_channel(
+        self, identifier, current_user_id, other_user_id=None
+    ) -> str:
+        """
+        Resolve the canonical Redis pub/sub channel for a conversation.
+        - Matched chat:   ws:chat:{match_id}
+        - Unmatched chat: ws:chat:unmatched:{sorted_min}:{sorted_max} (# both directions share one channel)
+        """
+        if other_user_id is not None:
+            a, b = sorted([str(current_user_id), str(other_user_id)])
+            return f"ws:chat:unmatched:{a}:{b}"
+        return _chat_channel(str(identifier))
+
     async def add_chat_connection(
         self,
         websocket: WebSocket,
-        match_id: str,
+        channel: str,
         user_id: str,
         redis: Redis,
     ):
         await websocket.accept()
 
-        conn_key = f"{match_id}:{user_id}"
+        conn_key = (channel, user_id)
         if conn_key not in self.chat_connections:
             self.chat_connections[conn_key] = set()
         self.chat_connections[conn_key].add(websocket)
 
         await redis.setex(_online_key(user_id), ONLINE_TTL, "1")
 
-        task_key = f"chat:{match_id}"
+        task_key = f"chat:{channel}"
         if task_key not in self._listener_tasks:
             task = asyncio.create_task(
-                self._listen_chat_channel(match_id, redis)
+                self._listen_chat_channel(channel, redis)
             )
             self._listener_tasks[task_key] = task
 
-        logger.info("WS connected (chat)", match_id=match_id, user_id=user_id)
+        logger.info("WS connected (chat)", channel=channel, user_id=user_id)
 
     async def remove_chat_connection(
         self,
         websocket: WebSocket,
-        match_id: str,
+        channel: str,
         user_id: str,
         redis: Redis,
     ):
-        conn_key = f"{match_id}:{user_id}"
+        conn_key = (channel, user_id)
         if conn_key in self.chat_connections:
             self.chat_connections[conn_key].discard(websocket)
             if not self.chat_connections[conn_key]:
                 del self.chat_connections[conn_key]
 
         still_connected = any(
-            k.startswith(f"{match_id}:") and v
-            for k, v in self.chat_connections.items()
+            ch == channel and sockets
+            for (ch, _u), sockets in self.chat_connections.items()
         )
         if not still_connected:
-            task_key = f"chat:{match_id}"
+            task_key = f"chat:{channel}"
             task = self._listener_tasks.pop(task_key, None)
             if task:
                 task.cancel()
 
         user_has_other = any(
-            k.endswith(f":{user_id}") and v
-            for k, v in self.chat_connections.items()
+            u == user_id and sockets
+            for (_ch, u), sockets in self.chat_connections.items()
         ) or user_id in self.active_connections
 
         if not user_has_other:
             await redis.delete(_online_key(user_id))
 
-        logger.info("WS disconnected (chat)", match_id=match_id, user_id=user_id)
+        logger.info("WS disconnected (chat)", channel=channel, user_id=user_id)
 
-    async def _listen_chat_channel(self, match_id: str, redis: Redis):
+    async def _listen_chat_channel(self, channel: str, redis: Redis):
         pubsub = redis.pubsub()
-        await pubsub.subscribe(_chat_channel(match_id))
+        await pubsub.subscribe(channel)
         try:
             async for message in pubsub.listen():
                 if message["type"] != "message":
                     continue
                 data = json.loads(message["data"])
                 target_user = data.get("_target_user")
-                await self._deliver_to_chat_local(match_id, data, target_user)
+                await self._deliver_to_chat_local(channel, data, target_user)
         except asyncio.CancelledError:
             pass
         finally:
-            await pubsub.unsubscribe(_chat_channel(match_id))
+            await pubsub.unsubscribe(channel)
             await pubsub.aclose()
 
     async def _deliver_to_chat_local(
         self,
-        match_id: str,
+        channel: str,
         message: dict,
         target_user: Optional[str] = None,
     ):
@@ -188,8 +201,8 @@ class WebSocketManager:
         data = json.dumps(message)
 
         for conn_key, sockets in list(self.chat_connections.items()):
-            m_id, u_id = conn_key.split(":", 1)
-            if m_id != match_id:
+            ch, u_id = conn_key
+            if ch != channel:
                 continue
             if target_user and u_id != target_user:
                 continue
@@ -241,6 +254,21 @@ class WebSocketManager:
         sender_msg = {**message, "_target_user": sender_id}
         await redis.publish(_chat_channel(match_id), json.dumps(sender_msg))
 
+    async def send_to_conversation(
+        self,
+        channel: str,
+        sender_id: str,
+        message: dict,
+        other_user_id: str,
+        redis: Redis,
+    ):
+        """Publish a message onto an already-resolved channel (matched or unmatched)."""
+        receiver_msg = {**message, "_target_user": other_user_id}
+        await redis.publish(channel, json.dumps(receiver_msg))
+
+        sender_msg = {**message, "_target_user": sender_id}
+        await redis.publish(channel, json.dumps(sender_msg))
+
     # ── Presence ──────────────────────────────────────────────────────
 
     async def is_online(self, user_id: str, redis: Redis) -> bool:
@@ -264,32 +292,32 @@ class WebSocketManager:
 
     async def set_typing(
         self,
-        match_id: str,
+        channel: str,
         user_id: str,
         redis: Redis,
     ):
-        await redis.setex(_typing_key(match_id, user_id), TYPING_TTL, "1")
-        await redis.publish(_chat_channel(match_id), json.dumps({
+        await redis.setex(_typing_key(channel, user_id), TYPING_TTL, "1")
+        await redis.publish(channel, json.dumps({
             "type": "typing",
-            "match_id": match_id,
+            "channel": channel,
             "user_id": user_id,
         }))
 
     async def clear_typing(
         self,
-        match_id: str,
+        channel: str,
         user_id: str,
         redis: Redis,
     ):
-        await redis.delete(_typing_key(match_id, user_id))
-        await redis.publish(_chat_channel(match_id), json.dumps({
+        await redis.delete(_typing_key(channel, user_id))
+        await redis.publish(channel, json.dumps({
             "type": "typing_stopped",
-            "match_id": match_id,
+            "channel": channel,
             "user_id": user_id,
         }))
 
-    async def is_typing(self, match_id: str, user_id: str, redis: Redis) -> bool:
-        return bool(await redis.exists(_typing_key(match_id, user_id)))
+    async def is_typing(self, channel: str, user_id: str, redis: Redis) -> bool:
+        return bool(await redis.exists(_typing_key(channel, user_id)))
 
 
 websocket_manager = WebSocketManager()

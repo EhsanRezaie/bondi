@@ -10,6 +10,8 @@ class MatchUserResponse(BaseModel):
     name: str
     age: int
     main_photo_url: Optional[str] = None
+    is_online: bool = False
+    last_seen_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
