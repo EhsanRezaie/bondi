@@ -190,7 +190,7 @@ async def increment_new_chat_count(
     
     if user:
         reward_service = RewardService(session)
-        await reward_service.consume_chat(user)
+        await reward_service.consume_chat(user.id)
 
 
 async def create_encrypted_message(

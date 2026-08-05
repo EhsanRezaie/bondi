@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, literal
+from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
@@ -141,8 +142,18 @@ class RewardService:
 
         return True
     
-    async def consume_chat(self, user: User) -> bool:
+    async def consume_chat(self, user_id: UUID) -> bool:
         """Consume one new chat atomically. Returns True if successful."""
+        result = await self.db.execute(
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            return False
+
         if user.profile and user.profile.is_premium:
             return True
 
