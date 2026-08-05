@@ -85,6 +85,10 @@ bash scripts/build-base.sh
 log "Building..."
 docker compose build app
 
+# 5b. Run migrations (one-shot) before starting the app
+log "Applying migrations..."
+docker compose run --rm migrate
+
 # 6. Deploy
 log "Starting services..."
 docker compose up -d --no-deps app

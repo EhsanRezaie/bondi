@@ -18,9 +18,6 @@ version_override.json
 .vscode/
 .idea/
 
-# Alembic
-alembic/versions/*.py
-
 # Uploads
 uploads/
 

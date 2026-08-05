@@ -13,7 +13,6 @@ services:
       S3_PUBLIC_BASE_URL: http://minio:9000/photos-public
     volumes:
       - uploads_data:/app/uploads
-      - alembic_versions:/app/alembic/versions
       - ./firebase-service-account.json:/app/firebase-service-account.json
     depends_on:
       db:
@@ -22,12 +21,28 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dating_migrate
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
+    entrypoint: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   nginx:
     image: nginx:alpine
@@ -164,4 +179,3 @@ volumes:
   uploads_data:
   redis_data:
   nginx_certs:
-  alembic_versions:
