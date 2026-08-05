@@ -52,8 +52,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 | Email sending | ❌ stub | → P0-7 |
 | PgBouncer / pool tuning | ❌ | → P0-4 |
 | NSFW moderation | ⚠️ skin heuristic | → P2-7 |
-| **Migrations in version control** | ❌ git-ignored | → P0-1 (NEW) |
-| **Startup auto-generates migrations** | ❌ hazard | → P0-1 (NEW) |
+| **Migrations in version control** | ✅ committed | P0-1 done |
+| **Startup auto-generates migrations** | ✅ removed | P0-1 done |
 | **Auth dependency hits DB every request** | ❌ no cache | → P0-2 (NEW) |
 | **Chat decryption CPU per-message** | ❌ slow | → P0-3 (NEW) |
 | **Celery installed but 0 bytes of code** | ❌ dead | → P1-7 (NEW) |
@@ -62,7 +62,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P0-1 — Stop auto-generating migrations on startup AND commit migrations to git · `XS` · NEW
 
-- [ ] Done
+- [x] Done (commit `b3d76b2`)
 
 **Evidence:** `entrypoint.sh:4-5` runs `alembic revision --autogenerate -m "auto: startup migration"` on **every** container start; `.gitignore` contains `alembic/versions/*.py`; `git ls-files alembic/versions/` returns **empty** → migrations are NOT in version control.
 
@@ -1249,7 +1249,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 
 | # | Task | Effort | Why first |
 |---|------|--------|-----------|
-| 1 | **P0-1** migrations: stop autogenerate + commit to git + init container | XS | Eliminates a real prod hazard; unblocks reproducible deploys |
+| 1 | **P0-1** migrations: stop autogenerate + commit to git + init container | XS | ✅ done (`b3d76b2`) |
 | 2 | **P0-2** cache `get_current_user` in Redis | S | Biggest latency/DB win; touches every request |
 | 3 | **P0-3** fix chat decryption CPU | S | Fixes chat latency; unblocks event loop |
 | 4 | **P0-4** PgBouncer + pool tuning | S | Unblocks 100+ concurrent users |
