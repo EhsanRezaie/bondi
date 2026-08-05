@@ -456,7 +456,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-2 — Discover/Search generates a presigned MinIO URL per photo per row · `M` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `discover.py:175-178` and `search.py:271-274` do `[await PhotoService.get_photo_url(p.url, p.status) for p in approved_photos_raw]`. `photo_service.py:212-218` runs a synchronous `generate_presigned_url` for every non-approved photo. A page of 20 users × 9 photos = up to **180 serialized S3 calls** per discover/search request.
 
