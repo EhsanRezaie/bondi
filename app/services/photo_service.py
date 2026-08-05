@@ -8,6 +8,8 @@ from PIL import Image
 
 from app.core.config import settings
 from app.core.logging import get_logger
+import app.core.redis as redis_module
+from app.core.redis import redis_client
 
 logger = get_logger("photo_service")
 
@@ -203,11 +205,17 @@ class PhotoService:
         """
         Resolve a stored object key into an actual loadable URL, based on
         moderation status:
-          - approved  -> public bucket, plain fast URL (cacheable, no signing cost)
-          - otherwise -> private bucket, short-lived signed URL (owner-only viewing)
+          - approved  -> public bucket, plain fast URL (no signing cost)
+          - otherwise -> private bucket, short-lived signed URL (cached in
+                         Redis for 5 min to avoid repeated MinIO round-trips)
         """
         if status in PhotoService.PUBLIC_STATUSES:
             return f"{settings.S3_PUBLIC_BASE_URL}/{key}"
+
+        cache_key = f"presign:{key}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return cached
 
         async with _s3_client() as s3:
             url = await s3.generate_presigned_url(
@@ -215,6 +223,8 @@ class PhotoService:
                 Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
                 ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
             )
+
+        await redis_client.setex(cache_key, 300, url)
         return url
     @staticmethod
     async def download_photo_bytes(key: str) -> bytes:

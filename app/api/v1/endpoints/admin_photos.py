@@ -6,6 +6,7 @@ from uuid import UUID
 from app.db.session import get_session
 from app.core.deps import get_admin_user
 from app.core.limiter import limiter
+from app.core.redis import redis_client
 from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -119,6 +120,8 @@ async def admin_approve_photo(
     photo.status = "approved"
     await session.commit()
 
+    await redis_client.delete(f"presign:{photo.url}")
+
     return {"message": "Photo approved successfully", "photo_id": str(photo_id)}
 
 
@@ -148,6 +151,8 @@ async def admin_reject_photo(
     photo.status = "rejected"
     photo.reject_reason = reason
     await session.commit()
+
+    await redis_client.delete(f"presign:{photo.url}")
 
     return {"message": "Photo rejected successfully", "photo_id": str(photo_id), "reason": reason}
 
