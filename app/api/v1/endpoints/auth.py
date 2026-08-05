@@ -28,6 +28,7 @@ from app.core.security import (
     decode_refresh_token,
     decode_token,
 )
+from app.core.cache import invalidate_auth_user
 from app.services.email_service import send_verification_code
 
 from app.schemas.auth import (
@@ -359,7 +360,9 @@ async def register_complete(
     session.add(subscription)
     
     await session.commit()
-    
+
+    await invalidate_auth_user(redis.redis_client, current_user.id)
+
     return await build_login_response(current_user, session)
 
 
@@ -539,6 +542,8 @@ async def change_password(
     await redis.revoke_all_user_tokens(str(current_user.id))
     
     await session.commit()
+
+    await invalidate_auth_user(redis.redis_client, current_user.id)
     
     return None
 
@@ -583,6 +588,8 @@ async def password_reset_verify(
     await redis.delete_verification_code(body.email)
     
     await session.commit()
+
+    await invalidate_auth_user(redis.redis_client, user.id)
     
     return None
 

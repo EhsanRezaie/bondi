@@ -10,14 +10,14 @@ from datetime import datetime, timezone
 from app.models.interest import Interest
 from app.db.session import get_session
 from app.models.user import User
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
 from app.services.location_service import LocationService
 from app.schemas.user import UserProfileResponse, UserUpdateRequest, LocationTextUpdateRequest, LocationTextUpdateResponse,InterestUpdateRequest,PromptUpdateRequest
 from app.schemas.settings import UserSettingsUpdateRequest, UserSettingsResponse
 from app.models.user_settings import UserSettings
 from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, invalidate_user_cache
+from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, invalidate_user_cache, invalidate_auth_user
 
 from app.core.logging import get_logger
 
@@ -132,6 +132,7 @@ async def update_me(
     await session.refresh(user)
     
     await invalidate_user_cache(redis_client, current_user.id)
+    await invalidate_auth_user(redis_client, current_user.id)
 
     # Reload with profile, settings, user_interests, and prompts
     result = await session.execute(
@@ -190,6 +191,7 @@ async def update_settings(
     await session.refresh(settings)
     
     await invalidate_user_cache(redis_client, current_user.id)
+    await invalidate_auth_user(redis_client, current_user.id)
     
     return settings
 
@@ -199,7 +201,7 @@ async def update_settings(
 async def delete_me(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> None:
     """
     Soft delete current user account.
@@ -208,6 +210,7 @@ async def delete_me(
     current_user.is_active = False
     await session.commit()
     await invalidate_user_cache(redis_client, current_user.id)
+    await invalidate_auth_user(redis_client, current_user.id)
 
 
 @router.post("/me/location", status_code=status.HTTP_204_NO_CONTENT)
@@ -217,7 +220,7 @@ async def update_location(
     lat: float,
     lng: float,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> None:
     """
     Update user's current location (lat/lng).
@@ -261,6 +264,7 @@ async def update_location(
     
     await session.commit()
     await invalidate_user_cache(redis_client, current_user.id)
+    await invalidate_auth_user(redis_client, current_user.id)
 
 
 @router.patch("/me/location-text", response_model=LocationTextUpdateResponse)
@@ -269,7 +273,7 @@ async def update_location_text(
     request: Request,
     body: LocationTextUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     """
     Update user's location with text fields (country, province, city).
@@ -297,6 +301,7 @@ async def update_location_text(
     await session.commit()
     await session.refresh(current_user)
     await invalidate_user_cache(redis_client, current_user.id)
+    await invalidate_auth_user(redis_client, current_user.id)
     
     return LocationTextUpdateResponse(
         country=profile.country,

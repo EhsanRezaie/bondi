@@ -55,7 +55,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 | **Migrations in version control** | ✅ committed | P0-1 done |
 | **Startup auto-generates migrations** | ✅ removed | P0-1 done |
 | **Auth dependency hits DB every request** | ✅ cached in Redis | P0-2 done |
-| **Chat decryption CPU per-message** | ❌ slow | → P0-3 (NEW) |
+| **Chat decryption CPU per-message** | ✅ cached + offloaded | P0-3 done |
 | **Celery installed but 0 bytes of code** | ❌ dead | → P1-7 (NEW) |
 
 ## 🔴 P0 — Critical (launch blockers / will break production)
@@ -167,7 +167,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P0-3 — Fix chat-history decryption CPU cost (PBKDF2 100k × N rows on event loop) · `S` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/core/encryption.py:27-36` derives the per-match key with PBKDF2-HMAC-SHA256, **100,000 iterations**. `app/models/message.py:63-76` re-derives + decrypts in the `content` property **on every access**. `messages.py` chat-history loader iterates rows and accesses `.content` per row.
 
@@ -1251,7 +1251,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 |---|------|--------|-----------|
 | 1 | **P0-1** migrations: stop autogenerate + commit to git + init container | XS | ✅ done (`b3d76b2`) |
 | 2 | **P0-2** cache `get_current_user` in Redis | S | ✅ done |
-| 3 | **P0-3** fix chat decryption CPU | S | Fixes chat latency; unblocks event loop |
+| 3 | **P0-3** cache derive_chat_key + offload decrypt to threadpool | S | ✅ done |
 | 4 | **P0-4** PgBouncer + pool tuning | S | Unblocks 100+ concurrent users |
 | 5 | **P0-5** HTTPS | S | Required for Play Store |
 | 6 | **P0-8** rotate secrets | XS | Baseline; do before launch |

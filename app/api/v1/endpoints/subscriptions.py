@@ -9,7 +9,7 @@ from app.core.deps import get_current_user
 from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_sub_plans, TTL_SUB_PLANS
+from app.core.cache import cache_get, cache_set, key_sub_plans, TTL_SUB_PLANS, invalidate_auth_user
 from sqlalchemy.orm import selectinload
 from app.models.user import User
 from app.models.subscription import Subscription
@@ -159,6 +159,8 @@ async def verify_payment(
     )
     session.add(subscription)
     await session.commit()
+
+    await invalidate_auth_user(redis_client, user.id)
     
     return VerifyResponse(
         success=True,

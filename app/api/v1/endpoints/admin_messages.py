@@ -10,7 +10,6 @@ from app.models.user import User
 from app.models.message import Message
 from app.models.report import Report  
 from app.core.deps import get_admin_user
-from app.core.encryption import decrypt_message
 from app.schemas.message import MessageResponse
 from app.schemas.admin import (
     AdminMessageDecryptResponse,

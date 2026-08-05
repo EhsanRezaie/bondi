@@ -8,10 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
 from app.core.logging import get_logger
 import app.core.redis as redis_module
+from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.db.session import get_session
 from app.models.photo import Photo
 from app.models.user import User
@@ -115,7 +116,7 @@ async def verify_video(
     challenge_id: str = "",
     challenge_type: str = "",
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> VerifyResponse:
     """
     Submit a selfie video for face verification.
@@ -262,6 +263,10 @@ async def verify_video(
         photo.face_verified = True
 
     await session.commit()
+
+    # Invalidate caches — verification status changed
+    await invalidate_auth_user(redis_module.redis_client, current_user.id)
+    await invalidate_user_cache(redis_module.redis_client, current_user.id)
 
     # Update challenge status
     challenge["status"] = "completed"

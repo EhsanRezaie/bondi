@@ -11,7 +11,7 @@ from app.db.session import get_session
 from app.models.user import User
 from app.models.match import Match
 from app.models.message import Message
-from app.core.deps import get_current_user, get_current_user_id
+from app.core.deps import get_current_user, get_current_user_id, get_current_user_db
 from app.core.limiter import limiter
 from app.schemas.message import (
     MessageResponse, MessageListResponse, TextMessageRequest,
@@ -23,7 +23,7 @@ from app.services.chat_service import (
     can_start_new_chat, check_unmatched_message_limit, accept_unmatched_chat,
     increment_new_chat_count, mark_messages_as_delivered, mark_messages_as_read,
     delete_message, forward_message, create_encrypted_message,
-    get_decrypted_message_for_client, get_message_for_admin
+    get_decrypted_message_for_client, get_message_for_admin, decrypt_message_async
 )
 from app.services.media_service import MediaService
 from app.services.notification_service import NotificationService
@@ -226,8 +226,11 @@ async def get_chat_history(
             )
             reply_msg = reply_result.scalar_one_or_none()
             if reply_msg:
-                # Decrypt reply content
-                reply_content = reply_msg.content if reply_msg.match_id else reply_msg._content
+                # Decrypt reply content off the event loop
+                if reply_msg.match_id and reply_msg._content:
+                    reply_content = await decrypt_message_async(reply_msg._content, str(reply_msg.match_id))
+                else:
+                    reply_content = reply_msg._content
                 reply_to_data = {
                     "id": reply_msg.id,
                     "content": reply_content[:100] if reply_content else "[Media]",
@@ -349,13 +352,12 @@ async def send_text_message(
         chats_remaining = chats_result if chats_result != -1 else None
 
     # Offload WebSocket notification to background
-    decrypted_content = new_message.content if new_message.match_id else new_message._content
     message_data = {
         "type": "new_message",
         "data": {
             "id": str(new_message.id),
             "message_type": "text",
-            "content": decrypted_content,
+            "content": body.content,
             "sender_id": str(current_user.id),
             "sent_at": new_message.sent_at.isoformat(),
         }
@@ -375,7 +377,7 @@ async def send_text_message(
         requires_acceptance=not is_accepted and not match_id,
         chat_accepted=is_accepted or match_id is not None,
         chats_remaining_today=chats_remaining,
-        message=_build_message_response(new_message, decrypted_content=decrypted_content),
+        message=_build_message_response(new_message, decrypted_content=body.content),
     )
 
 
@@ -432,14 +434,13 @@ async def send_photo_message(
     await session.commit()
 
     # Offload WebSocket notification to background
-    decrypted_content = new_message.content if new_message.match_id else new_message._content
     message_data = {
         "type": "new_message",
         "data": {
             "id": str(new_message.id),
             "message_type": "photo",
             "media_url": media_url,
-            "caption": decrypted_content,
+            "caption": caption or "",
             "sender_id": str(current_user.id),
             "sent_at": new_message.sent_at.isoformat(),
         }
@@ -458,7 +459,7 @@ async def send_photo_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=new_message.content if new_message.match_id else new_message._content),
+        message=_build_message_response(new_message, decrypted_content=caption or ""),
     )
 
 

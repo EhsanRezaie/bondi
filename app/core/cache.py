@@ -1,7 +1,13 @@
 import json
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from uuid import UUID
 from redis.asyncio import Redis
+from sqlalchemy import Date, DateTime
 from app.core.logging import get_logger
+from app.models.user import User
+from app.models.user_profile import UserProfile
+from app.models.user_settings import UserSettings
 
 logger = get_logger("core.cache")
 
@@ -141,3 +147,119 @@ async def get_swiped_ids(redis: Redis, user_id: UUID) -> set[str]:
         return {m for m in members}
     except Exception:
         return set()
+
+
+# ── Auth User Snapshot (P0-2) ─────────────────────────────────────────────────
+# get_current_user hits Redis first (keyed by user_id + token_version), falling
+# back to the DB on miss/error. Snapshots carry all User/UserProfile/UserSettings
+# columns so read endpoints behave identically; computed properties (is_premium,
+# age, is_profile_complete) are re-derived on read.
+
+TTL_AUTH_USER = 30  # seconds
+
+
+def key_auth_user(user_id: UUID, token_version: int) -> str:
+    return f"cache:auth:{user_id}:v{token_version}"
+
+
+def _row_to_dict(obj) -> dict | None:
+    if obj is None:
+        return None
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+def _dict_to_obj(model, data: dict) -> SimpleNamespace | None:
+    if not data:
+        return None
+    attrs = {}
+    for c in model.__table__.columns:
+        val = data.get(c.name)
+        if val is not None:
+            if isinstance(c.type, DateTime):
+                val = datetime.fromisoformat(val)
+            elif isinstance(c.type, Date):
+                val = date.fromisoformat(val)
+        attrs[c.name] = val
+    return SimpleNamespace(**attrs)
+
+
+def _profile_from_cache(data: dict) -> SimpleNamespace | None:
+    p = _dict_to_obj(UserProfile, data)
+    if p is None:
+        return None
+    now = datetime.now(timezone.utc)
+    p.is_premium = p.premium_until is not None and p.premium_until > now
+    if p.birth_date is None:
+        p.age = 0
+    else:
+        today = date.today()
+        age = today.year - p.birth_date.year
+        if (today.month, today.day) < (p.birth_date.month, p.birth_date.day):
+            age -= 1
+        p.age = age
+    p.is_profile_complete = all([
+        p.name is not None,
+        p.birth_date is not None,
+        p.gender is not None,
+        p.lat is not None,
+        p.lng is not None,
+    ])
+    return p
+
+
+def _user_from_cache(data: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=UUID(data["id"]),
+        is_active=data["is_active"],
+        token_version=data["token_version"],
+        registration_status=data.get("registration_status"),
+        referral_code=data.get("referral_code"),
+        email=data.get("email"),
+        profile=_profile_from_cache(data.get("profile")),
+        settings=_dict_to_obj(UserSettings, data.get("settings")),
+    )
+
+
+async def cache_auth_user(redis: Redis, user, token_version: int) -> None:
+    """Serialize the DB-loaded user (with profile/settings attached) into Redis."""
+    key = key_auth_user(user.id, token_version)
+    data = {
+        "id": str(user.id),
+        "is_active": user.is_active,
+        "token_version": user.token_version,
+        "registration_status": user.registration_status,
+        "referral_code": user.referral_code,
+        "email": user.email,
+        "profile": _row_to_dict(user.profile),
+        "settings": _row_to_dict(user.settings),
+    }
+    try:
+        await redis.set(key, json.dumps(data, default=str), ex=TTL_AUTH_USER)
+    except Exception as e:
+        logger.warning("cache_auth_user_failed", key=key, error=str(e))
+
+
+async def get_cached_auth_user(redis: Redis, user_id, token_version: int):
+    """Return a lightweight snapshot or None on miss/error."""
+    key = key_auth_user(user_id, token_version)
+    try:
+        raw = await redis.get(key)
+    except Exception as e:
+        logger.warning("cache_get_auth_user_failed", key=key, error=str(e))
+        return None
+    if not raw:
+        return None
+    try:
+        return _user_from_cache(json.loads(raw))
+    except Exception as e:
+        logger.warning("cache_auth_user_parse_failed", key=key, error=str(e))
+        return None
+
+
+async def invalidate_auth_user(redis: Redis, user_id: UUID) -> None:
+    """Clear all cached auth snapshots for a user (all token versions)."""
+    try:
+        async for k in redis.scan_iter(match=f"cache:auth:{user_id}:v*"):
+            await redis.delete(k)
+    except Exception as e:
+        logger.warning("cache_invalidate_auth_user_failed", user_id=str(user_id), error=str(e))

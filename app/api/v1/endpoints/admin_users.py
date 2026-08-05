@@ -8,6 +8,8 @@ from app.models.notification import Notification
 from app.db.session import get_session
 from app.core.deps import get_admin_user
 from app.core.limiter import limiter
+import app.core.redis as redis_module
+from app.core.cache import invalidate_auth_user
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
@@ -193,6 +195,8 @@ async def admin_update_user(
     await session.commit()
     await session.refresh(user)
 
+    await invalidate_auth_user(redis_module.redis_client, user.id)
+
     return AdminUserResponse(
         id=user.id,
         email=user.email,
@@ -228,6 +232,8 @@ async def admin_delete_user(
 
     await session.delete(user)
     await session.commit()
+
+    await invalidate_auth_user(redis_module.redis_client, user_id)
 
 
 @router.post("/{user_id}/premium", response_model=AdminUserResponse)
@@ -272,6 +278,8 @@ async def admin_grant_premium(
 
     await session.commit()
     await session.refresh(user)
+
+    await invalidate_auth_user(redis_module.redis_client, user.id)
 
     return AdminUserResponse(
         id=user.id,

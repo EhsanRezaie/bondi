@@ -1,4 +1,5 @@
 # app/services/chat_service.py
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from typing import Optional, Tuple, List, Dict, Any
@@ -14,7 +15,7 @@ from app.models.match import Match
 from app.models.message import Message
 from app.models.daily_limit import DailyLimit
 from app.core.logging import get_logger
-from app.core.encryption import encrypt_message, decrypt_message
+from app.core.encryption import encrypt_message, decrypt_message, decrypt_message_async
 
 logger = get_logger("chat_service")
 
@@ -274,10 +275,14 @@ async def get_decrypted_message_for_client(
 ) -> Dict[str, Any]:
     """
     Get message data with decrypted content for client delivery.
+    Decrypt runs in a threadpool to avoid blocking the event loop.
     """
-    # Decrypt content (uses property getter)
-    decrypted_content = message.content if message.match_id else message._content
-    
+    # Decrypt content off the event loop
+    if message.match_id and message._content:
+        decrypted_content = await decrypt_message_async(message._content, str(message.match_id))
+    else:
+        decrypted_content = message._content
+
     return {
         "id": str(message.id),
         "match_id": str(message.match_id) if message.match_id else None,
@@ -304,19 +309,23 @@ async def get_message_for_admin(
 ) -> Tuple[Optional[Message], Optional[str]]:
     """
     Get a message with decrypted content for admin review.
+    Decrypt runs in a threadpool to avoid blocking the event loop.
     Returns: (message, decrypted_content)
     """
     result = await session.execute(
         select(Message).where(Message.id == message_id)
     )
     message = result.scalar_one_or_none()
-    
+
     if not message:
         return None, None
-    
-    # Decrypt using admin method
-    decrypted_content = message.get_decrypted_content_for_admin() if message.match_id else message._content
-    
+
+    # Decrypt off the event loop
+    if message.match_id and message._content:
+        decrypted_content = await decrypt_message_async(message._content, str(message.match_id))
+    else:
+        decrypted_content = message._content
+
     return message, decrypted_content
 
 
@@ -426,8 +435,12 @@ async def forward_message(
 
     receiver_id = target_match.user2_id if target_match.user1_id == user_id else target_match.user1_id
 
-    # Get decrypted content for forwarding
-    original_content = original.content if original.match_id else original._content
+    # Get decrypted content for forwarding (off the event loop)
+    if original.match_id and original._content:
+        original_content = await decrypt_message_async(original._content, str(original.match_id))
+    else:
+        original_content = original._content
+
     forwarded_content = f"📨 Forwarded: {original_content}" if original_content else "📨 Forwarded message"
 
     # Create new message with encryption for new chat

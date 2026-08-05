@@ -13,6 +13,8 @@ from app.models.user import User
 from app.core.config import settings
 from app.core.security import decode_token, decode_access_token, ACCESS_TOKEN_TYPE
 from app.core.logging import get_logger
+from app.core import redis as redis_module
+from app.core.cache import cache_auth_user, get_cached_auth_user
 
 logger = get_logger("core.deps")
 
@@ -24,16 +26,20 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """Extract and validate Bearer token, return the User object with profile and settings."""
+    """Extract and validate Bearer token, return the User with profile and settings.
+
+    Fast path: serve a lightweight snapshot cached in Redis (keyed by
+    user_id + token_version). Falls back to the DB on miss or Redis error.
+    """
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     token = credentials.credentials
-    
+
     payload = decode_token(token, ACCESS_TOKEN_TYPE)
     if not payload:
         raise HTTPException(
@@ -41,16 +47,32 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     user_id = payload.get("sub")
     token_version = payload.get("ver", 1)
-    
+
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
         )
-    
+
+    # Fast path: cached snapshot (no DB round-trips)
+    cached = await get_cached_auth_user(redis_module.redis_client, user_id, token_version)
+    if cached is not None:
+        if not cached.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated",
+            )
+        if token_version != cached.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token revoked. Please login again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return cached
+
     # Load user with profile and settings using selectinload
     result = await session.execute(
         select(User)
@@ -61,26 +83,92 @@ async def get_current_user(
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated",
         )
-    
+
     if token_version != user.token_version:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token revoked. Please login again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    await cache_auth_user(redis_module.redis_client, user, token_version)
+    return user
+
+
+async def get_current_user_db(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Always hit the DB (no cache). Use in endpoints that MUTATE the returned
+    user/profile/settings and commit — a cached snapshot would silently lose writes."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
+
+    payload = decode_token(token, ACCESS_TOKEN_TYPE)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("sub")
+    token_version = payload.get("ver", 1)
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    # Load user with profile and settings using selectinload
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+        )
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated",
+        )
+
+    if token_version != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token revoked. Please login again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return user
 
 

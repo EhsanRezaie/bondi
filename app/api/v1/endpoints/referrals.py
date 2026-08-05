@@ -7,13 +7,15 @@ from sqlalchemy import select, func
 
 from sqlalchemy.orm import selectinload
 from app.db.session import get_session
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
 from app.core.config import settings
 from app.models.user import User
 from app.models.referral_reward import ReferralReward
 from app.services.reward_service import RewardService
 from app.schemas.referral import ReferralCodeResponse, ClaimReferralResponse, ReferralStatsResponse
+from app.core.redis import redis_client
+from app.core.cache import invalidate_auth_user
 
 from app.core.logging import get_logger
 
@@ -32,13 +34,14 @@ def generate_referral_code() -> str:
 async def get_my_referral_code(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     """Get user's referral code to share with friends."""
     # Generate code if missing (backward compatibility for existing users)
     if not current_user.referral_code:
         current_user.referral_code = generate_referral_code()
         await session.commit()
+        await invalidate_auth_user(redis_client, current_user.id)
     
     return {
         "referral_code": current_user.referral_code,
@@ -52,7 +55,7 @@ async def claim_referral(
     request: Request,
     body: dict,  # {"referral_code": "ABC12345"}
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     """
     Claim a referral code after registration.
@@ -111,6 +114,7 @@ async def claim_referral(
     
     try:
         await session.commit()
+        await invalidate_auth_user(redis_client, current_user.id)
     except IntegrityError:
         await session.rollback()
         raise HTTPException(
@@ -130,7 +134,7 @@ async def claim_referral(
 async def get_referral_stats(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     """Get referral statistics for current user."""
     # Count successful referrals
@@ -152,6 +156,7 @@ async def get_referral_stats(
     if not current_user.referral_code:
         current_user.referral_code = generate_referral_code()
         await session.commit()
+        await invalidate_auth_user(redis_client, current_user.id)
     
     return {
         "referral_code": current_user.referral_code,
