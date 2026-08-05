@@ -624,21 +624,54 @@ git log --all --full-history -- .env
 ### 6.3 — ENCRYPTION_SECRET Rotation Plan
 
 If `ENCRYPTION_SECRET` is ever compromised, all message content in the DB is at risk.
-Document the rotation procedure now while the app is empty:
+The rotation script is committed at `app/db/scripts/rotate_encryption_secret.py`.
 
-```
-Rotation procedure:
-1. Deploy new ENCRYPTION_SECRET to .env
-2. Write migration script:
-   - For each message: decrypt with OLD key → re-encrypt with NEW key
-   - Run in transaction with rollback on error
-3. Deploy migration
-4. Verify messages still decrypt correctly
-5. Remove OLD key
+**Prerequisites:**
+1. A `pg_dump` backup taken and verified.
+2. The app **stopped** (or in read-only mode) so no new messages are written mid-rotation.
+3. The new secret generated: `openssl rand -hex 32` (32 bytes = 256 bits, required for AES-256).
 
-Note: This must be done in a maintenance window with 0 active users
-      (messages being written during rotation would use the wrong key).
+**Procedure:**
+```bash
+# 1. Stop the app
+docker compose stop app
+
+# 2. Dry run first — see what would change without writing:
+python -m app.db.scripts.rotate_encryption_secret \
+    --old-secret "$CURRENT_ENCRYPTION_SECRET" \
+    --new-secret "$NEW_ENCRYPTION_SECRET" \
+    --dry-run
+
+# 3. Apply the rotation (confirms backup exists):
+python -m app.db.scripts.rotate_encryption_secret \
+    --old-secret "$CURRENT_ENCRYPTION_SECRET" \
+    --new-secret "$NEW_ENCRYPTION_SECRET" \
+    --apply
+
+# 4. Update .env with the new ENCRYPTION_SECRET, restart the app:
+docker compose up -d app
+
+# 5. Verify — load an old chat and confirm messages decrypt correctly.
 ```
+
+**How it works:**
+- The script uses `decrypt_with_secret(msg._content, match_id, old_secret)` and
+  `encrypt_with_secret(plaintext, match_id, new_secret)` — both bypass the LRU cache
+  in `derive_chat_key` (which always reads the live `settings.ENCRYPTION_SECRET`).
+- Processes `messages` rows in keyset-paginated batches (`--batch-size`, default 500).
+- Rows where `match_id IS NULL` (unmatched chats) are skipped — their content is
+  stored as plaintext, not encrypted.
+- Rows where decryption fails (e.g. `[Message deleted]` plaintext markers, voice
+  messages with null content) are skipped and reported — not re-encrypted.
+- Each batch is committed independently; a batch failure rolls back that batch only.
+- `--dry-run` reports counts without writing anything.
+
+**Gotchas:**
+- The app **must** be stopped during rotation. A message written mid-rotation with
+  the old key would become undecryptable with the new key.
+- After rotation, the LRU cache in `derive_chat_key` is empty (fresh process) and
+  all future derives use the new secret from `settings.ENCRYPTION_SECRET`.
+- Always take a `pg_dump` before rotating. An untested backup is not a backup.
 
 ---
 
