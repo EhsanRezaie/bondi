@@ -1,4 +1,8 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
+
+# Pin base image digest so the python/apt/pip layers stay cached across deploys
+# (the floating "python:3.11-slim" tag invalidates the whole cache whenever it updates).
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
 
 WORKDIR /app
 
@@ -11,7 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Mount a persistent pip cache directory so downloaded wheels are reused across
+# builds (avoids re-downloading onnxruntime/insightface/opencv every deploy).
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY app/ app/
 COPY alembic/ alembic/
