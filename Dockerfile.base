@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+
+# Heavy dependency layer. Built ONLY when requirements.txt changes (see
+# scripts/build-base.sh). Tagged bondi-base:<md5(requirements.txt)> and
+# bondi-base:latest so app rebuilds skip pip entirely.
+
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+
+WORKDIR /deps
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    libxkbcommon0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt

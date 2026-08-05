@@ -77,15 +77,19 @@ if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
     echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 fi
 
-# 4. Build new image
+# 4. Build/refresh base image (deps) — no-op unless requirements.txt changed
+log "Ensuring base image (deps)..."
+bash scripts/build-base.sh
+
+# 5. Build new image (thin — skips pip, takes seconds)
 log "Building..."
 docker compose build app
 
-# 5. Deploy
+# 6. Deploy
 log "Starting services..."
 docker compose up -d --no-deps app
 
-# 6. Health check
+# 7. Health check
 log "Running health check..."
 if wait_for_health; then
     ok "Deploy successful — app is healthy"
