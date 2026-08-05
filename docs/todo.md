@@ -396,7 +396,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P0-8 — Rotate production secrets + document ENCRYPTION_SECRET rotation · `XS`
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `.env:10` `SECRET_KEY=change-this-to-64-random-characters-in-production`, `.env:23` `ADMIN_SECRET_KEY=change-this-to-random-string`, `.env:84` a real `ENCRYPTION_SECRET`, `.env:125` a real `GLITCHTIP_SECRET_KEY`. No re-encryption script exists. `security_plan` Section 6 (unchecked).
 
@@ -1254,7 +1254,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 | 3 | **P0-3** cache derive_chat_key + offload decrypt to threadpool | S | ✅ done |
 | 4 | **P0-4** PgBouncer + pool tuning | S | Unblocks 100+ concurrent users |
 | 5 | **P0-5** HTTPS | S | Required for Play Store |
-| 6 | **P0-8** rotate secrets | XS | Baseline; do before launch |
+| 6 | **P0-8** rotate secrets | XS | ✅ done |
 | 7 | **P0-6** real ZarinPal | M | Required to monetize |
 | 8 | **P0-7** real email sending | M | Required to register/reset in prod |
 | 9 | **P1-1 + P1-7** FCM in executor + decide on Celery | S–M | Reliability of notifications |
