@@ -557,3 +557,27 @@ class TestChatChannel:
 
         assert (channel, "u1") not in self.manager.chat_connections
         assert mock_redis.delete.called
+
+
+# =============================================================================
+# WS token validation — validate_ws_token (deps) must unwrap sub correctly
+# =============================================================================
+class TestWsTokenValidation:
+    async def test_validate_ws_token_returns_user_id(self, patch_redis):
+        """A valid access token must yield the subject string, not raise."""
+        from app.core.security import create_access_token
+        from app.core.deps import validate_ws_token
+
+        user_id = "e9dfcd4a-3cf4-42d2-84ef-4a45cd7473ff"
+        token = create_access_token(user_id, token_version=1)
+
+        result = await validate_ws_token(token, None)
+        assert result == user_id
+
+    @pytest.mark.parametrize("bad_token", ["not-a-jwt", "", "a.b.c"])
+    async def test_validate_ws_token_rejects_invalid(self, patch_redis, bad_token):
+        import pytest as _pytest
+        from app.core.deps import validate_ws_token
+
+        with _pytest.raises(ValueError):
+            await validate_ws_token(bad_token, None)

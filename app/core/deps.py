@@ -246,8 +246,7 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
     Does NOT use get_current_user — WebSocket doesn't need full profile load.
     """
     try:
-        payload = decode_access_token(token)
-        user_id = payload.get("sub")
+        user_id = decode_access_token(token)
         if not user_id:
             raise ValueError("No sub in token")
         return user_id
