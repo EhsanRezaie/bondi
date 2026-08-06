@@ -7,8 +7,8 @@ from uuid import UUID
 from app.db.session import get_session
 from app.models.user import User
 from app.models.match import Match
+from app.models.chat import Chat
 from app.models.photo import Photo
-from app.models.message import Message
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
 from app.schemas.match import MatchResponse, MatchListResponse, MatchDetailResponse, MatchUserResponse, LastMessageResponse
@@ -70,22 +70,37 @@ async def get_matches(
                 other_ids, redis_module.redis_client
             )
 
-    # Single query for all last messages (eliminates N+1)
+    # Single query for all last messages via the pair's chat (eliminates N+1)
     last_messages = {}
     if matches:
-        match_ids = [m.id for m in matches]
-        last_msg_query = (
-            select(Message)
+        pair_to_match = {}
+        for m in matches:
+            pair_to_match[(m.user1_id, m.user2_id)] = m.id
+
+        chat_query = (
+            select(Chat)
+            .options(selectinload(Chat.last_message))
             .where(
-                Message.match_id.in_(match_ids),
-                Message.is_deleted_for_all == False
+                Chat.is_active == True,
+                or_(
+                    *[
+                        or_(
+                            (Chat.initiator_id == a) & (Chat.recipient_id == b),
+                            (Chat.initiator_id == b) & (Chat.recipient_id == a),
+                        )
+                        for (a, b) in pair_to_match.keys()
+                    ]
+                ),
             )
-            .order_by(Message.match_id, Message.sent_at.desc())
-            .distinct(Message.match_id)
         )
-        last_msg_result = await session.execute(last_msg_query)
-        for msg in last_msg_result.scalars().all():
-            last_messages[msg.match_id] = msg
+        chats_result = await session.execute(chat_query)
+        for chat in chats_result.scalars().all():
+            if chat.last_message is not None:
+                forward = (chat.initiator_id, chat.recipient_id)
+                reverse = (chat.recipient_id, chat.initiator_id)
+                match_id = pair_to_match.get(forward) or pair_to_match.get(reverse)
+                if match_id:
+                    last_messages[match_id] = chat.last_message
 
     match_responses = []
     for match in matches:

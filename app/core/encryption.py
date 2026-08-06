@@ -13,21 +13,21 @@ from app.core.logging import get_logger
 logger = get_logger("core.encryption")
 
 
-def _derive_key(match_id: str, secret: str) -> bytes:
+def _derive_key(chat_id: str, secret: str) -> bytes:
     """
-    Derive a unique encryption key for a chat from match_id and a secret.
+    Derive a unique encryption key for a chat from chat_id and a secret.
 
     This is the raw KDF — no caching. Use this directly when you need
     to derive a key with a specific secret (e.g. rotation script).
 
     Args:
-        match_id: The match ID (as string)
+        chat_id: the chat ID (as string)
         secret:   The encryption secret to use
 
     Returns:
         32-byte key for AES-256-GCM encryption
     """
-    salt = match_id.encode('utf-8')
+    salt = chat_id.encode('utf-8')
 
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -40,30 +40,30 @@ def _derive_key(match_id: str, secret: str) -> bytes:
 
 
 @functools.lru_cache(maxsize=4096)
-def derive_chat_key(match_id: str) -> bytes:
+def derive_chat_key(chat_id: str) -> bytes:
     """
-    Derive a unique encryption key for a chat from match_id and the
+    Derive a unique encryption key for a chat from chat_id and the
     server's current ENCRYPTION_SECRET.
 
-    Result is cached — deterministic for a given match_id, so the
+    Result is cached — deterministic for a given chat_id, so the
     expensive PBKDF2-100k runs only once per chat per process.
 
     Args:
-        match_id: The match ID (as string)
+        chat_id: the chat ID (as string)
 
     Returns:
         32-byte key for AES-256-GCM encryption
     """
-    return _derive_key(match_id, settings.ENCRYPTION_SECRET)
+    return _derive_key(chat_id, settings.ENCRYPTION_SECRET)
 
 
-def encrypt_message(content: str, match_id: str) -> str:
+def encrypt_message(content: str, chat_id: str) -> str:
     """
     Encrypt a message using AES-256-GCM with the current ENCRYPTION_SECRET.
 
     Args:
         content: Plaintext message to encrypt
-        match_id: Match ID for key derivation
+        chat_id: Chat ID for key derivation
 
     Returns:
         Base64 encoded encrypted string (nonce + ciphertext + tag)
@@ -71,7 +71,7 @@ def encrypt_message(content: str, match_id: str) -> str:
     if not content:
         return content
 
-    key = derive_chat_key(match_id)
+    key = derive_chat_key(chat_id)
 
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
@@ -81,13 +81,13 @@ def encrypt_message(content: str, match_id: str) -> str:
     return base64.b64encode(combined).decode('utf-8')
 
 
-def decrypt_message(encrypted: str, match_id: str) -> str:
+def decrypt_message(encrypted: str, chat_id: str) -> str:
     """
     Decrypt a message using AES-256-GCM with the current ENCRYPTION_SECRET.
 
     Args:
         encrypted: Base64 encoded encrypted string
-        match_id: Match ID for key derivation
+        chat_id: Chat ID for key derivation
 
     Returns:
         Plaintext message
@@ -95,7 +95,7 @@ def decrypt_message(encrypted: str, match_id: str) -> str:
     if not encrypted:
         return encrypted
 
-    key = derive_chat_key(match_id)
+    key = derive_chat_key(chat_id)
 
     combined = base64.b64decode(encrypted.encode('utf-8'))
     nonce = combined[:12]
@@ -106,7 +106,7 @@ def decrypt_message(encrypted: str, match_id: str) -> str:
     return plaintext.decode('utf-8')
 
 
-def encrypt_with_secret(content: str, match_id: str, secret: str) -> str:
+def encrypt_with_secret(content: str, chat_id: str, secret: str) -> str:
     """
     Encrypt a message using AES-256-GCM with an explicit secret.
 
@@ -115,7 +115,7 @@ def encrypt_with_secret(content: str, match_id: str, secret: str) -> str:
 
     Args:
         content: Plaintext message to encrypt
-        match_id: Match ID for key derivation
+        chat_id: Chat ID for key derivation
         secret:   The encryption secret to use (must be the same length
                   as ENCRYPTION_SECRET)
 
@@ -125,7 +125,7 @@ def encrypt_with_secret(content: str, match_id: str, secret: str) -> str:
     if not content:
         return content
 
-    key = _derive_key(match_id, secret)
+    key = _derive_key(chat_id, secret)
 
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
@@ -135,7 +135,7 @@ def encrypt_with_secret(content: str, match_id: str, secret: str) -> str:
     return base64.b64encode(combined).decode('utf-8')
 
 
-def decrypt_with_secret(encrypted: str, match_id: str, secret: str) -> str:
+def decrypt_with_secret(encrypted: str, chat_id: str, secret: str) -> str:
     """
     Decrypt a message using AES-256-GCM with an explicit secret.
 
@@ -144,7 +144,7 @@ def decrypt_with_secret(encrypted: str, match_id: str, secret: str) -> str:
 
     Args:
         encrypted: Base64 encoded encrypted string
-        match_id: Match ID for key derivation
+        chat_id: Chat ID for key derivation
         secret:    The encryption secret to use (the old secret)
 
     Returns:
@@ -153,7 +153,7 @@ def decrypt_with_secret(encrypted: str, match_id: str, secret: str) -> str:
     if not encrypted:
         return encrypted
 
-    key = _derive_key(match_id, secret)
+    key = _derive_key(chat_id, secret)
 
     combined = base64.b64decode(encrypted.encode('utf-8'))
     nonce = combined[:12]
@@ -164,7 +164,7 @@ def decrypt_with_secret(encrypted: str, match_id: str, secret: str) -> str:
     return plaintext.decode('utf-8')
 
 
-async def decrypt_message_async(encrypted: str, match_id: str) -> str:
+async def decrypt_message_async(encrypted: str, chat_id: str) -> str:
     """
     Decrypt a message off the event loop via threadpool.
 
@@ -175,18 +175,18 @@ async def decrypt_message_async(encrypted: str, match_id: str) -> str:
         return encrypted
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, decrypt_message, encrypted, match_id)
+    return await loop.run_in_executor(None, decrypt_message, encrypted, chat_id)
 
 
-def encrypt_content_for_admin(content: str, match_id: str) -> str:
+def encrypt_content_for_admin(content: str, chat_id: str) -> str:
     """
     Alias for encrypt_message - used for admin visibility.
     """
-    return encrypt_message(content, match_id)
+    return encrypt_message(content, chat_id)
 
 
-def decrypt_content_for_admin(encrypted: str, match_id: str) -> str:
+def decrypt_content_for_admin(encrypted: str, chat_id: str) -> str:
     """
     Alias for decrypt_message - used for admin visibility.
     """
-    return decrypt_message(encrypted, match_id)
+    return decrypt_message(encrypted, chat_id)

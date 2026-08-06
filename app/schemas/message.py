@@ -15,7 +15,7 @@ class ReplyToResponse(BaseModel):
 class MessageResponse(BaseModel):
     """Response for a single message"""
     id: UUID
-    match_id: Optional[UUID] = None
+    chat_id: UUID
     sender_id: UUID
     receiver_id: UUID
     message_type: str  # text, photo, voice
@@ -26,7 +26,6 @@ class MessageResponse(BaseModel):
     is_sent: bool
     is_delivered: bool
     is_read: bool
-    is_accepted: bool
     sent_at: datetime
     delivered_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
@@ -65,7 +64,7 @@ class DeleteMessageRequest(BaseModel):
 
 class ForwardMessageRequest(BaseModel):
     """Request for forwarding message"""
-    target_match_id: UUID
+    target_chat_id: UUID
 
 
 class MarkReadRequest(BaseModel):
@@ -81,12 +80,6 @@ class MessageStatusResponse(BaseModel):
     read_at: Optional[datetime] = None
     is_delivered: bool
     is_read: bool
-
-
-class AcceptChatResponse(BaseModel):
-    """Response for accepting chat"""
-    message: str
-    is_accepted: bool
 
 
 class SendMessageResponse(BaseModel):

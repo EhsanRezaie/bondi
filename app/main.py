@@ -47,7 +47,7 @@ from app.api.v1.endpoints.system import router as admin_system_router
 from app.api.v1.websocket.matches import router as websocket_router
 from app.api.v1.endpoints.matches import router as matches_router
 from app.api.v1.endpoints.messages import router as messages_router
-from app.api.v1.endpoints.conversations import router as conversations_router
+from app.api.v1.endpoints.chats import router as chats_router
 from app.api.v1.websocket.chat import router as chat_websocket_router
 
 from app.core.logging import setup_logging
@@ -106,7 +106,7 @@ app.include_router(search_router, prefix="/api/v1")
 app.include_router(blocks_router, prefix="/api/v1")
 app.include_router(matches_router, prefix="/api/v1")
 app.include_router(messages_router, prefix="/api/v1")
-app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(chats_router, prefix="/api/v1")
 app.include_router(rewards_router, prefix="/api/v1")
 app.include_router(referrals_router, prefix="/api/v1")
 app.include_router(subscription_router, prefix="/api/v1")

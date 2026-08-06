@@ -15,6 +15,9 @@ build/
 firebase-service-account.json
 maintenance.json
 version_override.json
+
+# Alembic migrations (generated locally)
+alembic/versions/
 # IDE
 .vscode/
 .idea/

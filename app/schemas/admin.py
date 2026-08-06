@@ -183,10 +183,9 @@ class AdminMessageDecryptResponse(BaseModel):
     message_id: str
     sender_id: str
     receiver_id: str
-    match_id: Optional[str] = None
+    chat_id: str
     content: str
     sent_at: Optional[str] = None
-    is_accepted: bool
 
 
 class AdminMessageDeleteResponse(BaseModel):

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from uuid import UUID
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
@@ -7,8 +8,7 @@ from app.services.websocket_manager import websocket_manager
 from app.core.deps import validate_ws_token
 from app.core.redis import get_redis
 from app.db.session import get_db
-from app.models.match import Match
-from app.models.user import User
+from app.models.chat import Chat
 from app.models.block import Block
 from app.core.logging import get_logger
 
@@ -17,10 +17,10 @@ logger = get_logger("websocket")
 router = APIRouter()
 
 
-@router.websocket("/ws/chat/{identifier}")
+@router.websocket("/ws/chat/{chat_id}")
 async def chat_websocket(
     websocket: WebSocket,
-    identifier: str,
+    chat_id: str,
     token: str = Query(...),
     redis=Depends(get_redis),
     db: AsyncSession = Depends(get_db),
@@ -31,59 +31,48 @@ async def chat_websocket(
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    # Try to resolve the identifier as an active match the user belongs to.
-    match_result = await db.execute(
-        select(Match).where(
-            Match.id == identifier,
-            Match.is_active == True,
+    try:
+        chat_uuid = UUID(chat_id)
+    except ValueError:
+        await websocket.close(code=4003, reason="Access denied")
+        return
+
+    # Verify the user is a member of this active chat.
+    chat_result = await db.execute(
+        select(Chat).where(
+            Chat.id == chat_uuid,
+            Chat.is_active == True,
             or_(
-                Match.user1_id == user_id,
-                Match.user2_id == user_id,
+                Chat.initiator_id == user_id,
+                Chat.recipient_id == user_id,
             ),
         )
     )
-    match_obj = match_result.scalar_one_or_none()
+    chat_obj = chat_result.scalar_one_or_none()
 
-    if match_obj:
-        # ── Matched chat ──────────────────────────────────────────────
-        other_user_id = (
-            str(match_obj.user2_id) if str(match_obj.user1_id) == user_id
-            else str(match_obj.user1_id)
-        )
-        channel = websocket_manager.conversation_channel(
-            str(match_obj.id), user_id, None
-        )
-    else:
-        # ── Unmatched chat ── identifier is the other user's id ───────
-        other_user_id = identifier
+    if not chat_obj:
+        await websocket.close(code=4003, reason="Access denied")
+        return
 
-        if other_user_id == user_id:
-            await websocket.close(code=4003, reason="Access denied")
-            return
+    other_user_id = (
+        str(chat_obj.recipient_id) if str(chat_obj.initiator_id) == user_id
+        else str(chat_obj.initiator_id)
+    )
 
-        target_result = await db.execute(
-            select(User).where(User.id == other_user_id, User.is_active == True)
-        )
-        target_user = target_result.scalar_one_or_none()
-        if not target_user:
-            await websocket.close(code=4003, reason="Access denied")
-            return
+    # Blocked users (either direction) cannot chat.
+    blocked = await db.scalar(
+        select(Block.id).where(
+            or_(
+                (Block.blocker_id == user_id) & (Block.blocked_id == other_user_id),
+                (Block.blocker_id == other_user_id) & (Block.blocked_id == user_id),
+            )
+        ).limit(1)
+    )
+    if blocked:
+        await websocket.close(code=4003, reason="Access denied")
+        return
 
-        blocked = await db.scalar(
-            select(Block.id).where(
-                or_(
-                    (Block.blocker_id == user_id)
-                    & (Block.blocked_id == other_user_id),
-                    (Block.blocker_id == other_user_id)
-                    & (Block.blocked_id == user_id),
-                )
-            ).limit(1)
-        )
-        if blocked:
-            await websocket.close(code=4003, reason="Access denied")
-            return
-
-        channel = websocket_manager.conversation_channel(None, user_id, other_user_id)
+    channel = websocket_manager.conversation_channel(str(chat_obj.id))
 
     await websocket_manager.add_chat_connection(websocket, channel, user_id, redis)
 

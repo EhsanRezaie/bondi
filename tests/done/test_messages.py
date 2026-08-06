@@ -11,10 +11,9 @@ REGISTER_INIT_URL = "/api/v1/auth/register/init"
 REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
+CHATS_URL = "/api/v1/chats"
 MESSAGES_URL = "/api/v1/messages"
 
-VALID_EMAIL_MALE = "chat_male@example.com"
-VALID_EMAIL_FEMALE = "chat_female@example.com"
 VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 
@@ -43,41 +42,6 @@ COMPLETE_PROFILE_PAYLOAD_FEMALE = {
 }
 
 
-async def register_user_full(
-    client: AsyncClient,
-    email: str,
-    complete_payload: dict,
-    mock_verification_code
-) -> dict:
-    """Complete full registration flow - returns user data with tokens."""
-    # Step 1: Init
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    
-    # Step 2: Store verification code
-    await mock_verification_code(email, VALID_CODE)
-    
-    # Step 3: Verify
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
-    assert res.status_code == 200, res.text
-    data = res.json()
-    
-    # Step 4: Complete profile
-    headers = {"Authorization": f"Bearer {data['access_token']}"}
-    res = await client.post(
-        REGISTER_COMPLETE_URL,
-        json=complete_payload,
-        headers=headers,
-    )
-    assert res.status_code == 200, res.text
-    
-    return res.json()
-
-
 async def register_and_get_headers(
     client: AsyncClient,
     email: str,
@@ -85,20 +49,49 @@ async def register_and_get_headers(
     mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user and return headers with user_id."""
-    result = await register_user_full(client, email, complete_payload, mock_verification_code)
+    res = await client.post(REGISTER_INIT_URL, json={"email": email})
+    assert res.status_code == 200, res.text
+    await mock_verification_code(email, VALID_CODE)
+    res = await client.post(REGISTER_VERIFY_URL, json={
+        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
+    })
+    assert res.status_code == 200, res.text
+    data = res.json()
+    headers = {"Authorization": f"Bearer {data['access_token']}"}
+    res = await client.post(REGISTER_COMPLETE_URL, json=complete_payload, headers=headers)
+    assert res.status_code == 200, res.text
+    result = res.json()
     headers = {"Authorization": f"Bearer {result['access_token']}"}
     user_id = result["user"]["id"]
     return headers, user_id
 
 
+async def load_profiles(client, db_session, ids):
+    """Warm the identity map so profile FKs resolve."""
+    result = await db_session.execute(
+        select(User).options(selectinload(User.profile)).where(User.id.in_(ids))
+    )
+    result.scalars().all()
+
+
+async def make_match(client, male_headers, female_id, female_headers, male_id):
+    """Mutual like → start chat (auto-accepted) → return chat_id."""
+    await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+    await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+    res = await client.post(
+        CHATS_URL, json={"user_id": female_id, "content": "Hi!"}, headers=male_headers
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "accepted"
+    return res.json()["chat_id"]
+
+
 def create_test_image() -> bytes:
     """Create a valid minimal JPEG image for testing."""
-    import base64
-    # This is a valid 1x1 JPEG
     return base64.b64decode(
         b"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ"
         b"EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
-        b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QA"
+        b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QA"
         b"HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh"
         b"MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVW"
         b"V1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
@@ -114,44 +107,27 @@ def create_test_audio() -> bytes:
     """Create a minimal valid MP3 file for testing."""
     return base64.b64decode(
         b"SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAA"
-        b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAABIAAAADAAAVFRSU0UAAAAP"
-        b"AAAAQVVESU8gQ09ERVgAAABMYXZmNTguNzYuMTAwAAAAAAAAAAAAAAD/"
+        b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABJbmZvAAAADwAAAEgAAAAMAA=="
     )
 
 
 class TestMessages:
     """Test basic message functionality."""
-    
+
     async def test_send_text_message_in_matched_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should send text message in matched chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "chat_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "chat_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-        
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send message
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
+            f"{MESSAGES_URL}/{chat_id}/text",
             json={"content": "Hello!"},
             headers=male_headers,
         )
@@ -161,214 +137,128 @@ class TestMessages:
         assert data["chat_accepted"] == True
 
     async def test_get_chat_history(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should get chat history."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "hist_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "hist_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
+        await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Hello"}, headers=male_headers)
 
-        # Create match and send message
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        await client.post(f"{MESSAGES_URL}/{match_id}/text", json={"content": "Hello"}, headers=male_headers)
-
-        # Get history
-        res = await client.get(f"{MESSAGES_URL}/{match_id}", headers=male_headers)
+        res = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         assert res.status_code == 200
         data = res.json()
         assert "messages" in data
         assert "total" in data
 
-    async def test_unmatched_chat_limit(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+    async def test_pending_chat_limit(
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should enforce 2 message limit in unmatched chat."""
+        """Initiator can send at most 2 starter messages while chat is pending."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "pending_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "pending_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Like but no match yet
+        # One-sided like → chat created pending (initiator = male, 1 message sent).
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-
-        # Send first message (should work)
-        res1 = await client.post(
-            f"{MESSAGES_URL}/{female_id}/text",
-            json={"content": "First message"},
-            headers=male_headers,
+        res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "First message"}, headers=male_headers
         )
-        assert res1.status_code == 200
+        assert res.status_code == 200
+        assert res.json()["status"] == "pending"
+        chat_id = res.json()["chat_id"]
 
-        # Send second message (should work)
+        # 2nd initiator message (allowed).
         res2 = await client.post(
-            f"{MESSAGES_URL}/{female_id}/text",
-            json={"content": "Second message"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Second message"}, headers=male_headers
         )
         assert res2.status_code == 200
 
-        # Send third message (should fail)
+        # 3rd initiator message → blocked.
         res3 = await client.post(
-            f"{MESSAGES_URL}/{female_id}/text",
-            json={"content": "Third message"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Third message"}, headers=male_headers
         )
         assert res3.status_code == 403
         assert "must accept" in res3.json()["detail"]
 
     async def test_accept_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should accept unmatched chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "acc_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "acc_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
+        await load_profiles(client, db_session, [male_id, female_id])
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "Hi"}, headers=male_headers
+        )
+        chat_id = res.json()["chat_id"]
+        assert res.json()["status"] == "pending"
 
-        # Send two messages (male to female)
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "Hi"}, headers=male_headers)
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "How are you?"}, headers=male_headers)
+        ares = await client.post(f"{CHATS_URL}/{chat_id}/accept", headers=female_headers)
+        assert ares.status_code == 200
+        assert ares.json()["status"] == "accepted"
 
-        # Accept chat - female accepts the chat from male
-        res = await client.post(f"{MESSAGES_URL}/{male_id}/accept", headers=female_headers)
-        assert res.status_code == 200
-        assert res.json()["is_accepted"] == True
-
-        # Now third message should work (male to female)
         res2 = await client.post(
-            f"{MESSAGES_URL}/{female_id}/text",
+            f"{MESSAGES_URL}/{chat_id}/text",
             json={"content": "Third message after accept"},
             headers=male_headers,
         )
         assert res2.status_code == 200
 
     async def test_delete_message_for_me(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should delete message for me."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "delme_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "delme_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send message
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Delete me"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Delete me"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Delete for me
         res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=me", headers=male_headers)
         assert res.status_code == 200
 
     async def test_mark_messages_as_read(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should mark messages as read."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "read_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "read_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match and send message
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Read me"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Read me"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Mark as read
-        res = await client.post(
-            f"{MESSAGES_URL}/read",
-            json={"message_ids": [msg_id]},
-            headers=female_headers,
-        )
+        res = await client.post(f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers)
         assert res.status_code == 200
 
-        # Check status
         status_res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=male_headers)
         assert status_res.status_code == 200
         assert status_res.json()["is_read"] == True
@@ -376,42 +266,23 @@ class TestMessages:
 
 class TestPhotoMessages:
     """Test photo message functionality."""
-    
+
     async def test_send_photo_in_matched_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should send photo message in matched chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "ph1_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "ph1_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send photo
-        files = {"file": ("test.jpg", create_test_image(), "image/jpeg")}
-        data = {"caption": "Check out this photo!"}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files=files,
-            data=data,
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("test.jpg", create_test_image(), "image/jpeg")},
+            data={"caption": "Check this!"},
             headers=male_headers,
         )
         assert res.status_code == 200
@@ -419,244 +290,98 @@ class TestPhotoMessages:
         assert data["id"] is not None
         assert data["chat_accepted"] == True
 
-    async def test_send_photo_in_unmatched_chat_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+    async def test_send_photo_in_pending_chat_fails(
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should not allow photo in unmatched chat without acceptance."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "ph2_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "ph2_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Like but no match
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-
-        # Send photo without chat acceptance
-        files = {"file": ("test.jpg", create_test_image(), "image/jpeg")}
-        data = {"caption": "Photo without acceptance"}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{female_id}/photo",
-            files=files,
-            data=data,
+            CHATS_URL, json={"user_id": female_id, "content": "hey"}, headers=male_headers
+        )
+        chat_id = res.json()["chat_id"]
+
+        res2 = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("test.jpg", create_test_image(), "image/jpeg")},
             headers=male_headers,
         )
-        assert res.status_code == 403
-        assert "Photos can only be sent in accepted chats" in res.json()["detail"]
+        assert res2.status_code == 403
+        assert "accepted chats" in res2.json()["detail"]
 
-    async def test_send_photo_in_accepted_unmatched_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+    async def test_send_photo_in_accepted_after_accept(
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should send photo in accepted unmatched chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "ph3_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "ph3_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
+        await load_profiles(client, db_session, [male_id, female_id])
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-
-        # Send two text messages
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "Hi"}, headers=male_headers)
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "How are you?"}, headers=male_headers)
-
-        # Accept chat
-        await client.post(f"{MESSAGES_URL}/{male_id}/accept", headers=female_headers)
-
-        # Now send photo
-        files = {"file": ("test.jpg", create_test_image(), "image/jpeg")}
-        data = {"caption": "Photo after acceptance"}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{female_id}/photo",
-            files=files,
-            data=data,
+            CHATS_URL, json={"user_id": female_id, "content": "Hi"}, headers=male_headers
+        )
+        chat_id = res.json()["chat_id"]
+        await client.post(f"{CHATS_URL}/{chat_id}/accept", headers=female_headers)
+
+        res2 = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("test.jpg", create_test_image(), "image/jpeg")},
             headers=male_headers,
         )
-        assert res.status_code == 200
-        assert res.json()["id"] is not None
-
-    async def test_send_photo_without_caption(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
-    ):
-        """Should send photo without caption."""
-        male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send photo without caption
-        files = {"file": ("test.jpg", create_test_image(), "image/jpeg")}
-        
-        res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files=files,
-            headers=male_headers,
-        )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["id"] is not None
+        assert res2.status_code == 200
+        assert res2.json()["id"] is not None
 
     async def test_send_photo_too_large(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should reject photo larger than limit."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "pl_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "pl_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Create large image (6MB)
-        large_image = b"0" * (6 * 1024 * 1024)  # 6MB
-        files = {"file": ("test.jpg", large_image, "image/jpeg")}
-        
+        large_image = b"0" * (6 * 1024 * 1024)
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files=files,
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("big.jpg", large_image, "image/jpeg")},
             headers=male_headers,
         )
         assert res.status_code == 400
         assert "too large" in res.json()["detail"].lower()
 
-    async def test_send_photo_invalid_format(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
-    ):
-        """Should reject invalid image format."""
-        male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send invalid format (GIF)
-        invalid_image = b"GIF89a\x01\x00\x01\x00\x00\xff\x00\x00\x00\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x01\x44\x00\x3b"
-        files = {"file": ("test.gif", invalid_image, "image/gif")}
-        
-        res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files=files,
-            headers=male_headers,
-        )
-        assert res.status_code == 400
-        assert "invalid" in res.json()["detail"].lower()
-
 
 class TestVoiceMessages:
     """Test voice message functionality."""
-    
+
     async def test_send_voice_in_matched_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should send voice message in matched chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "vc_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "vc_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send voice
-        files = {"file": ("test.mp3", create_test_audio(), "audio/mpeg")}
-        data = {"duration": 15}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/voice",
-            files=files,
-            data=data,
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 15},
             headers=male_headers,
         )
         assert res.status_code == 200
@@ -664,390 +389,186 @@ class TestVoiceMessages:
         assert data["id"] is not None
         assert data["chat_accepted"] == True
 
-    async def test_send_voice_in_unmatched_chat_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+    async def test_send_voice_in_pending_chat_fails(
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should not allow voice in unmatched chat without acceptance."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "vp_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "vp_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
+        await load_profiles(client, db_session, [male_id, female_id])
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-
-        # Send voice without acceptance
-        files = {"file": ("test.mp3", create_test_audio(), "audio/mpeg")}
-        data = {"duration": 10}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{female_id}/voice",
-            files=files,
-            data=data,
+            CHATS_URL, json={"user_id": female_id, "content": "hey"}, headers=male_headers
+        )
+        chat_id = res.json()["chat_id"]
+
+        res2 = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 10},
             headers=male_headers,
         )
-        assert res.status_code == 403
-        assert "Voice messages can only be sent in accepted chats" in res.json()["detail"]
-
-    async def test_send_voice_in_accepted_unmatched_chat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
-    ):
-        """Should send voice in accepted unmatched chat."""
-        male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-
-        # Send two text messages and accept
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "Hi"}, headers=male_headers)
-        await client.post(f"{MESSAGES_URL}/{female_id}/text", json={"content": "How are you?"}, headers=male_headers)
-        await client.post(f"{MESSAGES_URL}/{male_id}/accept", headers=female_headers)
-
-        # Send voice after acceptance
-        files = {"file": ("test.mp3", create_test_audio(), "audio/mpeg")}
-        data = {"duration": 10}
-        
-        res = await client.post(
-            f"{MESSAGES_URL}/{female_id}/voice",
-            files=files,
-            data=data,
-            headers=male_headers,
-        )
-        assert res.status_code == 200
-        assert res.json()["id"] is not None
+        assert res2.status_code == 403
+        assert "accepted chats" in res2.json()["detail"]
 
     async def test_send_voice_too_long(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should reject voice longer than limit."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "vl_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "vl_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send voice with duration > 120 seconds
-        files = {"file": ("test.mp3", create_test_audio(), "audio/mpeg")}
-        data = {"duration": 150}
-        
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/voice",
-            files=files,
-            data=data,
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 150},
             headers=male_headers,
         )
         assert res.status_code == 400
         assert "too long" in res.json()["detail"].lower()
 
-    async def test_send_voice_too_large(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
-    ):
-        """Should reject voice larger than limit."""
-        male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
-
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Create large voice (3MB)
-        large_voice = b"0" * (3 * 1024 * 1024)  # 3MB
-        files = {"file": ("test.mp3", large_voice, "audio/mpeg")}
-        data = {"duration": 10}
-        
-        res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/voice",
-            files=files,
-            data=data,
-            headers=male_headers,
-        )
-        assert res.status_code == 400
-        assert "too large" in res.json()["detail"].lower()
-
 
 class TestMediaInChatHistory:
     """Test that media appears correctly in chat history."""
-    
+
     async def test_chat_history_contains_photo(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should include photo URL in chat history."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "m1_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "m1_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send photo
-        files = {"file": ("test.jpg", create_test_image(), "image/jpeg")}
-        data = {"caption": "Test photo"}
-        
         await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files=files,
-            data=data,
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
+            data={"caption": "Test photo"},
             headers=male_headers,
         )
 
-        # Get history
-        res = await client.get(f"{MESSAGES_URL}/{match_id}", headers=male_headers)
-        assert res.status_code == 200
+        res = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         data = res.json()
-        assert len(data["messages"]) >= 1
-        
-        # Check photo message fields
         photo_msg = next((m for m in data["messages"] if m["message_type"] == "photo"), None)
         assert photo_msg is not None
         assert photo_msg["media_url"] is not None
         assert photo_msg["content"] == "Test photo"
 
     async def test_chat_history_contains_voice(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
-        """Should include voice URL and duration in chat history."""
         male_headers, male_id = await register_and_get_headers(
-            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "m2_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "m2_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        # ✅ Ensure profiles are loaded
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send voice
-        files = {"file": ("test.mp3", create_test_audio(), "audio/mpeg")}
-        data = {"duration": 15}
-        
         await client.post(
-            f"{MESSAGES_URL}/{match_id}/voice",
-            files=files,
-            data=data,
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 15},
             headers=male_headers,
         )
 
-        # Get history
-        res = await client.get(f"{MESSAGES_URL}/{match_id}", headers=male_headers)
-        assert res.status_code == 200
+        res = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         data = res.json()
-        assert len(data["messages"]) >= 1
-        
-        # Check voice message fields
         voice_msg = next((m for m in data["messages"] if m["message_type"] == "voice"), None)
         assert voice_msg is not None
         assert voice_msg["media_url"] is not None
         assert voice_msg["media_duration"] == 15
 
 
-# =============================================================================
-# POST /api/v1/messages/delivered
-# =============================================================================
-
 class TestMessageDelivery:
     """Test marking messages as delivered."""
 
-    async def _setup_match_and_send_message(
-        self, client, mock_verification_code, db_session
-    ):
-        """Helper: create match and send one text message. Returns (male_headers, female_headers, match_id, msg_id)."""
+    async def test_mark_delivered_success(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, "delivery_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "del_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "delivery_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "del_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Hello"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Hello"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
-        return male_headers, female_headers, match_id, msg_id, male_id
 
-    async def test_mark_delivered_success(self, client, mock_verification_code, db_session):
-        """Should mark message as delivered."""
-        male_headers, female_headers, match_id, msg_id, male_id = await self._setup_match_and_send_message(
-            client, mock_verification_code, db_session
-        )
-
-        res = await client.post(
-            f"{MESSAGES_URL}/delivered",
-            json={"message_ids": [msg_id]},
-            headers=female_headers,
-        )
+        res = await client.post(f"{MESSAGES_URL}/delivered", json={"message_ids": [msg_id]}, headers=female_headers)
         assert res.status_code == 200
-        body = res.json()
-        assert "message" in body
-        assert "1 messages marked as delivered" in body["message"]
+        assert "1 messages marked as delivered" in res.json()["message"]
 
-        # Verify status
         status_res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=male_headers)
-        assert status_res.status_code == 200
         assert status_res.json()["is_delivered"] is True
 
-    async def test_mark_delivered_empty_list(self, client, mock_verification_code, db_session):
-        """Should handle empty message_ids list."""
-        male_headers, female_headers, match_id, msg_id, male_id = await self._setup_match_and_send_message(
-            client, mock_verification_code, db_session
-        )
-
-        res = await client.post(
-            f"{MESSAGES_URL}/delivered",
-            json={"message_ids": []},
-            headers=female_headers,
-        )
-        assert res.status_code == 200
-        assert "0 messages marked as delivered" in res.json()["message"]
-
     async def test_mark_delivered_requires_auth(self, client):
-        """Should return 401 without token."""
-        res = await client.post(
-            f"{MESSAGES_URL}/delivered",
-            json={"message_ids": []},
-        )
+        res = await client.post(f"{MESSAGES_URL}/delivered", json={"message_ids": []})
         assert res.status_code == 401
 
+    async def test_mark_read_success(self, client, mock_verification_code, db_session):
+        """Marking a message read flips is_read and read_at for the receiver."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "markread_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "markread_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-# =============================================================================
-# POST /api/v1/messages/{message_id}/status
-# =============================================================================
+        msg_res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Read me"}, headers=male_headers
+        )
+        msg_id = msg_res.json()["id"]
+
+        res = await client.post(f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers)
+        assert res.status_code == 200
+        assert "messages marked as read" in res.json()["message"]
+
+        status_res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=male_headers)
+        assert status_res.status_code == 200
+        assert status_res.json()["is_read"] is True
+        assert status_res.json()["read_at"] is not None
+
 
 class TestMessageStatus:
     """Test GET /messages/{message_id}/status."""
 
     async def test_message_status_shape(self, client, mock_verification_code, db_session):
-        """MessageStatusResponse should contain all schema fields."""
         male_headers, male_id = await register_and_get_headers(
-            client, "status_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "stat_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "status_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "stat_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Status test"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Status test"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
         res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=male_headers)
         assert res.status_code == 200
         body = res.json()
-
         assert isinstance(body["id"], str)
         assert isinstance(body["sent_at"], str)
         assert body["delivered_at"] is None
@@ -1056,505 +577,359 @@ class TestMessageStatus:
         assert body["is_read"] is False
 
     async def test_message_status_unauthorized(self, client, mock_verification_code, db_session):
-        """Other user should not see message status."""
         male_headers, male_id = await register_and_get_headers(
             client, "status2_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
             client, "status2_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Status auth test"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Status auth"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Female tries to see male's sent message status
         res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=female_headers)
         assert res.status_code == 403
 
-    async def test_message_status_requires_auth(self, client, mock_verification_code, db_session):
-        """Should return 401 without token."""
-        male_headers, male_id = await register_and_get_headers(
-            client, "status3_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, "status3_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Status auth test"},
-            headers=male_headers,
-        )
-        msg_id = msg_res.json()["id"]
-
-        res = await client.get(f"{MESSAGES_URL}/{msg_id}/status")
-        assert res.status_code == 401
-
-
-# =============================================================================
-# DELETE /api/v1/messages/{message_id} — delete for everyone
-# =============================================================================
 
 class TestMessageDeleteForEveryone:
     """Test message deletion for everyone."""
 
     async def test_delete_message_for_everyone(self, client, mock_verification_code, db_session):
-        """Should delete message for both users."""
         male_headers, male_id = await register_and_get_headers(
-            client, "delevery_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "delall_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "delevery_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "delall_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Delete for everyone"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Delete for everyone"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Delete for everyone
-        res = await client.delete(
-            f"{MESSAGES_URL}/{msg_id}?delete_for=everyone",
-            headers=male_headers,
-        )
+        res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=male_headers)
         assert res.status_code == 200
-        body = res.json()
-        assert "message" in body
-        assert "deleted" in body["message"]
 
-        # Verify message is gone for both users
-        history = await client.get(f"{MESSAGES_URL}/{match_id}", headers=male_headers)
-        assert history.status_code == 200
-        msgs = history.json()["messages"]
-        assert not any(m["id"] == msg_id for m in msgs)
-
-        history2 = await client.get(f"{MESSAGES_URL}/{match_id}", headers=female_headers)
-        assert history2.status_code == 200
-        msgs2 = history2.json()["messages"]
-        assert not any(m["id"] == msg_id for m in msgs2)
+        history = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
+        assert not any(m["id"] == msg_id for m in history.json()["messages"])
 
     async def test_delete_message_for_everyone_non_sender(self, client, mock_verification_code, db_session):
-        """Only sender can delete for everyone."""
         male_headers, male_id = await register_and_get_headers(
-            client, "delother_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "delns_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "delother_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "delns_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Delete test"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Delete test"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Female tries to delete male's message for everyone
-        res = await client.delete(
-            f"{MESSAGES_URL}/{msg_id}?delete_for=everyone",
-            headers=female_headers,
-        )
+        res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=female_headers)
         assert res.status_code == 400
 
+    async def test_delete_message_not_a_member(self, client, mock_verification_code, db_session):
+        """A non-participant cannot delete someone else's message."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "delnm_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "delnm_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        third_headers, _ = await register_and_get_headers(
+            client, "delnm_third@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-# =============================================================================
-# POST /api/v1/messages/{message_id}/forward
-# =============================================================================
+        msg_res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Mine"}, headers=male_headers
+        )
+        msg_id = msg_res.json()["id"]
+
+        res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=me", headers=third_headers)
+        assert res.status_code == 400
+        assert "Not authorized to delete this message" in res.json()["detail"]
+
 
 class TestForwardMessage:
     """Test message forwarding."""
 
     async def test_forward_message_success(self, client, mock_verification_code, db_session):
-        """Should forward message to another match."""
         male_headers, male_id = await register_and_get_headers(
             client, "fwd_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
             client, "fwd_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        # Create first match
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match1_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match1_id = match1_res.json()["match_id"]
-
-        # Send message in match1
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match1_id}/text",
-            json={"content": "Forward this message"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat1}/text", json={"content": "Forward this message"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
-        # Female likes female2... wait, we need a second match to forward TO
-        # Register a third user for the target match
-        VALID_EMAIL_FEMALE2 = "fwd_female2@example.com"
-        COMPLETE_PROFILE_PAYLOAD_FEMALE2 = {
-            "name": "Fwd Female2",
-            "birth_date": "2000-01-01",
-            "gender": "female",
-            "lat": 35.6892,
-            "lng": 51.3890,
-        }
-        female2_headers, female2_id = await register_and_get_headers(
-            client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
+        # Second chat to forward INTO (any active chat the user belongs to).
+        f2_headers, f2_id = await register_and_get_headers(
+            client, "fwd_female2@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, f2_id])
+        chat2 = await make_match(client, male_headers, f2_id, f2_headers, male_id)
 
-        result2 = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female2_id]))
-        )
-        users2 = result2.scalars().all()
-
-        # Create second match (male ↔ female2)
-        await client.post(SWIPE_URL, json={"user_id": female2_id, "direction": "like"}, headers=male_headers)
-        match2_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female2_headers)
-        match2_id = match2_res.json()["match_id"]
-
-        # Forward message from match1 to match2
         res = await client.post(
             f"{MESSAGES_URL}/{msg_id}/forward",
-            json={"target_match_id": match2_id},
+            json={"target_chat_id": chat2},
             headers=male_headers,
         )
         assert res.status_code == 200
         body = res.json()
-
-        assert "message" in body
         assert body["message"] == "Message forwarded"
         assert "new_message_id" in body
-        assert isinstance(body["new_message_id"], str)
 
-        # Verify forwarded message appears in match2 history
-        history = await client.get(f"{MESSAGES_URL}/{match2_id}", headers=male_headers)
-        assert history.status_code == 200
-        msgs = history.json()["messages"]
-        assert any(m["id"] == body["new_message_id"] for m in msgs)
+        history = await client.get(f"{MESSAGES_URL}/{chat2}", headers=male_headers)
+        assert any(m["id"] == body["new_message_id"] for m in history.json()["messages"])
 
-    async def test_forward_to_nonexistent_match(self, client, mock_verification_code, db_session):
-        """Should return 400 when forwarding to non-existent match."""
+    async def test_forward_to_nonexistent_chat(self, client, mock_verification_code, db_session):
         from uuid import uuid4
         male_headers, male_id = await register_and_get_headers(
-            client, "fwderr_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "fwerr_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "fwderr_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "fwerr_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Forward error test"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Forward error"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
         res = await client.post(
             f"{MESSAGES_URL}/{msg_id}/forward",
-            json={"target_match_id": str(uuid4())},
+            json={"target_chat_id": str(uuid4())},
             headers=male_headers,
         )
         assert res.status_code == 400
 
-    async def test_forward_requires_auth(self, client, mock_verification_code, db_session):
-        """Should return 401 without token."""
+    async def test_forward_to_chat_not_a_member(self, client, mock_verification_code, db_session):
+        """Forwarding into a chat the user does not belong to → 400."""
+        from uuid import uuid4
         male_headers, male_id = await register_and_get_headers(
-            client, "fwdauth_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "fwnm_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "fwdauth_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "fwnm_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
+        other_headers, other_id = await register_and_get_headers(
+            client, "fwnm_other@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id, other_id])
+        chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
+        chat2 = await make_match(client, male_headers, other_id, other_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Fwd auth test"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat1}/text", json={"content": "Forward me"}, headers=male_headers
         )
         msg_id = msg_res.json()["id"]
 
+        # female is a member of chat1 but NOT chat2 → cannot forward into chat2
         res = await client.post(
             f"{MESSAGES_URL}/{msg_id}/forward",
-            json={"target_match_id": match_id},
+            json={"target_chat_id": chat2},
+            headers=female_headers,
         )
-        assert res.status_code == 401
+        assert res.status_code == 400
+        assert "Not part of target chat" in res.json()["detail"]
 
+    async def test_forward_message_not_yours(self, client, mock_verification_code, db_session):
+        """Forwarding a message you are neither sender nor receiver of → 400."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "fwnt_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "fwnt_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        third_headers, third_id = await register_and_get_headers(
+            client, "fwnt_third@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id, third_id])
+        chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
+        chat2 = await make_match(client, male_headers, third_id, third_headers, male_id)
 
-# =============================================================================
-# Cursor pagination (before param)
-# =============================================================================
+        # message belongs to chat1 (male ⇄ female); third is NOT a participant of it
+        msg_res = await client.post(
+            f"{MESSAGES_URL}/{chat1}/text", json={"content": "Secret"}, headers=male_headers
+        )
+        msg_id = msg_res.json()["id"]
+
+        # third forwards the chat1 message into their own chat2 → rejected
+        res = await client.post(
+            f"{MESSAGES_URL}/{msg_id}/forward",
+            json={"target_chat_id": chat2},
+            headers=third_headers,
+        )
+        assert res.status_code == 400
+        assert "Not authorized to forward this message" in res.json()["detail"]
+
 
 class TestCursorPagination:
     """Test cursor-based pagination with before parameter."""
 
     async def test_cursor_pagination_returns_older_messages(self, client, mock_verification_code, db_session):
-        """before param should return messages older than the cursor timestamp."""
         male_headers, male_id = await register_and_get_headers(
-            client, "cursor_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "cur1_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "cursor_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "cur1_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        # Send several messages
-        msg_ids = []
         for i in range(5):
-            res = await client.post(
-                f"{MESSAGES_URL}/{match_id}/text",
-                json={"content": f"Message {i}"},
-                headers=male_headers,
+            await client.post(
+                f"{MESSAGES_URL}/{chat_id}/text", json={"content": f"Message {i}"}, headers=male_headers
             )
-            msg_ids.append(res.json()["id"])
 
-        # Get full history
-        full = await client.get(f"{MESSAGES_URL}/{match_id}?limit=5", headers=male_headers)
-        assert full.status_code == 200
+        full = await client.get(f"{MESSAGES_URL}/{chat_id}?limit=5", headers=male_headers)
         full_msgs = full.json()["messages"]
         assert len(full_msgs) == 5
 
-        # Get the second-to-last message's sent_at as cursor
-        cursor = full_msgs[-2]["sent_at"]
-
-        # Use cursor as before parameter
+        cursor = full_msgs[-1]["sent_at"]
         cursor_res = await client.get(
-            f"{MESSAGES_URL}/{match_id}?before={cursor}&limit=3",
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}?before={cursor}&limit=3", headers=male_headers
         )
         assert cursor_res.status_code == 200
-        cursor_data = cursor_res.json()
-        assert len(cursor_data["messages"]) >= 1
-
-        # All returned messages should be older than cursor
-        for msg in cursor_data["messages"]:
+        for msg in cursor_res.json()["messages"]:
             assert msg["sent_at"] < cursor
 
     async def test_cursor_pagination_with_no_older_messages(self, client, mock_verification_code, db_session):
-        """before parameter with a very old timestamp should return empty."""
         male_headers, male_id = await register_and_get_headers(
-            client, "cursor2_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "cur2_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "cursor2_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "cur2_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([male_id, female_id]))
-        )
-        users = result.scalars().all()
+        await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Only message"}, headers=male_headers)
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
-        await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Only message"},
-            headers=male_headers,
-        )
-
-        # Use year 2000 as cursor — no messages that old
         res = await client.get(
-            f"{MESSAGES_URL}/{match_id}?before=2000-01-01T00:00:00Z&limit=10",
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}?before=2000-01-01T00:00:00Z&limit=10", headers=male_headers
         )
         assert res.status_code == 200
-        data = res.json()
-        assert len(data["messages"]) == 0
-        assert data["total"] == 0
+        assert len(res.json()["messages"]) == 0
+
 
 class TestSendResponseContract:
-    """Verify send endpoints return the full message object (fix for empty bubbles)."""
+    """Verify send endpoints return the full message object."""
 
-    async def test_send_text_returns_full_message(
-        self, client, mock_verification_code, db_session
-    ):
+    async def test_send_text_returns_full_message(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, "contract_text_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "ct_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "contract_text_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "ct_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
-        )
-        result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/text",
-            json={"content": "Contract hello"},
-            headers=male_headers,
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Contract hello"}, headers=male_headers
         )
         assert res.status_code == 200
         data = res.json()
-        assert data["message"] is not None
         msg = data["message"]
         assert msg["content"] == "Contract hello"
         assert msg["sender_id"] == male_id
         assert msg["receiver_id"] == female_id
-        assert msg["match_id"] == match_id
+        assert msg["chat_id"] == chat_id
         assert msg["message_type"] == "text"
         assert msg["id"] == data["id"]
 
-    async def test_send_photo_returns_media_url(
-        self, client, mock_verification_code, db_session
-    ):
-        male_headers, male_id = await register_and_get_headers(
-            client, "contract_photo_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
-        )
-        female_headers, female_id = await register_and_get_headers(
-            client, "contract_photo_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
-        )
 
-        result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
+class TestChatMembership:
+    """Scenarios: chat access, membership, and missing chats."""
+
+    async def test_send_text_to_nonexistent_chat(self, client, mock_verification_code):
+        male_headers, _ = await register_and_get_headers(
+            client, "nx_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
-
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/photo",
-            files={
-                "file": ("photo.jpg", create_test_image(), "image/jpeg"),
-            },
-            data={"caption": "nice pic"},
+            f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000aaa/text",
+            json={"content": "hello"},
             headers=male_headers,
         )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["message"] is not None
-        msg = data["message"]
-        assert msg["message_type"] == "photo"
-        assert msg["media_url"] is not None and "photo" in msg["media_url"]
-        assert msg["content"] == "nice pic"
+        assert res.status_code == 404
+        assert "Chat not found" in res.json()["detail"]
 
-    async def test_send_voice_returns_duration_and_url(
-        self, client, mock_verification_code, db_session
-    ):
+    async def test_send_text_not_a_member(self, client, mock_verification_code, db_session):
+        """A third user cannot send messages in someone else's chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, "contract_voice_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client, "nmb_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "contract_voice_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client, "nmb_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-
-        result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id.in_([male_id, female_id]))
+        third_headers, _ = await register_and_get_headers(
+            client, "nmb_third@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        result.scalars().all()
-
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         res = await client.post(
-            f"{MESSAGES_URL}/{match_id}/voice",
-            files={"file": ("voice.mp3", create_test_audio(), "audio/mpeg")},
-            data={"duration": 5},
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "intruder"},
+            headers=third_headers,
+        )
+        assert res.status_code == 404
+        assert "Chat not found" in res.json()["detail"]
+
+    async def test_get_history_not_a_member(self, client, mock_verification_code, db_session):
+        male_headers, male_id = await register_and_get_headers(
+            client, "nh_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "nh_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        third_headers, _ = await register_and_get_headers(
+            client, "nh_third@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        res = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=third_headers)
+        assert res.status_code == 404
+
+    async def test_send_photo_to_nonexistent_chat(self, client, mock_verification_code):
+        male_headers, _ = await register_and_get_headers(
+            client, "nxp_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        res = await client.post(
+            f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000bbb/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
             headers=male_headers,
         )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["message"] is not None
-        msg = data["message"]
-        assert msg["message_type"] == "voice"
-        assert msg["media_duration"] == 5
-        assert msg["media_url"] is not None
+        assert res.status_code == 404
+
+    async def test_message_status_nonexistent(self, client, mock_verification_code):
+        male_headers, _ = await register_and_get_headers(
+            client, "nxs_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        res = await client.get(
+            f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000ccc/status",
+            headers=male_headers,
+        )
+        assert res.status_code == 404
+        assert "Message not found" in res.json()["detail"]

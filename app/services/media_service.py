@@ -19,7 +19,7 @@ class MediaService:
 
 
     @staticmethod
-    async def save_photo(file_data: bytes, match_id: str, message_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def save_photo(file_data: bytes, chat_id: str, message_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Save photo message to MinIO.
         Returns: (success, file_url, error_message)
@@ -54,7 +54,7 @@ class MediaService:
             # Upload to MinIO
             import aioboto3
             
-            key = f"chat/photos/{match_id}/{message_id}.jpg"
+            key = f"chat/photos/{chat_id}/{message_id}.jpg"
             
             async with aioboto3.Session().client(
                 "s3",
@@ -92,7 +92,7 @@ class MediaService:
             return False, None, "Invalid image file"
 
     @staticmethod
-    async def save_voice(file_data: bytes, match_id: str, message_id: str, duration: int) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def save_voice(file_data: bytes, chat_id: str, message_id: str, duration: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Save voice message to MinIO.
         Returns: (success, file_url, error_message)
@@ -109,7 +109,7 @@ class MediaService:
             # Upload to MinIO
             import aioboto3
             
-            key = f"chat/voice/{match_id}/{message_id}.mp3"
+            key = f"chat/voice/{chat_id}/{message_id}.mp3"
             
             async with aioboto3.Session().client(
                 "s3",
@@ -147,12 +147,12 @@ class MediaService:
             return False, None, "Failed to save voice message"
 
     @staticmethod
-    async def delete_media(match_id: str, message_id: str, media_type: str) -> bool:
+    async def delete_media(chat_id: str, message_id: str, media_type: str) -> bool:
         """Delete media file from MinIO"""
         if media_type == "photo":
-            key = f"chat/photos/{match_id}/{message_id}.jpg"
+            key = f"chat/photos/{chat_id}/{message_id}.jpg"
         elif media_type == "voice":
-            key = f"chat/voice/{match_id}/{message_id}.mp3"
+            key = f"chat/voice/{chat_id}/{message_id}.mp3"
         else:
             return False
 

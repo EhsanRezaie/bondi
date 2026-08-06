@@ -13,7 +13,9 @@ Architecture:
 
 import asyncio
 import io
+import os
 import threading
+import time
 import uuid
 from typing import ClassVar, Optional, Tuple
 
@@ -33,6 +35,23 @@ CHALLENGE_TYPES = {
     "smile": "Look at the camera and give a natural smile",
     "nod": "Look at the camera and nod your head up and down",
 }
+
+def _safe_remove_file(path: str, retries: int = 3, delay: float = 0.1) -> None:
+    """Delete a temp file, retrying briefly to work around Windows file locks
+    (OpenCV video backends can keep the handle open for a moment)."""
+    for attempt in range(retries):
+        try:
+            os.unlink(path)
+            return
+        except (OSError, PermissionError):
+            if attempt < retries - 1:
+                time.sleep(delay)
+    # Last attempt: best-effort, ignore failure so processing can still return.
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
 
 # 3D model points for head pose estimation (approximate face landmarks)
 MODEL_POINTS_3D = np.array([
@@ -332,16 +351,9 @@ class FaceVerificationService:
     async def process_video(self, video_bytes: bytes) -> Tuple[Optional[list], str]:
         """Decode video, extract frames at configured sample rate."""
         try:
-            # Create a temporary file-like object for OpenCV
-            nparr = np.frombuffer(video_bytes, np.uint8)
-            cap = cv2.VideoCapture()
-            cap.open(cv2.imdecode(nparr, cv2.IMREAD_COLOR))
-
-            # Actually need to use VideoCapture with memory file
-            # Let's use a different approach - write to temp and read
             import tempfile
-            import os
 
+            # Write bytes to a temp file so OpenCV's video backend can open it.
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
                 tmp.write(video_bytes)
                 tmp_path = tmp.name
@@ -392,7 +404,7 @@ class FaceVerificationService:
                 return frames, ""
 
             finally:
-                os.unlink(tmp_path)
+                _safe_remove_file(tmp_path)
 
         except Exception as e:
             logger.error("video_processing_error", error=str(e))

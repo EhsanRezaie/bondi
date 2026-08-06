@@ -107,14 +107,14 @@ class NotificationService:
                 db=self.db,
             )
 
-    async def notify_message(self, receiver_id: UUID, sender_name: str, match_id: UUID):
+    async def notify_message(self, receiver_id: UUID, sender_name: str, chat_id: UUID):
         """Send message notification when recipient is offline"""
         await self.create(
             user_id=receiver_id,
             type="message",
             title="New message",
             body=f"{sender_name} sent you a message",
-            data={"match_id": str(match_id)}
+            data={"chat_id": str(chat_id)}
         )
 
         from app.services.push_service import PushService
@@ -122,6 +122,6 @@ class NotificationService:
             user_id=receiver_id,
             title="New message",
             body=f"{sender_name} sent you a message",
-            data={"type": "message", "match_id": str(match_id)},
+            data={"type": "message", "chat_id": str(chat_id)},
             db=self.db,
         )

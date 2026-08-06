@@ -104,7 +104,7 @@ async def _process_batch(
             continue
 
         try:
-            plaintext = decrypt_with_secret(msg._content, str(msg.match_id), old_secret)
+            plaintext = decrypt_with_secret(msg._content, str(msg.chat_id), old_secret)
         except Exception as exc:
             # Content is not valid ciphertext (e.g. plaintext marker like
             # "[Message deleted]" or a voice message with empty content).
@@ -122,7 +122,7 @@ async def _process_batch(
             continue
 
         try:
-            new_cipher = encrypt_with_secret(plaintext, str(msg.match_id), new_secret)
+            new_cipher = encrypt_with_secret(plaintext, str(msg.chat_id), new_secret)
         except Exception as exc:
             logger.error("Re-encrypt failed for message %s: %s", msg.id, exc)
             errors += 1
@@ -163,7 +163,7 @@ async def run_rotation(
         while True:
             stmt = (
                 select(Message)
-                .where(Message.match_id.is_not(None))
+                .where(Message.chat_id.is_not(None))
                 .order_by(Message.id)
             )
             if last_id is not None:

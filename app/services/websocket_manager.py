@@ -19,8 +19,8 @@ def _user_channel(user_id: str) -> str:
     return f"ws:user:{user_id}"
 
 
-def _chat_channel(match_id: str) -> str:
-    return f"ws:chat:{match_id}"
+def _chat_channel(chat_id: str) -> str:
+    return f"ws:chat:{chat_id}"
 
 
 def _online_key(user_id: str) -> str:
@@ -105,16 +105,12 @@ class WebSocketManager:
     # ── Chat Channel ──────────────────────────────────────────────────
 
     def conversation_channel(
-        self, identifier, current_user_id, other_user_id=None
+        self, identifier, current_user_id=None, other_user_id=None
     ) -> str:
         """
-        Resolve the canonical Redis pub/sub channel for a conversation.
-        - Matched chat:   ws:chat:{match_id}
-        - Unmatched chat: ws:chat:unmatched:{sorted_min}:{sorted_max} (# both directions share one channel)
+        Resolve the canonical Redis pub/sub channel for a chat.
+        Always ws:chat:{chat_id}. The id is a chat id.
         """
-        if other_user_id is not None:
-            a, b = sorted([str(current_user_id), str(other_user_id)])
-            return f"ws:chat:unmatched:{a}:{b}"
         return _chat_channel(str(identifier))
 
     async def add_chat_connection(

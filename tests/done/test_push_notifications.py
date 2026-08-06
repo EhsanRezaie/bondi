@@ -275,17 +275,17 @@ class TestPushOnMessage:
         await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
         await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
 
-        # Get match_id
-        matches_res = await client.get("/api/v1/matches", headers=headers1)
-        assert matches_res.status_code == 200
-        matches = matches_res.json()["matches"]
-        assert len(matches) > 0
-        match_id = matches[0]["id"]
+        # Create the chat (auto-accepted because the pair is matched)
+        chat_res = await client.post(
+            "/api/v1/chats", json={"user_id": user2_id, "content": "hi"}, headers=headers1
+        )
+        assert chat_res.status_code == 200
+        chat_id = chat_res.json()["chat_id"]
 
         # Send message
         mock_send.reset_mock()
         res = await client.post(
-            f"/api/v1/messages/{match_id}/text",
+            f"/api/v1/messages/{chat_id}/text",
             json={"content": "Hello!"},
             headers=headers1,
         )

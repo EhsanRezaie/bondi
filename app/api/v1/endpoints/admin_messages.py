@@ -44,10 +44,9 @@ async def admin_decrypt_message(
         "message_id": str(message.id),
         "sender_id": str(message.sender_id),
         "receiver_id": str(message.receiver_id),
-        "match_id": str(message.match_id) if message.match_id else None,
+        "chat_id": str(message.chat_id),
         "content": decrypted_content,
         "sent_at": message.sent_at.isoformat() if message.sent_at else None,
-        "is_accepted": message.is_accepted,
     }
 
 

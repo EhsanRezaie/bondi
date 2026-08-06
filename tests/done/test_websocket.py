@@ -17,6 +17,7 @@ REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 MESSAGES_URL = "/api/v1/messages"
+CHATS_URL = "/api/v1/chats"
 VALID_CODE = "123456"
 VALID_PASSWORD = "strongpass123"
 
@@ -171,8 +172,11 @@ class TestWebSocketMessagePush:
         result.scalars().all()
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        chat_res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        chat_id = chat_res.json()["chat_id"]
 
         import asyncio
         await asyncio.sleep(0.1)
@@ -180,7 +184,7 @@ class TestWebSocketMessagePush:
         # Patch messages module's send_to_match
         with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
             await client.post(
-                f"{MESSAGES_URL}/{match_id}/text",
+                f"{MESSAGES_URL}/{chat_id}/text",
                 json={"content": "Hello WS"},
                 headers=male_headers,
             )
@@ -224,8 +228,11 @@ class TestWebSocketMessagePush:
         result.scalars().all()
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        chat_res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        chat_id = chat_res.json()["chat_id"]
 
         import asyncio
         await asyncio.sleep(0.1)
@@ -234,7 +241,7 @@ class TestWebSocketMessagePush:
             files = {"file": ("test.jpg", create_jpeg(), "image/jpeg")}
             data = {"caption": "Photo caption"}
             await client.post(
-                f"{MESSAGES_URL}/{match_id}/photo",
+                f"{MESSAGES_URL}/{chat_id}/photo",
                 files=files,
                 data=data,
                 headers=male_headers,
@@ -274,8 +281,11 @@ class TestWebSocketMessagePush:
         result.scalars().all()
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        match_res = await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
-        match_id = match_res.json()["match_id"]
+        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        chat_res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        chat_id = chat_res.json()["chat_id"]
 
         import asyncio
         await asyncio.sleep(0.1)
@@ -284,7 +294,7 @@ class TestWebSocketMessagePush:
             files = {"file": ("test.mp3", create_mp3(), "audio/mpeg")}
             data = {"duration": 30}
             await client.post(
-                f"{MESSAGES_URL}/{match_id}/voice",
+                f"{MESSAGES_URL}/{chat_id}/voice",
                 files=files,
                 data=data,
                 headers=male_headers,
@@ -496,8 +506,8 @@ class TestWebSocketManagerUnit:
         mock_pipe.execute.assert_called_once()
 
 
-class TestUnmatchedChatChannel:
-    """Conversation channel resolution + delivery for unmatched chats."""
+class TestChatChannel:
+    """Conversation channel resolution + delivery for chats."""
 
     @pytest.fixture(autouse=True)
     def _cleanup(self):
@@ -505,22 +515,15 @@ class TestUnmatchedChatChannel:
         self.manager.active_connections = {}
         self.manager.chat_connections = {}
 
-    def test_matched_channel_uses_match_id(self):
-        channel = self.manager.conversation_channel("m1", "u1", None)
-        assert channel == "ws:chat:m1"
-
-    def test_unmatched_channel_is_sorted_pair(self):
-        ch_a = self.manager.conversation_channel(None, "u2", "u1")
-        ch_b = self.manager.conversation_channel(None, "u1", "u2")
-        assert ch_a == ch_b
-        assert ch_a.startswith("ws:chat:unmatched:")
-        # sorted so both directions share one channel
-        assert ch_a == "ws:chat:unmatched:u1:u2"
+    def test_channel_is_chat_id_based(self):
+        """conversation_channel always resolves to ws:chat:{chat_id}."""
+        channel = self.manager.conversation_channel("chat-1", "u1", "u2")
+        assert channel == "ws:chat:chat-1"
 
     async def test_send_to_conversation_publishes_pair_channel(self):
         """send_to_conversation publishes sender + receiver frames on one channel."""
         mock_redis = AsyncMock()
-        channel = self.manager.conversation_channel(None, "u1", "u2")
+        channel = self.manager.conversation_channel("chat-1")
         message = {"type": "new_message", "data": {"id": "m1", "content": "hi"}}
 
         await self.manager.send_to_conversation(channel, "u1", message, "u2", mock_redis)
@@ -533,10 +536,10 @@ class TestUnmatchedChatChannel:
         assert targets == {"u1", "u2"}
 
     async def test_add_chat_connection_uses_channel_keys(self):
-        """chat_connections are keyed by (channel, user) so unmatched chats coexist."""
+        """chat_connections are keyed by (channel, user)."""
         mock_redis = AsyncMock()
         mock_ws = AsyncMock()
-        channel = self.manager.conversation_channel(None, "u1", "u2")
+        channel = self.manager.conversation_channel("chat-1")
 
         await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
 
@@ -547,7 +550,7 @@ class TestUnmatchedChatChannel:
         """Removing last connection cancels listener and deletes online key."""
         mock_redis = AsyncMock()
         mock_ws = AsyncMock()
-        channel = self.manager.conversation_channel(None, "u1", "u2")
+        channel = self.manager.conversation_channel("chat-1")
 
         await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
         await self.manager.remove_chat_connection(mock_ws, channel, "u1", mock_redis)
