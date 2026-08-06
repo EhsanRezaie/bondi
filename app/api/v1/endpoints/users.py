@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select ,delete 
 from app.models.user_interest import UserInterest 
 from app.models.user_prompt import UserPrompt
+from app.models.block import Block
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timezone  
 from app.models.interest import Interest
@@ -18,6 +19,9 @@ from app.schemas.settings import UserSettingsUpdateRequest, UserSettingsResponse
 from app.models.user_settings import UserSettings
 from app.core.redis import redis_client
 from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, invalidate_user_cache, invalidate_auth_user
+from app.schemas.discover import ProfileResponse
+from app.services.profile_service import serialize_profile, haversine_km
+import app.core.redis as redis_module
 
 from app.core.logging import get_logger
 
@@ -439,3 +443,77 @@ async def update_prompts(
     user = result.scalar_one_or_none()
     
     return UserProfileResponse.model_validate(user)
+
+
+@router.get("/{user_id}", response_model=ProfileResponse)
+@limiter.limit("60/minute")
+async def get_public_profile(
+    request: Request,
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ProfileResponse:
+    """
+    Get another user's full public profile (Badoo-style).
+    Used when opening a profile from the chats/likes notification feed.
+    Returns 404 if the user is inactive, blocked, or blocked you.
+    """
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.photos),
+            selectinload(User.user_interests).selectinload(UserInterest.interest),
+            selectinload(User.prompts).selectinload(UserPrompt.prompt),
+        )
+        .where(User.id == user_id)
+    )
+    target = result.scalar_one_or_none()
+
+    if not target or not target.is_active or not target.profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot view your own profile here",
+        )
+
+    i_blocked_them = await session.scalar(
+        select(Block).where(
+            Block.blocker_id == current_user.id,
+            Block.blocked_id == user_id,
+        )
+    )
+    they_blocked_me = await session.scalar(
+        select(Block).where(
+            Block.blocker_id == user_id,
+            Block.blocked_id == current_user.id,
+        )
+    )
+    if i_blocked_them or they_blocked_me:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    distance_km = None
+    if current_user.profile is not None and current_user.profile.lat is not None:
+        distance_km = haversine_km(
+            current_user.profile.lat,
+            current_user.profile.lng,
+            target.profile.lat,
+            target.profile.lng,
+        )
+
+    is_online = bool(await redis_module.redis_client.exists(f"online:{user_id}"))
+
+    return await serialize_profile(
+        target,
+        is_online=is_online,
+        distance_km=distance_km,
+    )
