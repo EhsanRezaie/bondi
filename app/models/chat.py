@@ -26,7 +26,6 @@ class Chat(Base):
     recipient_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     status = Column(String(20), default="pending", nullable=False)  # 'pending' | 'accepted'
-    last_message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL", name="fk_chats_last_message"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -35,11 +34,6 @@ class Chat(Base):
     # Relationships
     initiator = relationship("User", foreign_keys=[initiator_id])
     recipient = relationship("User", foreign_keys=[recipient_id])
-    last_message = relationship(
-        "Message",
-        foreign_keys=[last_message_id],
-        uselist=False,
-    )
     messages = relationship(
         "Message",
         back_populates="chat",

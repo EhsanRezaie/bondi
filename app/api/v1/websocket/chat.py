@@ -30,8 +30,9 @@ async def chat_websocket(
 ):
     try:
         user_id = await validate_ws_token(token, redis)
-    except Exception:
-        await websocket.close(code=4001, reason="Unauthorized")
+    except Exception as e:
+        logger.warning("WS /ws/chat/%s rejected: %s", chat_id, e)
+        await websocket.close(code=4401, reason="Unauthorized")
         return
 
     try:

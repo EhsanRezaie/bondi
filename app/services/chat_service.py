@@ -5,6 +5,7 @@ from uuid import UUID
 from typing import Optional, Tuple, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, update
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.services.reward_service import RewardService
@@ -65,6 +66,22 @@ async def find_chat_for_pair(
     if only_active:
         stmt = stmt.where(Chat.is_active == True)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_last_messages_for_chats(
+    session: AsyncSession,
+    chat_ids: list[UUID],
+) -> Dict[UUID, Message]:
+    """Return the newest message per chat for the given chat ids."""
+    if not chat_ids:
+        return {}
+    result = await session.execute(
+        select(Message)
+        .where(Message.chat_id.in_(chat_ids), Message.is_deleted_for_all == False)
+        .order_by(Message.chat_id, Message.sent_at.desc())
+        .distinct(Message.chat_id)
+    )
+    return {m.chat_id: m for m in result.scalars().all()}
 
 
 async def get_user_chat(
@@ -136,7 +153,9 @@ async def can_start_new_chat(
     if is_premium:
         return True, None
 
-    result = await session.execute(select(User).where(User.id == user_id))
+    result = await session.execute(
+        select(User).options(selectinload(User.profile)).where(User.id == user_id)
+    )
     user = result.scalar_one_or_none()
     if not user:
         return False, "User not found"

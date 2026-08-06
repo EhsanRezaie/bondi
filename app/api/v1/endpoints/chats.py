@@ -32,6 +32,7 @@ from app.services.chat_service import (
     can_start_new_chat,
     consume_new_chat,
     create_encrypted_message,
+    get_last_messages_for_chats,
 )
 from app.services.notification_service import NotificationService
 from app.services.reward_service import RewardService
@@ -153,7 +154,7 @@ async def create_chat(
         content=body.content,
         message_type="text",
     )
-    chat.last_message_id = new_message.id
+    chat.updated_at = func.now()
 
     # ── Consume one daily chat slot (no-op for premium) ───────────────
     consumed = await consume_new_chat(session, user_id, is_premium)
@@ -328,12 +329,15 @@ async def list_chats(
             selectinload(Chat.recipient).selectinload(User.profile),
             selectinload(Chat.recipient).selectinload(User.photos),
             selectinload(Chat.recipient).selectinload(User.settings),
-            selectinload(Chat.last_message),
         )
         .where(*filters)
         .order_by(Chat.updated_at.desc())
     )
     chats = result.scalars().all()
+
+    last_messages = await get_last_messages_for_chats(
+        session, [c.id for c in chats]
+    )
 
     rows = []
     for chat in chats:
@@ -351,7 +355,7 @@ async def list_chats(
             )
         ) or 0
 
-        last_msg = chat.last_message
+        last_msg = last_messages.get(chat.id)
         last_message = None
         updated_at = chat.updated_at
         if last_msg is not None:

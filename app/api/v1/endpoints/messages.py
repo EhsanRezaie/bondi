@@ -277,7 +277,7 @@ async def send_text_message(
         message_type="text",
         reply_to_id=body.reply_to_id,
     )
-    chat.last_message_id = new_message.id
+    chat.updated_at = func.now()
 
     notification_service = NotificationService(session)
     sender_name = current_user.profile.name if current_user.profile else "Someone"
@@ -367,7 +367,7 @@ async def send_photo_message(
         message_type="photo",
         media_url=media_url,
     )
-    chat.last_message_id = new_message.id
+    chat.updated_at = func.now()
     await session.commit()
 
     message_data = {
@@ -449,7 +449,7 @@ async def send_voice_message(
         media_url=media_url,
         media_duration=duration,
     )
-    chat.last_message_id = new_message.id
+    chat.updated_at = func.now()
     await session.commit()
 
     message_data = {

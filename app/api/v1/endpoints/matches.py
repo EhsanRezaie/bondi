@@ -14,6 +14,7 @@ from app.core.limiter import limiter
 from app.schemas.match import MatchResponse, MatchListResponse, MatchDetailResponse, MatchUserResponse, LastMessageResponse
 from app.services.notification_service import NotificationService
 from app.services.photo_service import PhotoService
+from app.services.chat_service import get_last_messages_for_chats
 
 from app.core.logging import get_logger
 
@@ -77,10 +78,8 @@ async def get_matches(
         for m in matches:
             pair_to_match[(m.user1_id, m.user2_id)] = m.id
 
-        chat_query = (
-            select(Chat)
-            .options(selectinload(Chat.last_message))
-            .where(
+        chat_result = await session.execute(
+            select(Chat).where(
                 Chat.is_active == True,
                 or_(
                     *[
@@ -93,14 +92,22 @@ async def get_matches(
                 ),
             )
         )
-        chats_result = await session.execute(chat_query)
-        for chat in chats_result.scalars().all():
-            if chat.last_message is not None:
-                forward = (chat.initiator_id, chat.recipient_id)
-                reverse = (chat.recipient_id, chat.initiator_id)
-                match_id = pair_to_match.get(forward) or pair_to_match.get(reverse)
-                if match_id:
-                    last_messages[match_id] = chat.last_message
+        pair_chats = chat_result.scalars().all()
+
+        chat_to_match = {}
+        for chat in pair_chats:
+            forward = (chat.initiator_id, chat.recipient_id)
+            reverse = (chat.recipient_id, chat.initiator_id)
+            match_id = pair_to_match.get(forward) or pair_to_match.get(reverse)
+            if match_id:
+                chat_to_match[chat.id] = match_id
+
+        chat_id_to_last = await get_last_messages_for_chats(
+            session, list(chat_to_match.keys())
+        )
+        for chat_id, match_id in chat_to_match.items():
+            if chat_id in chat_id_to_last:
+                last_messages[match_id] = chat_id_to_last[chat_id]
 
     match_responses = []
     for match in matches:
