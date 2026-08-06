@@ -87,9 +87,7 @@ docker compose build app
 
 # 5b. Auto-generate migrations from new code, then apply them (one-shot)
 log "Auto-generating + applying migrations..."
-docker compose build migrate
-docker compose run --rm --entrypoint sh migrate \
-    -c "alembic revision --autogenerate -m 'auto-deploy' && alembic upgrade head"
+docker compose run --rm migrate
 
 # 6. Deploy
 log "Starting services..."
