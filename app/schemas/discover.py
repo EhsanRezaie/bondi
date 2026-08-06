@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
 
+from app.schemas.card import CardProfileResponse
+
 
 class ProfileResponse(BaseModel):
     """Response schema for user profile in discover — Badoo-style full profile."""
@@ -60,7 +62,7 @@ class ProfileResponse(BaseModel):
 
 class DiscoverResponse(BaseModel):
     """Response for discover endpoint"""
-    users: List[ProfileResponse]
+    users: List[CardProfileResponse]
     next_offset: Optional[int] = None
     total: int
 

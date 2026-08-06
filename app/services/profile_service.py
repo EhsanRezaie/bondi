@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 
 from app.models.user import User
 from app.schemas.discover import ProfileResponse
+from app.schemas.card import CardProfileResponse
 from app.services.photo_service import PhotoService
 
 
@@ -119,4 +120,56 @@ async def serialize_profile(
         is_verified=user.phone_verified if user.phone_verified is not None else False,
         last_seen_at=last_seen_at,
         is_online=resolved_online,
+    )
+
+
+async def serialize_card(
+    user: User,
+    is_online: Optional[bool] = None,
+    distance_km: Optional[float] = None,
+    is_verified: Optional[bool] = None,
+    current_user_action: Optional[str] = None,
+) -> CardProfileResponse:
+    """Build a slim CardProfileResponse for discover/search list responses.
+
+    Requires User.profile, User.settings and User.photos to be loaded.
+    Unlike serialize_profile, this only resolves the first approved photo and
+    skips interests/prompts/photo-list serialization.
+    """
+    if not user.profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found",
+        )
+
+    profile = user.profile
+    settings = user.settings
+
+    hide_online_status = settings.hide_online_status if settings else False
+    resolved_online = False if hide_online_status else bool(is_online)
+
+    approved_photos_raw = (
+        sorted(
+            [p for p in user.photos if p.status == "approved"],
+            key=lambda p: p.order,
+        )
+        if user.photos
+        else []
+    )
+    main_photo_url = None
+    if approved_photos_raw:
+        first = approved_photos_raw[0]
+        main_photo_url = await PhotoService.get_photo_url(first.url, first.status)
+
+    return CardProfileResponse(
+        id=user.id,
+        name=profile.name,
+        age=profile.age,
+        gender=profile.gender,
+        main_photo_url=main_photo_url,
+        distance_km=distance_km,
+        is_premium=profile.is_premium,
+        is_verified=bool(is_verified) if is_verified is not None else False,
+        is_online=resolved_online,
+        current_user_action=current_user_action,
     )

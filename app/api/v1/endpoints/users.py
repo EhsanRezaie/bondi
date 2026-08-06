@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select ,delete 
 from app.models.user_interest import UserInterest 
 from app.models.user_prompt import UserPrompt
+from app.models.user_profile import UserProfile
 from app.models.block import Block
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timezone  
@@ -18,7 +19,7 @@ from app.schemas.user import UserProfileResponse, UserUpdateRequest, LocationTex
 from app.schemas.settings import UserSettingsUpdateRequest, UserSettingsResponse
 from app.models.user_settings import UserSettings
 from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, invalidate_user_cache, invalidate_auth_user
+from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, key_public_profile, TTL_PUBLIC_PROFILE, invalidate_user_cache, invalidate_auth_user
 from app.schemas.discover import ProfileResponse
 from app.services.profile_service import serialize_profile, haversine_km
 import app.core.redis as redis_module
@@ -457,30 +458,26 @@ async def get_public_profile(
     Get another user's full public profile (Badoo-style).
     Used when opening a profile from the chats/likes notification feed.
     Returns 404 if the user is inactive, blocked, or blocked you.
+    The full profile is Redis-cached (minus viewer-specific distance/online);
+    viewer-relative distance and online status are computed per request.
     """
-    result = await session.execute(
-        select(User)
-        .options(
-            selectinload(User.profile),
-            selectinload(User.settings),
-            selectinload(User.photos),
-            selectinload(User.user_interests).selectinload(UserInterest.interest),
-            selectinload(User.prompts).selectinload(UserPrompt.prompt),
-        )
-        .where(User.id == user_id)
-    )
-    target = result.scalar_one_or_none()
-
-    if not target or not target.is_active or not target.profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot view your own profile here",
+        )
+
+    # Viewer-independent gating that must always reflect fresh DB state:
+    # target is active AND has a profile.
+    exists = await session.scalar(
+        select(User.id)
+        .join(UserProfile, UserProfile.user_id == User.id)
+        .where(User.id == user_id, User.is_active == True)
+    )
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         )
 
     i_blocked_them = await session.scalar(
@@ -501,6 +498,42 @@ async def get_public_profile(
             detail="User not found",
         )
 
+    is_online = bool(await redis_module.redis_client.exists(f"online:{user_id}"))
+
+    cache_key = key_public_profile(user_id)
+    cached = await cache_get(redis_module.redis_client, cache_key)
+    if cached:
+        profile_dict = dict(cached.get("profile") or {})
+        coords = cached.get("coords")
+        if coords and current_user.profile is not None and current_user.profile.lat is not None:
+            profile_dict["distance_km"] = haversine_km(
+                current_user.profile.lat,
+                current_user.profile.lng,
+                coords.get("lat"),
+                coords.get("lng"),
+            )
+        profile_dict["is_online"] = is_online
+        return ProfileResponse.model_validate(profile_dict)
+
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.photos),
+            selectinload(User.user_interests).selectinload(UserInterest.interest),
+            selectinload(User.prompts).selectinload(UserPrompt.prompt),
+        )
+        .where(User.id == user_id)
+    )
+    target = result.scalar_one_or_none()
+
+    if not target or not target.profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
     distance_km = None
     if current_user.profile is not None and current_user.profile.lat is not None:
         distance_km = haversine_km(
@@ -510,10 +543,27 @@ async def get_public_profile(
             target.profile.lng,
         )
 
-    is_online = bool(await redis_module.redis_client.exists(f"online:{user_id}"))
-
-    return await serialize_profile(
+    profile = await serialize_profile(
         target,
         is_online=is_online,
         distance_km=distance_km,
     )
+
+    data = profile.model_dump(mode="json")
+    data.pop("distance_km", None)
+    data.pop("is_online", None)
+    await cache_set(
+        redis_module.redis_client,
+        cache_key,
+        {
+            "coords": (
+                {"lat": target.profile.lat, "lng": target.profile.lng}
+                if target.profile.lat is not None and target.profile.lng is not None
+                else None
+            ),
+            "profile": data,
+        },
+        TTL_PUBLIC_PROFILE,
+    )
+
+    return profile

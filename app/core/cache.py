@@ -19,6 +19,7 @@ TTL_SYSTEM_STATUS   = 60         # 60s  — /system/status
 TTL_SUB_PLANS       = 3600       # 1h   — /subscriptions/plans
 TTL_USER_PROFILE    = 600        # 10m  — /users/me
 TTL_USER_PHOTOS     = 600        # 10m  — /users/me/photos
+TTL_PUBLIC_PROFILE  = 300        # 5m   — GET /users/{user_id} (public profile)
 TTL_DAILY_LIMITS    = None       # dynamic — until midnight
 
 
@@ -50,6 +51,9 @@ def key_user_profile(user_id: UUID) -> str:
 def key_user_photos(user_id: UUID) -> str:
     return f"cache:user:{user_id}:photos"
 
+def key_public_profile(user_id: UUID) -> str:
+    return f"cache:user:{user_id}:public_profile"
+
 def key_daily_limits(user_id: UUID, date: str) -> str:
     return f"cache:limits:{user_id}:{date}"
 
@@ -77,6 +81,7 @@ async def invalidate_user_cache(redis: Redis, user_id: UUID):
     keys = [
         key_user_profile(user_id),
         key_user_photos(user_id),
+        key_public_profile(user_id),
     ]
     try:
         await redis.delete(*keys)

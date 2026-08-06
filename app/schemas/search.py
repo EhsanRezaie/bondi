@@ -3,18 +3,7 @@ from uuid import UUID
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from app.schemas.auth import (
-    Gender,
-    SexualOrientation,
-    BodyType,
-    RelationshipStatus,
-    LivingSituation,
-    ChildrenStatus,
-    SmokingStatus,
-    DrinkingStatus,
-    EducationLevel,
-    PoliticalOrientation,
-)
+from app.schemas.card import CardProfileResponse
 
 
 class SearchProfileResponse(BaseModel):
@@ -74,7 +63,7 @@ class SearchProfileResponse(BaseModel):
 
 class SearchResponse(BaseModel):
     """Response for search endpoint."""
-    users: List[SearchProfileResponse]
+    users: List[CardProfileResponse]
     total: int
     next_offset: Optional[int] = None
 

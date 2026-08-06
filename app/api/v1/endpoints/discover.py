@@ -3,26 +3,23 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, Float
 from sqlalchemy.orm import selectinload
-from datetime import date, timedelta, datetime, timezone
+from datetime import date, timedelta
 
 from app.db.session import get_session
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.models.photo import Photo
 from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.block import Block
-from app.models.user_interest import UserInterest
-from app.models.user_prompt import UserPrompt
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
 import app.core.redis as redis_module
-from app.services.photo_service import PhotoService
 from app.core.cache import (
     pop_discover_stack, set_discover_stack, get_swiped_ids,
     DISCOVER_STACK_SIZE,
 )
-from app.schemas.discover import ProfileResponse, DiscoverResponse
+from app.schemas.discover import DiscoverResponse
+from app.services.profile_service import serialize_card
 from app.utils.geo import fuzz_distance
 
 from app.core.logging import get_logger
@@ -102,8 +99,6 @@ async def discover(
         selectinload(User.profile),
         selectinload(User.settings),
         selectinload(User.photos),
-        selectinload(User.user_interests).selectinload(UserInterest.interest),
-        selectinload(User.prompts).selectinload(UserPrompt.prompt),
     ).join(UserProfile, User.id == UserProfile.user_id).where(
         User.is_active == True,
         User.id != current_user.id,
@@ -164,77 +159,13 @@ async def discover(
         if not user.profile:
             continue
 
-        profile = user.profile
-        settings = user.settings
+        is_online = online_map.get(str(user.id), False)
 
-        # Photos — all approved, sorted by order, resolve to full URLs
-        approved_photos_raw = sorted(
-            [p for p in user.photos if p.status == "approved"],
-            key=lambda p: p.order,
-        ) if user.photos else []
-        approved_photos = [
-            await PhotoService.get_photo_url(p.url, p.status)
-            for p in approved_photos_raw
-        ]
-
-        main_photo_url = approved_photos[0] if approved_photos else None
-
-        # Interests
-        interests = [ui.interest.name for ui in user.user_interests if ui.interest] if user.user_interests else []
-
-        # Prompts (with question text)
-        prompts = [
-            {"prompt_id": str(up.prompt_id), "question": up.prompt.question, "answer": up.answer}
-            for up in user.prompts if up.prompt
-        ] if user.prompts else []
-
-        # Privacy-respecting last_seen and online status
-        last_seen_at = None
-        hide_last_seen = settings.hide_last_seen if settings else False
-        hide_online_status = settings.hide_online_status if settings else False
-
-        is_online = False if hide_online_status else online_map.get(str(user.id), False)
-
-        if user.last_seen_at:
-            if not hide_last_seen:
-                last_seen_at = user.last_seen_at.isoformat()
-        elif is_online:
-            if not hide_last_seen:
-                last_seen_at = datetime.now(timezone.utc).isoformat()
-
-        response_users.append(ProfileResponse(
-            id=user.id,
-            name=profile.name,
-            age=profile.age,
-            gender=profile.gender,
-            sexual_orientation=profile.sexual_orientation,
-            bio=profile.bio,
-            height=profile.height,
-            weight=profile.weight,
-            body_type=profile.body_type,
-            relationship_status=profile.relationship_status,
-            living_situation=profile.living_situation,
-            children_status=profile.children_status,
-            smoking=profile.smoking,
-            drinking=profile.drinking,
-            education=profile.education,
-            workplace=profile.workplace,
-            religion=profile.religion,
-            ethnicity=profile.ethnicity,
-            political_orientation=profile.political_orientation,
-            languages=profile.languages,
-            country=profile.country,
-            province=profile.province,
-            city=profile.city,
-            distance_km=fuzz_distance(distance),
-            main_photo_url=main_photo_url,
-            photos=approved_photos if approved_photos else None,
-            interests=interests if interests else None,
-            prompts=prompts if prompts else None,
-            is_premium=profile.is_premium,
-            is_verified=user.phone_verified if user.phone_verified is not None else False,
-            last_seen_at=last_seen_at,
+        response_users.append(await serialize_card(
+            user,
             is_online=is_online,
+            distance_km=fuzz_distance(distance),
+            is_verified=user.phone_verified if user.phone_verified is not None else False,
         ))
 
     has_more = offset + limit < total
