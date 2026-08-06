@@ -85,9 +85,11 @@ bash scripts/build-base.sh
 log "Building..."
 docker compose build app
 
-# 5b. Run migrations (one-shot) before starting the app
-log "Applying migrations..."
-docker compose run --rm migrate
+# 5b. Auto-generate migrations from new code, then apply them (one-shot)
+log "Auto-generating + applying migrations..."
+docker compose build migrate
+docker compose run --rm migrate \
+    sh -c "alembic revision --autogenerate -m 'auto-deploy' && alembic upgrade head"
 
 # 6. Deploy
 log "Starting services..."
