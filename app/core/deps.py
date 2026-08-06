@@ -251,8 +251,8 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
         if not user_id:
             raise ValueError("No sub in token")
         return user_id
-    except Exception:
-        raise ValueError("Invalid token")
+    except Exception as e:
+        raise ValueError(f"Invalid token: {type(e).__name__}: {e}")
 
 
 async def get_admin_user(

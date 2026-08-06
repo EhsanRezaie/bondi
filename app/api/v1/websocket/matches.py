@@ -24,7 +24,7 @@ async def matches_websocket(
     try:
         user_id = await validate_ws_token(token, redis)
     except Exception as e:
-        logger.warning("WS /ws/matches rejected: %s", e)
+        logger.warning("WS /ws/matches rejected: %s | token_len=%s token=%s", e, len(token), token)
         await websocket.close(code=4401, reason="Unauthorized")
         return
 
