@@ -8,9 +8,6 @@ from app.models.user import User
 from app.services.websocket_manager import websocket_manager, HEARTBEAT_INTERVAL
 from app.core.deps import validate_ws_token
 from app.core.redis import get_redis
-from app.core.logging import get_logger
-
-logger = get_logger("websocket")
 
 router = APIRouter()
 
@@ -23,8 +20,7 @@ async def matches_websocket(
 ):
     try:
         user_id = await validate_ws_token(token, redis)
-    except Exception as e:
-        logger.warning("WS /ws/matches rejected: %s", e)
+    except Exception:
         await websocket.close(code=4401, reason="Unauthorized")
         return
 
