@@ -127,8 +127,8 @@ app.include_router(admin_auth_router, prefix="/api/v1")
 app.include_router(admin_system_router, prefix="/api/v1")
 
 # WebSocket Routers
-app.include_router(websocket_router)
-app.include_router(chat_websocket_router)
+app.include_router(websocket_router, prefix="/api/v1")
+app.include_router(chat_websocket_router, prefix="/api/v1")
 
 
 @app.get("/health")
