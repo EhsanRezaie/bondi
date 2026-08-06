@@ -81,9 +81,9 @@ fi
 log "Ensuring base image (deps)..."
 bash scripts/build-base.sh
 
-# 5. Build new image (thin — skips pip, takes seconds)
+# 5. Build new images (thin — skips pip, takes seconds)
 log "Building..."
-docker compose build app
+docker compose build app migrate
 
 # 5b. Auto-generate migrations from new code, then apply them (one-shot)
 log "Auto-generating + applying migrations..."
