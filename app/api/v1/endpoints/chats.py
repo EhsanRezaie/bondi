@@ -60,6 +60,7 @@ async def _load_user_with_media(session: AsyncSession, user_id: UUID) -> Optiona
         .options(
             selectinload(User.profile),
             selectinload(User.photos),
+            selectinload(User.settings),
         )
         .where(User.id == user_id, User.is_active == True)
     )
@@ -270,6 +271,21 @@ async def accept_chat(
         redis=redis_module.redis_client,
     )
 
+    # Notify both users' personal channels so their chat lists re-bucket in real time.
+    for uid in (str(chat.initiator_id), str(chat.recipient_id)):
+        await websocket_manager.send_personal_message(
+            uid,
+            {
+                "type": "chat_accepted",
+                "data": {
+                    "chat_id": str(chat.id),
+                    "accepted_by": str(current_user.id),
+                    "status": "accepted",
+                },
+            },
+            redis_module.redis_client,
+        )
+
     return ChatAcceptResponse(
         chat_id=chat.id,
         status="accepted",
@@ -283,6 +299,7 @@ async def list_chats(
     request: Request,
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    status: Optional[str] = Query(None, pattern="^(accepted|pending)$"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ChatListResponse:
@@ -295,19 +312,25 @@ async def list_chats(
         (await session.execute(select(Block.blocker_id).where(Block.blocked_id == user_id))).scalars().all()
     )
 
+    filters = [
+        or_(Chat.initiator_id == user_id, Chat.recipient_id == user_id),
+        Chat.is_active == True,
+    ]
+    if status:
+        filters.append(Chat.status == status)
+
     result = await session.execute(
         select(Chat)
         .options(
             selectinload(Chat.initiator).selectinload(User.profile),
             selectinload(Chat.initiator).selectinload(User.photos),
+            selectinload(Chat.initiator).selectinload(User.settings),
             selectinload(Chat.recipient).selectinload(User.profile),
             selectinload(Chat.recipient).selectinload(User.photos),
+            selectinload(Chat.recipient).selectinload(User.settings),
             selectinload(Chat.last_message),
         )
-        .where(
-            or_(Chat.initiator_id == user_id, Chat.recipient_id == user_id),
-            Chat.is_active == True,
-        )
+        .where(*filters)
         .order_by(Chat.updated_at.desc())
     )
     chats = result.scalars().all()
@@ -351,6 +374,7 @@ async def list_chats(
         rows.append({
             "chat_id": chat.id,
             "status": chat.status,
+            "initiator_id": chat.initiator_id,
             "other": other,
             "main_photo_url": main_photo_url,
             "last_message": last_message,
@@ -373,17 +397,19 @@ async def list_chats(
     chats_out = []
     for r in page:
         other = r["other"]
+        hide_last_seen = bool(other.settings and other.settings.hide_last_seen)
         chats_out.append(
             ChatItemResponse(
                 id=r["chat_id"],
                 status=r["status"],
+                initiator_id=r["initiator_id"],
                 user=ChatUserResponse(
                     id=other.id,
                     name=other.profile.name if other.profile else "User",
                     age=other.profile.age if other.profile else 0,
                     main_photo_url=r["main_photo_url"],
                     is_online=online_map.get(str(other.id), False),
-                    last_seen_at=other.last_seen_at,
+                    last_seen_at=None if hide_last_seen else other.last_seen_at,
                 ),
                 last_message=r["last_message"],
                 unread_count=r["unread_count"],
@@ -439,7 +465,11 @@ async def get_chat_detail(
             age=other.profile.age if other.profile else 0,
             main_photo_url=main_photo_url,
             is_online=online_map.get(str(other.id), False),
-            last_seen_at=other.last_seen_at,
+            last_seen_at=(
+                None
+                if (other.settings and other.settings.hide_last_seen)
+                else other.last_seen_at
+            ),
         ),
         created_at=chat.created_at,
         updated_at=chat.updated_at,

@@ -65,6 +65,41 @@ async def _background_websocket_send(
     )
 
 
+async def _background_chat_updated(
+    session: AsyncSession,
+    recipient_user_id: UUID,
+    chat_id: UUID,
+    status: str,
+    last_message: dict,
+    updated_at: Optional[datetime],
+):
+    """Publish a chat_updated event on the recipient's personal channel so
+    their chat list can reorder and refresh in real time."""
+    unread = await session.scalar(
+        select(func.count()).select_from(Message).where(
+            Message.chat_id == chat_id,
+            Message.receiver_id == recipient_user_id,
+            Message.is_read == False,
+            Message.is_deleted_for_all == False,
+            Message.is_deleted_for_receiver == False,
+        )
+    ) or 0
+    await websocket_manager.send_personal_message(
+        str(recipient_user_id),
+        {
+            "type": "chat_updated",
+            "data": {
+                "chat_id": str(chat_id),
+                "status": status,
+                "unread_count": unread,
+                "updated_at": updated_at.isoformat() if updated_at else None,
+                "last_message": last_message,
+            },
+        },
+        redis_client,
+    )
+
+
 def _build_message_response(
     msg: Message,
     decrypted_content: Optional[str] = None,
@@ -273,6 +308,19 @@ async def send_text_message(
         other_user_id_str=str(other_user_id),
         redis_client=redis_client,
     )
+    background_tasks.add_task(
+        _background_chat_updated,
+        session=session,
+        recipient_user_id=other_user_id,
+        chat_id=chat.id,
+        status=chat.status,
+        last_message={
+            "content": body.content,
+            "message_type": "text",
+            "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
+        },
+        updated_at=new_message.sent_at,
+    )
 
     return SendMessageResponse(
         id=new_message.id,
@@ -342,6 +390,19 @@ async def send_photo_message(
         other_user_id_str=str(other_user_id),
         redis_client=redis_client,
     )
+    background_tasks.add_task(
+        _background_chat_updated,
+        session=session,
+        recipient_user_id=other_user_id,
+        chat_id=chat.id,
+        status=chat.status,
+        last_message={
+            "content": caption or "",
+            "message_type": "photo",
+            "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
+        },
+        updated_at=new_message.sent_at,
+    )
 
     return SendMessageResponse(
         id=new_message.id,
@@ -410,6 +471,19 @@ async def send_voice_message(
         message_data=message_data,
         other_user_id_str=str(other_user_id),
         redis_client=redis_client,
+    )
+    background_tasks.add_task(
+        _background_chat_updated,
+        session=session,
+        recipient_user_id=other_user_id,
+        chat_id=chat.id,
+        status=chat.status,
+        last_message={
+            "content": "",
+            "message_type": "voice",
+            "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
+        },
+        updated_at=new_message.sent_at,
     )
 
     return SendMessageResponse(

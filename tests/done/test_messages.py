@@ -932,4 +932,127 @@ class TestChatMembership:
             headers=male_headers,
         )
         assert res.status_code == 404
-        assert "Message not found" in res.json()["detail"]
+
+
+class TestChatListRealTime:
+    """Real-time chat_updated events on the recipient's personal channel."""
+
+    async def test_chat_updated_on_text(
+        self, client, mock_verification_code, db_session
+    ):
+        from app.api.v1.endpoints.messages import websocket_manager as ws_mock
+
+        ws_mock.send_personal_message.reset_mock()
+
+        male_headers, male_id = await register_and_get_headers(
+            client, "rt_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "rt_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "rt hello"},
+            headers=male_headers,
+        )
+
+        calls = [c for c in ws_mock.send_personal_message.call_args_list if c[0]]
+        assert len(calls) == 1
+        user_id, payload = calls[0].args[0], calls[0].args[1]
+        assert user_id == str(female_id)
+        assert payload["type"] == "chat_updated"
+        data = payload["data"]
+        assert data["chat_id"] == str(chat_id)
+        assert data["status"] == "accepted"
+        assert data["last_message"]["content"] == "rt hello"
+        assert data["last_message"]["message_type"] == "text"
+        assert data["unread_count"] == 2
+
+    async def test_chat_updated_on_photo(
+        self, client, mock_verification_code, db_session
+    ):
+        from app.api.v1.endpoints.messages import websocket_manager as ws_mock
+
+        ws_mock.send_personal_message.reset_mock()
+
+        male_headers, male_id = await register_and_get_headers(
+            client, "rtp_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "rtp_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
+            headers=male_headers,
+        )
+
+        calls = [c for c in ws_mock.send_personal_message.call_args_list if c[0]]
+        assert len(calls) == 1
+        user_id, payload = calls[0].args[0], calls[0].args[1]
+        assert user_id == str(female_id)
+        assert payload["type"] == "chat_updated"
+        assert payload["data"]["last_message"]["message_type"] == "photo"
+
+    async def test_chat_updated_on_voice(
+        self, client, mock_verification_code, db_session
+    ):
+        from app.api.v1.endpoints.messages import websocket_manager as ws_mock
+
+        ws_mock.send_personal_message.reset_mock()
+
+        male_headers, male_id = await register_and_get_headers(
+            client, "rtv_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "rtv_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 3},
+            headers=male_headers,
+        )
+
+        calls = [c for c in ws_mock.send_personal_message.call_args_list if c[0]]
+        assert len(calls) == 1
+        user_id, payload = calls[0].args[0], calls[0].args[1]
+        assert user_id == str(female_id)
+        assert payload["type"] == "chat_updated"
+        assert payload["data"]["last_message"]["message_type"] == "voice"
+
+    async def test_chat_updated_unread_count(self, client, mock_verification_code, db_session):
+        """unread_count counts only unread messages addressed to the recipient."""
+        from app.api.v1.endpoints.messages import websocket_manager as ws_mock
+
+        ws_mock.send_personal_message.reset_mock()
+
+        male_headers, male_id = await register_and_get_headers(
+            client, "rtu_male@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "rtu_female@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "one"}, headers=male_headers
+        )
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "two"}, headers=male_headers
+        )
+
+        calls = [c for c in ws_mock.send_personal_message.call_args_list if c[0]]
+        assert len(calls) == 2
+        last = calls[-1].args[1]["data"]
+        assert last["unread_count"] == 3

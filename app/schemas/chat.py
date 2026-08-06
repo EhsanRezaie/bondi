@@ -28,6 +28,7 @@ class ChatItemResponse(BaseModel):
     """A single chat in the chat list"""
     id: UUID
     status: str  # 'pending' | 'accepted'
+    initiator_id: UUID
     user: ChatUserResponse
     last_message: Optional[ChatLastMessage] = None
     unread_count: int = 0

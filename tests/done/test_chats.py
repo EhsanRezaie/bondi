@@ -1,6 +1,7 @@
 # tests/test_chats.py
 import uuid
 from datetime import date, timedelta, datetime, timezone
+from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient
 
 from sqlalchemy import select
@@ -359,6 +360,37 @@ class TestAcceptChat:
         )
         assert res.status_code == 401
 
+    async def test_accept_publishes_personal_chat_accepted(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        """Accepting a chat publishes chat_accepted to BOTH users' personal channels."""
+        from app.api.v1.endpoints import chats as chats_module
+
+        male_headers, male_id = await register_and_get_headers(
+            client, "ch_ca_male@demo.com", PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "ch_ca_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+        )
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        created = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        chat_id = created.json()["chat_id"]
+        assert created.json()["status"] == "pending"
+
+        with patch.object(chats_module.websocket_manager, "send_personal_message", new_callable=AsyncMock) as mock_send:
+            res = await client.post(f"{CHATS_URL}/{chat_id}/accept", headers=female_headers)
+            assert res.status_code == 200
+            assert mock_send.await_count == 2
+            sent = {c.args[0]: c.args[1] for c in mock_send.await_args_list}
+            assert set(sent.keys()) == {str(male_id), str(female_id)}
+            for user_id, payload in sent.items():
+                assert payload["type"] == "chat_accepted"
+                assert payload["data"]["chat_id"] == str(chat_id)
+                assert payload["data"]["status"] == "accepted"
+                assert payload["data"]["accepted_by"] == str(female_id)
+
 
 class TestChatList:
 
@@ -491,6 +523,114 @@ class TestChatList:
         conv = lst.json()["chats"][0]
         assert conv["user"]["is_online"] is True
         assert "last_seen_at" in conv["user"]
+
+    async def test_list_status_filter(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """status=accepted|pending filters the list; total reflects the filtered set."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "ch_filter_male@demo.com", PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "ch_filter_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+        )
+        third_headers, third_id = await register_and_get_headers(
+            client, "ch_filter_third@demo.com", PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Pending chat: male → female (one-sided swipe → pending).
+        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        pending = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        assert pending.json()["status"] == "pending"
+
+        # Accepted chat: male → third with mutual like.
+        await client.post(SWIPE_URL, json={"user_id": third_id, "direction": "like"}, headers=male_headers)
+        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=third_headers)
+        accepted = await client.post(
+            CHATS_URL, json={"user_id": third_id, "content": "hello"}, headers=male_headers
+        )
+        assert accepted.json()["status"] == "accepted"
+
+        all_chats = (await client.get(CHATS_URL, headers=male_headers)).json()
+        assert all_chats["total"] == 2
+
+        pend = (await client.get(CHATS_URL, params={"status": "pending"}, headers=male_headers)).json()
+        assert pend["total"] == 1
+        assert len(pend["chats"]) == 1
+        assert pend["chats"][0]["id"] == pending.json()["chat_id"]
+
+        acc = (await client.get(CHATS_URL, params={"status": "accepted"}, headers=male_headers)).json()
+        assert acc["total"] == 1
+        assert len(acc["chats"]) == 1
+        assert acc["chats"][0]["id"] == accepted.json()["chat_id"]
+
+        # Invalid status → 422.
+        bad = await client.get(CHATS_URL, params={"status": "bogus"}, headers=male_headers)
+        assert bad.status_code == 422
+
+    async def test_list_initiator_id(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """initiator_id is exposed so the client can split pending chats by direction."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "ch_init_male@demo.com", PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "ch_init_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Male starts the chat (initiator).
+        created = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        chat_id = created.json()["chat_id"]
+
+        for headers in (male_headers, female_headers):
+            lst = await client.get(CHATS_URL, params={"status": "pending"}, headers=headers)
+            assert lst.status_code == 200
+            assert lst.json()["total"] == 1
+            chat = lst.json()["chats"][0]
+            assert chat["id"] == chat_id
+            # Initiator is the one who started the chat (male), regardless of viewer.
+            assert chat["initiator_id"] == male_id
+
+    async def test_list_status_filter_pagination(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Pagination (limit/offset/next_offset) works on the filtered set."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "ch_fpg_male@demo.com", PAYLOAD_MALE, mock_verification_code
+        )
+        for i in range(3):
+            _, uid = await register_and_get_headers(
+                client,
+                f"ch_fpg_{i}@demo.com",
+                {**PAYLOAD_FEMALE, "name": f"FPG {i}"},
+                mock_verification_code,
+            )
+            await client.post(
+                SWIPE_URL, json={"user_id": uid, "direction": "like"}, headers=male_headers
+            )
+            await client.post(CHATS_URL, json={"user_id": uid, "content": f"msg {i}"}, headers=male_headers)
+
+        res1 = await client.get(
+            CHATS_URL, params={"status": "pending", "limit": 2, "offset": 0}, headers=male_headers
+        )
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["total"] == 3
+        assert len(data1["chats"]) == 2
+        assert data1["next_offset"] == 2
+        assert all(c["status"] == "pending" for c in data1["chats"])
+
+        res2 = await client.get(
+            CHATS_URL, params={"status": "pending", "limit": 2, "offset": 2}, headers=male_headers
+        )
+        data2 = res2.json()
+        assert len(data2["chats"]) == 1
+        assert data2["next_offset"] is None
 
 
 class TestChatDetail:

@@ -311,10 +311,12 @@ def mock_websocket_manager():
         mock.broadcast_match = AsyncMock()
         mock.send_to_match = AsyncMock()
         mock.send_to_conversation = AsyncMock()
+        mock.send_personal_message = AsyncMock()
         mock.get_online_status_bulk = AsyncMock(return_value={})
         mock_msgs.broadcast_match = AsyncMock()
         mock_msgs.send_to_match = AsyncMock()
         mock_msgs.send_to_conversation = AsyncMock()
+        mock_msgs.send_personal_message = AsyncMock()
         mock_msgs.get_online_status_bulk = AsyncMock(return_value={})
         yield mock
 

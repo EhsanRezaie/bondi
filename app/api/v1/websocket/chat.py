@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from app.core.deps import validate_ws_token
 from app.core.redis import get_redis
 from app.db.session import get_db
 from app.models.chat import Chat
+from app.models.user import User
+from app.models.user_settings import UserSettings
 from app.models.block import Block
 from app.core.logging import get_logger
 
@@ -122,10 +125,33 @@ async def chat_websocket(
     except WebSocketDisconnect:
         pass
     finally:
+        # Resolve the removal-time last_seen_at timestamp so the peer can show
+        # an accurate "last seen" value instead of a guess. Hidden when the
+        # leaving user has disabled last-seen sharing.
+        last_seen_at = datetime.now(timezone.utc)
+        hide_last_seen = False
+        try:
+            ts = await db.scalar(
+                select(User.last_seen_at).where(User.id == user_id)
+            )
+            if ts:
+                last_seen_at = ts
+            settings = await db.scalar(
+                select(UserSettings.hide_last_seen).where(
+                    UserSettings.user_id == user_id
+                )
+            )
+            hide_last_seen = bool(settings)
+        except Exception:
+            pass
         await websocket_manager.send_to_conversation(
             channel=channel,
             sender_id=user_id,
-            message={"type": "user_offline", "user_id": user_id},
+            message={
+                "type": "user_offline",
+                "user_id": user_id,
+                "last_seen_at": None if hide_last_seen else last_seen_at.isoformat(),
+            },
             other_user_id=other_user_id,
             redis=redis,
         )
