@@ -37,7 +37,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
-    entrypoint: ["/bin/sh", "-c", "alembic revision --autogenerate -m 'auto-deploy' && alembic upgrade head"]
+    entrypoint: ["/bin/sh", "-c", "alembic check || alembic revision --autogenerate -m 'auto-deploy' && true; alembic upgrade head"]
     volumes:
       - ./alembic/versions:/app/alembic/versions
     depends_on:
