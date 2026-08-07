@@ -44,11 +44,10 @@ from app.api.v1.endpoints.admin_auth import router as admin_auth_router
 from app.api.v1.endpoints.system import router as admin_system_router
 
 
-from app.api.v1.websocket.matches import router as websocket_router
+from app.api.v1.websocket.stream import router as websocket_router
 from app.api.v1.endpoints.matches import router as matches_router
 from app.api.v1.endpoints.messages import router as messages_router
 from app.api.v1.endpoints.chats import router as chats_router
-from app.api.v1.websocket.chat import router as chat_websocket_router
 
 from app.core.logging import setup_logging
 setup_logging()
@@ -128,7 +127,6 @@ app.include_router(admin_system_router, prefix="/api/v1")
 
 # WebSocket Routers
 app.include_router(websocket_router, prefix="/api/v1")
-app.include_router(chat_websocket_router, prefix="/api/v1")
 
 
 @app.get("/health")

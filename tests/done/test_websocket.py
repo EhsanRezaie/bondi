@@ -448,7 +448,7 @@ class TestWebSocketManagerUnit:
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
         assert payload["type"] == "typing"
-        assert payload["channel"] == match_id
+        assert payload["chat_id"] == match_id
         assert payload["user_id"] == user_id
 
     async def test_clear_typing(self):
@@ -464,7 +464,7 @@ class TestWebSocketManagerUnit:
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
         assert payload["type"] == "typing_stopped"
-        assert payload["channel"] == match_id
+        assert payload["chat_id"] == match_id
         assert payload["user_id"] == user_id
 
     async def test_is_typing(self):
@@ -507,13 +507,13 @@ class TestWebSocketManagerUnit:
 
 
 class TestChatChannel:
-    """Conversation channel resolution + delivery for chats."""
+    """Conversation channel resolution + topic-gated delivery for chats."""
 
     @pytest.fixture(autouse=True)
     def _cleanup(self):
         self.manager = WebSocketManager()
         self.manager.active_connections = {}
-        self.manager.chat_connections = {}
+        self.manager.user_subscriptions = {}
 
     def test_channel_is_chat_id_based(self):
         """conversation_channel always resolves to ws:chat:{chat_id}."""
@@ -535,28 +535,66 @@ class TestChatChannel:
         targets = {p["_target_user"] for p in payloads}
         assert targets == {"u1", "u2"}
 
-    async def test_add_chat_connection_uses_channel_keys(self):
-        """chat_connections are keyed by (channel, user)."""
+    async def test_subscribe_tracks_topic_and_sets_online(self):
+        """subscribe registers the (chat_id, peer) topic and marks user online."""
         mock_redis = AsyncMock()
-        mock_ws = AsyncMock()
-        channel = self.manager.conversation_channel("chat-1")
-
-        await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
-
-        assert (channel, "u1") in self.manager.chat_connections
+        await self.manager.subscribe("u1", "chat-1", "u2", mock_redis)
+        assert self.manager.user_subscriptions["u1"]["chat-1"] == "u2"
         assert mock_redis.setex.called
 
-    async def test_remove_chat_connection_cleans_channel(self):
-        """Removing last connection cancels listener and deletes online key."""
+    async def test_unsubscribe_removes_topic(self):
+        """unsubscribe drops the topic and cleans the empty per-user map."""
         mock_redis = AsyncMock()
-        mock_ws = AsyncMock()
+        await self.manager.subscribe("u1", "chat-1", "u2", mock_redis)
+        await self.manager.unsubscribe("u1", "chat-1")
+        assert "u1" not in self.manager.user_subscriptions
+
+    async def test_deliver_only_to_subscribed_target(self):
+        """Deliver chat event only to the subscribed user matching _target_user."""
+        mock_redis = AsyncMock()
+        ws_target = AsyncMock()
+        ws_other = AsyncMock()
+        self.manager.active_connections = {"u2": {ws_target}, "u3": {ws_other}}
+        await self.manager.subscribe("u2", "chat-1", "u1", mock_redis)
+        await self.manager.subscribe("u3", "chat-1", "u1", mock_redis)
+
         channel = self.manager.conversation_channel("chat-1")
+        await self.manager._deliver_to_chat_local(
+            channel, {"type": "new_message", "_target_user": "u2", "data": {}}, "u2"
+        )
 
-        await self.manager.add_chat_connection(mock_ws, channel, "u1", mock_redis)
-        await self.manager.remove_chat_connection(mock_ws, channel, "u1", mock_redis)
+        ws_target.send_text.assert_awaited()
+        ws_other.send_text.assert_not_awaited()
 
-        assert (channel, "u1") not in self.manager.chat_connections
-        assert mock_redis.delete.called
+    async def test_deliver_prunes_dead_sockets(self):
+        """A failing socket is dropped instead of crashing delivery."""
+        mock_redis = AsyncMock()
+        dead_ws = AsyncMock()
+        dead_ws.send_text = AsyncMock(side_effect=Exception("closed"))
+        good_ws = AsyncMock()
+        self.manager.active_connections = {"u2": {dead_ws, good_ws}}
+        await self.manager.subscribe("u2", "chat-1", "u1", mock_redis)
+
+        channel = self.manager.conversation_channel("chat-1")
+        await self.manager._deliver_to_chat_local(
+            channel, {"type": "new_message", "data": {}}, None
+        )
+
+        good_ws.send_text.assert_awaited()
+        assert dead_ws not in self.manager.active_connections["u2"]
+
+    async def test_presence_broadcast_reaches_peer_open_chats(self):
+        """connect-time presence is routed to peers with an open chat."""
+        mock_redis = AsyncMock()
+        ws_peer = AsyncMock()
+        self.manager.active_connections = {"u2": {ws_peer}}
+        await self.manager.subscribe("u2", "chat-1", "u1", mock_redis)
+
+        await self.manager.broadcast_peer_presence(
+            "u1", {"type": "user_online", "user_id": "u1"}, mock_redis
+        )
+
+        assert mock_redis.publish.called
 
 
 # =============================================================================

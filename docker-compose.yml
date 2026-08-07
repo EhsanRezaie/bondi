@@ -10,7 +10,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT_URL: http://minio:9000
-      S3_PUBLIC_BASE_URL: http://minio:9000/photos-public
+      # Reached only by clients (phones/browsers), NOT the container network.
+      # Override in .env with a host/IP reachable from the device, e.g.
+      #   http://<server-ip>:9000/photos-public   (physical device / on a server)
+      #   http://10.0.2.2:9000/photos-public      (Android emulator)
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://minio:9000/photos-public}
     volumes:
       - uploads_data:/app/uploads
       - ./firebase-service-account.json:/app/firebase-service-account.json
