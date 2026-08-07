@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.chat import Chat
 from app.models.message import Message
 from app.models.swipe import Swipe
+from app.models.block import Block
 from app.models.daily_limit import DailyLimit
 from app.core.logging import get_logger
 from app.core.encryption import encrypt_message, decrypt_message, decrypt_message_async
@@ -102,6 +103,32 @@ async def get_user_chat(
             )
         )
     ).scalar_one_or_none()
+
+
+async def chat_is_ended(
+    session: AsyncSession,
+    chat: Chat,
+    user_id: UUID,
+) -> bool:
+    """True when the conversation is over for this user (blocked either
+    direction, or the chat was ended/deleted by a participant)."""
+    me_initiator = chat.initiator_id == user_id
+    peer_deleted = (
+        chat.deleted_for_recipient if me_initiator else chat.deleted_for_initiator
+    )
+    if chat.is_ended or peer_deleted:
+        return True
+    blocked = await session.scalar(
+        select(Block.id).where(
+            or_(
+                (Block.blocker_id == chat.initiator_id)
+                & (Block.blocked_id == chat.recipient_id),
+                (Block.blocker_id == chat.recipient_id)
+                & (Block.blocked_id == chat.initiator_id),
+            )
+        ).limit(1)
+    )
+    return bool(blocked)
 
 
 async def create_chat_for_pair(
@@ -375,6 +402,36 @@ async def delete_message(
 
     await session.commit()
     return True, None
+
+
+async def edit_message(
+    session: AsyncSession,
+    message_id: UUID,
+    user_id: UUID,
+    content: str,
+) -> Tuple[Optional[Message], Optional[str]]:
+    """Edit a message's text content. Returns: (message, error_message)."""
+    result = await session.execute(
+        select(Message).where(Message.id == message_id)
+    )
+    message = result.scalar_one_or_none()
+
+    if not message:
+        return None, "Message not found"
+    if message.sender_id != user_id:
+        return None, "Not authorized to edit this message"
+    if message.message_type != "text":
+        return None, "Only text messages can be edited"
+    if message.is_deleted_for_all:
+        return None, "Cannot edit a deleted message"
+    if not content or not content.strip():
+        return None, "Message content cannot be empty"
+
+    message.content = content.strip()
+    message.is_edited = True
+    message.edited_at = datetime.now(timezone.utc)
+    await session.commit()
+    return message, None
 
 
 async def forward_message(

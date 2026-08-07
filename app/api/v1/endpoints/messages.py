@@ -18,12 +18,13 @@ from app.schemas.message import (
     SendMessageResponse, ForwardMessageRequest,
     MarkReadRequest, MessageStatusResponse,
     MessageActionResponse, ForwardMessageResponse,
+    EditMessageRequest,
 )
 from app.services.chat_service import (
     get_user_chat, can_send_message,
     mark_messages_as_delivered, mark_messages_as_read,
     delete_message, forward_message, create_encrypted_message,
-    get_decrypted_message_for_client,
+    get_decrypted_message_for_client, edit_message, chat_is_ended,
 )
 from app.services.media_service import MediaService
 from app.services.notification_service import NotificationService
@@ -123,9 +124,11 @@ def _build_message_response(
         is_sent=msg.is_sent,
         is_delivered=msg.is_delivered,
         is_read=msg.is_read,
+        is_edited=msg.is_edited,
         sent_at=msg.sent_at,
         delivered_at=msg.delivered_at,
         read_at=msg.read_at,
+        edited_at=msg.edited_at,
     )
 
 
@@ -218,9 +221,11 @@ async def get_chat_history(
             is_sent=msg.is_sent,
             is_delivered=msg.is_delivered,
             is_read=msg.is_read,
+            is_edited=msg.is_edited,
             sent_at=msg.sent_at,
             delivered_at=msg.delivered_at,
             read_at=msg.read_at,
+            edited_at=msg.edited_at,
         ))
 
     has_more = len(messages) == limit
@@ -248,6 +253,9 @@ async def send_text_message(
 ) -> SendMessageResponse:
     """Send a text message in a chat."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+
+    if await chat_is_ended(session, chat, current_user.id):
+        raise HTTPException(status_code=403, detail="This conversation is over.")
 
     can_send, reason = await can_send_message(session, chat, current_user.id)
     if not can_send:
@@ -346,6 +354,9 @@ async def send_photo_message(
     """Send a photo message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
 
+    if await chat_is_ended(session, chat, current_user.id):
+        raise HTTPException(status_code=403, detail="This conversation is over.")
+
     if chat.status != "accepted":
         raise HTTPException(status_code=403, detail="Photos can only be sent in accepted chats")
 
@@ -426,6 +437,9 @@ async def send_voice_message(
 ) -> SendMessageResponse:
     """Send a voice message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+
+    if await chat_is_ended(session, chat, current_user.id):
+        raise HTTPException(status_code=403, detail="This conversation is over.")
 
     if chat.status != "accepted":
         raise HTTPException(status_code=403, detail="Voice messages can only be sent in accepted chats")
@@ -535,6 +549,50 @@ async def delete_message_endpoint(
     if not success:
         raise HTTPException(status_code=400, detail=error)
     return {"message": f"Message deleted for {delete_for}"}
+
+
+@router.put("/{message_id}", response_model=MessageResponse)
+@limiter.limit("30/minute")
+async def edit_message_endpoint(
+    request: Request,
+    message_id: UUID,
+    body: EditMessageRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> MessageResponse:
+    """Edit a text message's content (owner only)."""
+    message, error = await edit_message(
+        session, message_id, current_user_id, body.content
+    )
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    await session.refresh(message)
+    chat = await session.scalar(select(Chat).where(Chat.id == message.chat_id))
+    other_user_id = (
+        chat.recipient_id if chat.initiator_id == current_user_id
+        else chat.initiator_id
+    ) if chat else None
+
+    background_tasks.add_task(
+        _background_websocket_send,
+        channel=websocket_manager.conversation_channel(str(message.chat_id)),
+        sender_id_str=str(current_user_id),
+        message_data={
+            "type": "message_edited",
+            "data": {
+                "id": str(message.id),
+                "chat_id": str(message.chat_id),
+                "content": body.content.strip(),
+                "is_edited": True,
+            },
+        },
+        other_user_id_str=str(other_user_id) if other_user_id else "",
+        redis_client=redis_client,
+    )
+
+    return _build_message_response(message, decrypted_content=body.content.strip())
 
 
 @router.post("/{message_id}/forward", response_model=ForwardMessageResponse)

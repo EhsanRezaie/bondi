@@ -44,6 +44,10 @@ class Message(Base):
     is_deleted_for_all = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Edit features
+    is_edited = Column(Boolean, default=False, nullable=False)
+    edited_at = Column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     sent_at = Column(DateTime(timezone=True), server_default=func.now())
     delivered_at = Column(DateTime(timezone=True), nullable=True)

@@ -1,5 +1,5 @@
 # app/api/v1/endpoints/chats.py
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Response
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,7 @@ from app.services.chat_service import (
     consume_new_chat,
     create_encrypted_message,
     get_last_messages_for_chats,
+    chat_is_ended,
 )
 from app.services.notification_service import NotificationService
 from app.services.reward_service import RewardService
@@ -82,6 +83,14 @@ async def _background_websocket_send(
         other_user_id_str,
         redis,
     )
+
+
+async def _background_personal_send(
+    user_id: str,
+    message: dict,
+    redis: "Any",
+):
+    await websocket_manager.send_personal_message(user_id, message, redis)
 
 
 @router.post("", response_model=ChatCreateResponse)
@@ -341,9 +350,19 @@ async def list_chats(
 
     rows = []
     for chat in chats:
-        other = chat.recipient if chat.initiator_id == user_id else chat.initiator
-        if other is None or other.id in blocked_ids:
+        if user_id == chat.initiator_id and chat.deleted_for_initiator:
             continue
+        if user_id == chat.recipient_id and chat.deleted_for_recipient:
+            continue
+
+        other = chat.recipient if chat.initiator_id == user_id else chat.initiator
+        if other is None:
+            continue
+
+        # Blocked chats are NOT hidden anymore. They stay in the list but are
+        # flagged so the client can show "This conversation is over."
+        is_blocked = other.id in blocked_ids
+        is_ended = await chat_is_ended(session, chat, user_id)
 
         unread = await session.scalar(
             select(func.count()).select_from(Message).where(
@@ -384,6 +403,8 @@ async def list_chats(
             "last_message": last_message,
             "unread_count": unread,
             "updated_at": updated_at,
+            "is_blocked": is_blocked,
+            "is_ended": is_ended,
         })
 
     rows.sort(key=lambda r: r["updated_at"] or r["chat_id"], reverse=True)
@@ -418,6 +439,8 @@ async def list_chats(
                 last_message=r["last_message"],
                 unread_count=r["unread_count"],
                 updated_at=r["updated_at"],
+                is_blocked=r["is_blocked"],
+                is_ended=r["is_ended"],
             )
         )
 
@@ -442,6 +465,11 @@ async def get_chat_detail(
     chat = await get_user_chat(session, chat_id, current_user.id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
+
+    if current_user.id == chat.initiator_id and chat.deleted_for_initiator:
+        raise HTTPException(status_code=403, detail="You have deleted this chat")
+    if current_user.id == chat.recipient_id and chat.deleted_for_recipient:
+        raise HTTPException(status_code=403, detail="You have deleted this chat")
 
     other_id = chat.recipient_id if chat.initiator_id == current_user.id else chat.initiator_id
     other = await _load_user_with_media(session, other_id)
@@ -477,4 +505,52 @@ async def get_chat_detail(
         ),
         created_at=chat.created_at,
         updated_at=chat.updated_at,
+        is_blocked=await chat_is_ended(session, chat, current_user.id),
+        is_ended=chat.is_ended,
     )
+
+
+@router.delete("/{chat_id}", status_code=204, response_class=Response)
+@limiter.limit("20/minute")
+async def delete_chat(
+    request: Request,
+    chat_id: UUID,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """End a conversation and remove it from my chat list.
+
+    For the requesting user the chat disappears from their list; for the other
+    participant it becomes "This conversation is over." (is_ended)."""
+    chat = await get_user_chat(session, chat_id, current_user.id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    if current_user.id == chat.initiator_id:
+        chat.deleted_for_initiator = True
+    elif current_user.id == chat.recipient_id:
+        chat.deleted_for_recipient = True
+    else:
+        raise HTTPException(status_code=403, detail="Not a member of this chat")
+
+    if not chat.is_ended:
+        chat.is_ended = True
+        chat.ended_by = current_user.id
+        chat.ended_at = func.now()
+
+    other_user_id = (
+        chat.recipient_id if chat.initiator_id == current_user.id
+        else chat.initiator_id
+    )
+
+    await session.commit()
+
+    # Notify the other participant so their open chat flips to "conversation is over".
+    background_tasks.add_task(
+        _background_personal_send,
+        user_id=str(other_user_id),
+        message={"type": "chat_ended", "data": {"chat_id": str(chat.id)}},
+        redis=redis_module.redis_client,
+    )
+    return None

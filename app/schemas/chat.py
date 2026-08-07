@@ -33,6 +33,8 @@ class ChatItemResponse(BaseModel):
     last_message: Optional[ChatLastMessage] = None
     unread_count: int = 0
     updated_at: Optional[datetime] = None
+    is_blocked: bool = False
+    is_ended: bool = False
 
 
 class ChatListResponse(BaseModel):
@@ -51,6 +53,8 @@ class ChatDetailResponse(BaseModel):
     user: ChatUserResponse
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    is_blocked: bool = False
+    is_ended: bool = False
 
 
 class ChatCreateRequest(BaseModel):

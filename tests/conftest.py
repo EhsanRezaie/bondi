@@ -306,18 +306,23 @@ def disable_rate_limiting():
 
 @pytest_asyncio.fixture(autouse=True)
 def mock_websocket_manager():
+    async def _online_bulk(user_ids, redis=None):
+        pipe = redis_module.redis_client.pipeline()
+        for uid in user_ids:
+            pipe.exists(f"online:{uid}")
+        results = await pipe.execute()
+        return {uid: bool(r) for uid, r in zip(user_ids, results)}
+
     with (patch("app.api.v1.endpoints.swipes.websocket_manager") as mock,
-          patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs):
-        mock.broadcast_match = AsyncMock()
-        mock.send_to_match = AsyncMock()
-        mock.send_to_conversation = AsyncMock()
-        mock.send_personal_message = AsyncMock()
-        mock.get_online_status_bulk = AsyncMock(return_value={})
-        mock_msgs.broadcast_match = AsyncMock()
-        mock_msgs.send_to_match = AsyncMock()
-        mock_msgs.send_to_conversation = AsyncMock()
-        mock_msgs.send_personal_message = AsyncMock()
-        mock_msgs.get_online_status_bulk = AsyncMock(return_value={})
+          patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs,
+          patch("app.api.v1.endpoints.chats.websocket_manager") as mock_chats,
+          patch("app.api.v1.endpoints.blocks.websocket_manager") as mock_blocks):
+        for m in (mock, mock_msgs, mock_chats, mock_blocks):
+            m.broadcast_match = AsyncMock()
+            m.send_to_match = AsyncMock()
+            m.send_to_conversation = AsyncMock()
+            m.send_personal_message = AsyncMock()
+            m.get_online_status_bulk = AsyncMock(side_effect=_online_bulk)
         yield mock
 
 

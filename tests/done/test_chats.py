@@ -444,7 +444,8 @@ class TestChatList:
         await db_session.commit()
 
         lst = await client.get(CHATS_URL, headers=male_headers)
-        assert lst.json()["total"] == 0
+        assert lst.json()["total"] == 1
+        assert lst.json()["chats"][0]["is_blocked"] is True
 
     async def test_sorted_by_latest_activity(
         self, client: AsyncClient, mock_verification_code, db_session

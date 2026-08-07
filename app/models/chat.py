@@ -28,6 +28,13 @@ class Chat(Base):
     status = Column(String(20), default="pending", nullable=False)  # 'pending' | 'accepted'
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # "Conversation over" flags (delete/end chat + block state)
+    is_ended = Column(Boolean, default=False, nullable=False)
+    ended_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_for_initiator = Column(Boolean, default=False, nullable=False)
+    deleted_for_recipient = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

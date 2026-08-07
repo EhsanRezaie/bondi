@@ -26,9 +26,11 @@ class MessageResponse(BaseModel):
     is_sent: bool
     is_delivered: bool
     is_read: bool
+    is_edited: bool = False
     sent_at: datetime
     delivered_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
+    edited_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -60,6 +62,11 @@ class VoiceMessageRequest(BaseModel):
 class DeleteMessageRequest(BaseModel):
     """Request for deleting message"""
     delete_for: str = Field("me", pattern="^(me|everyone)$")  # 'me' or 'everyone'
+
+
+class EditMessageRequest(BaseModel):
+    """Request for editing a message"""
+    content: str = Field(..., min_length=1, max_length=5000)
 
 
 class ForwardMessageRequest(BaseModel):
