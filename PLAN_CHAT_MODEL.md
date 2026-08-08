@@ -23,7 +23,7 @@ daily chat limit. Likes (swipes) and matches remain fully independent of chats.
 | D5 | Development stage, **no real data** → DB may be dropped/recreated; **no data migration** of old messages. |
 | D6 | `initiator`/`recipient` are **semantic**, not sorted: `initiator_id` = who pressed chat (starter). One active chat per pair is enforced by a **partial unique index on `LEAST(initiator_id, recipient_id), GREATEST(initiator_id, recipient_id)`** (`WHERE is_active = true`), so order doesn't affect pair-uniqueness. |
 | D7 | **Fully replace `/conversations`** with `/chats`. Old endpoint removed. |
-| D8 | Migration files (`alembic/versions/`) added to `.gitignore` and untracked. |
+| D8 | Migration files (`alembic/versions/`) are **committed to git** (no longer gitignored). Never autogenerate in production — autogenerate locally, hand-review, commit. |
 
 ---
 
@@ -286,9 +286,12 @@ Delete `ConversationResponse`, `ConversationListResponse`, `kind`, `is_accepted`
   2. drops `messages.match_id` + `messages.is_accepted` + match-based indexes
   3. adds `messages.chat_id` NOT NULL FK + chat indexes
 - Because D5 (no real data), migration can drop/recreate or truncate `messages` as needed.
-- **NOTE:** `alembic/versions/` is now gitignored (D8). Each dev regenerates locally.
-- Pre-existing heads: `16268284c9f0` chain exists in git history but is no longer tracked;
-  a clean local autogenerate should be applied against an empty/dropped DB.
+- Migrations **must be reviewed and committed** to the repo (D8). Generate them locally
+  with `alembic revision --autogenerate`, inspect/adjust (add `server_default` for backfills),
+  then commit alongside the model change. Deploy only runs `alembic upgrade head`.
+- History: the old tracked chain (head `16268284c9f0`) plus any server-generated `auto-deploy`
+  files were squashed into a single committed initial migration (`ad655e0fe278_initial_schema.py`)
+  with the DB reset to a fresh schema. CI verifies the chain via `alembic upgrade head` + `alembic check`.
 
 ---
 

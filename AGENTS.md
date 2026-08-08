@@ -33,6 +33,21 @@ python -m app.db.scripts.seed_dummy_users
 
 Inside containers, DATABASE_URL/REDIS_URL/S3_ENDPOINT_URL are overridden to use Docker service names (`db`, `redis`, `minio`) instead of `localhost`.
 
+# Migrations
+
+Migrations are **committed to git** (do NOT autogenerate in production). Deploy only runs `alembic upgrade head`. Workflow after changing a model:
+
+```bash
+venv/bin/alembic revision --autogenerate -m "describe change"
+# review/adjust the generated file (add server_default for backfills on non-empty tables)
+venv/bin/alembic upgrade head
+venv/bin/alembic check          # should report "No new upgrade operations detected"
+```
+
+Note: autogenerate against an existing DB only emits diffs — for a full CREATE TABLE
+migration, point it at an empty DB. The schema history was squashed into a single
+committed `initial_schema` revision (DB reset accordingly).
+
 ## Test infra prerequisite
 
 Tests need `docker compose -f docker-compose.test.yml up -d` running first. Ports: Postgres 5433, Redis 6380, MinIO 9090. `conftest.py` auto-loads `.env.test` with `override=True` — no manual env setup needed.

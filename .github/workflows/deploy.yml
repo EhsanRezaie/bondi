@@ -66,6 +66,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Verify migrations (fresh DB)
+        run: |
+          export DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@localhost:5433/dating_test
+          export REDIS_URL=redis://localhost:6380
+          export SECRET_KEY=ci-secret-key
+          export S3_ENDPOINT_URL=http://localhost:9090
+          export S3_ACCESS_KEY=minioadmin
+          export S3_SECRET_KEY=minioadmin
+          export S3_REGION=us-east-1
+          export S3_PUBLIC_BUCKET=photos-public-test
+          export S3_PRIVATE_BUCKET=photos-private-test
+          export S3_PUBLIC_BASE_URL=http://localhost:9090/photos-public-test
+          export S3_SIGNED_URL_EXPIRE_SECONDS=900
+          alembic upgrade head
+          alembic check
+
       - name: Run tests
         run: pytest tests/done/ -v --tb=short
 
