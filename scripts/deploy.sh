@@ -93,6 +93,10 @@ docker compose run --rm migrate
 log "Starting services..."
 docker compose up -d --no-deps app
 
+# 6b. Reload nginx so bind-mounted nginx.conf changes take effect
+log "Reloading nginx (proxy config)..."
+docker compose restart nginx
+
 # 7. Health check
 log "Running health check..."
 if wait_for_health; then

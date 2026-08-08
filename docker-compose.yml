@@ -9,7 +9,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
       REDIS_URL: redis://redis:6379
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
       # Reached only by clients (phones/browsers), NOT the container network.
       # Override in .env with a host/IP reachable from the device, e.g.
       #   http://<server-ip>:9000/photos-public   (physical device / on a server)
