@@ -45,7 +45,8 @@ async def test_face_verification(
     try:
         from uuid import UUID
         user_uuid = UUID(user_id)
-    except ValueError:
+    except ValueError as e:
+        logger.warning("face_verification_invalid_user_id", user_id=user_id, error=str(e), exc_info=True)
         results["steps"][-1].update({"status": "failed", "error": "Invalid user_id format"})
         return results
 
@@ -126,6 +127,7 @@ async def test_face_verification(
             photo_bytes = await PhotoService.download_photo_bytes(photo.url)
             photo_bytes_list.append(photo_bytes)
         except Exception as e:
+            logger.warning("face_verification_photo_download_failed", photo_id=str(photo.id), error=str(e), exc_info=True)
             download_errors.append({"photo_id": str(photo.id), "error": str(e)})
 
     if not photo_bytes_list:

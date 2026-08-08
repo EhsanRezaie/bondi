@@ -52,21 +52,6 @@ from app.api.v1.endpoints.chats import router as chats_router
 from app.core.logging import setup_logging
 setup_logging()
 
-if settings.GLITCHTIP_DSN:
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-    sentry_sdk.init(
-        dsn=settings.GLITCHTIP_DSN,
-        integrations=[
-            FastApiIntegration(transaction_style="endpoint"),
-            SqlalchemyIntegration(),
-        ],
-        traces_sample_rate=0.1,
-        environment=settings.ENVIRONMENT,
-    )
-
-
 app = FastAPI(
     title=settings.APP_NAME,
     debug=settings.DEBUG,
@@ -74,6 +59,16 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.ENVIRONMENT == "development" else None,
     openapi_url="/api/openapi.json" if settings.ENVIRONMENT == "development" else None,
 )
+
+# Error tracking: structlog ERROR bridge -> GlitchTip + global exception handlers.
+from app.core.error_handling import (
+    http_context_middleware,
+    register_exception_handlers,
+    setup_sentry_handlers,
+)
+app.middleware("http")(http_context_middleware)
+register_exception_handlers(app)
+setup_sentry_handlers(app)
 
 # Rate limiter
 app.state.limiter = limiter

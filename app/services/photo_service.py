@@ -146,7 +146,8 @@ class PhotoService:
             for bucket in (settings.S3_PRIVATE_BUCKET, settings.S3_PUBLIC_BUCKET):
                 try:
                     await s3.head_object(Bucket=bucket, Key=key)
-                except ClientError:
+                except ClientError as e:
+                    logger.warning("photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True)
                     continue  # not in this bucket
                 await s3.delete_object(Bucket=bucket, Key=key)
                 deleted = True

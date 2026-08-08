@@ -35,9 +35,8 @@ async def _enforce_daily_report_limit(current_user_id: UUID):
             raise HTTPException(status_code=429, detail="Report limit reached for today.")
     except HTTPException:
         raise
-    except Exception:
-        logger.warning("Redis daily report limit check failed, allowing report")
-
+    except Exception as e:
+        logger.warning("Redis daily report limit check failed, allowing report", error=str(e), exc_info=True)
 
 @router.post("/message/{message_id}", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
@@ -157,8 +156,8 @@ async def report_user(
             raise HTTPException(status_code=429, detail="Report limit reached for today.")
     except HTTPException:
         raise
-    except Exception:
-        logger.warning("Redis daily report limit check failed, allowing report")
+    except Exception as e:
+        logger.warning("Redis daily report limit check failed, allowing report", error=str(e), exc_info=True)
 
     # Create report
     report = Report(

@@ -132,8 +132,9 @@ async def register_device_token(
         session.add(token_obj)
         try:
             await session.flush()
-        except IntegrityError:
+        except IntegrityError as e:
             await session.rollback()
+            logger.warning("device_token_duplicate", user_id=str(current_user.id), error=str(e), exc_info=True)
             existing = await session.execute(
                 select(DeviceToken).where(
                     DeviceToken.user_id == current_user.id,

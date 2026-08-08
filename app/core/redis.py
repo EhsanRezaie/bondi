@@ -223,5 +223,6 @@ async def health_check() -> bool:
     try:
         await redis_client.ping()
         return True
-    except (RedisError, RedisTimeoutError, ConnectionError):
+    except (RedisError, RedisTimeoutError, ConnectionError) as e:
+        logger.warning("redis_health_check_failed", error=str(e), exc_info=True)
         return False

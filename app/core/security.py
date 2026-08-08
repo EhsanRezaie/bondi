@@ -84,7 +84,8 @@ def decode_token(token: str, expected_type: str) -> Optional[dict]:
         if payload.get("type") != expected_type:
             return None
         return payload
-    except JWTError:
+    except JWTError as e:
+        logger.warning("jwt_decode_failed", token_type=expected_type, error=str(e))
         return None
 
 
@@ -135,5 +136,6 @@ def verify_admin_token(token: str) -> Optional[dict]:
         if payload.get("role") != "admin":
             return None
         return payload
-    except JWTError:
+    except JWTError as e:
+        logger.warning("admin_jwt_decode_failed", error=str(e))
         return None

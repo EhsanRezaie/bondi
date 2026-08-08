@@ -64,7 +64,8 @@ async def cache_get(redis: Redis, key: str):
     try:
         raw = await redis.get(key)
         return json.loads(raw) if raw else None
-    except Exception:
+    except Exception as e:
+        logger.warning("cache_get_failed", key=key, error=str(e), exc_info=True)
         return None
 
 
@@ -72,8 +73,8 @@ async def cache_set(redis: Redis, key: str, value, ttl: int):
     """Serialize and store a value with TTL."""
     try:
         await redis.set(key, json.dumps(value, default=str), ex=ttl)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cache_set_failed", key=key, error=str(e), exc_info=True)
 
 
 async def invalidate_user_cache(redis: Redis, user_id: UUID):
@@ -85,8 +86,8 @@ async def invalidate_user_cache(redis: Redis, user_id: UUID):
     ]
     try:
         await redis.delete(*keys)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cache_invalidate_failed", keys=keys, error=str(e), exc_info=True)
 
 
 # ── Discover Card Stack ──────────────────────────────────────────────────────
@@ -108,7 +109,8 @@ async def pop_discover_stack(redis: Redis, user_id: UUID, count: int) -> list[st
         pipe.ltrim(key, count, -1)
         results = await pipe.execute()
         return results[0]
-    except Exception:
+    except Exception as e:
+        logger.warning("discover_stack_pop_failed", key=key, error=str(e), exc_info=True)
         return []
 
 
@@ -120,16 +122,16 @@ async def set_discover_stack(redis: Redis, user_id: UUID, user_ids: list[str]):
         if user_ids:
             await redis.lpush(key, *reversed(user_ids))
             await redis.expire(key, DISCOVER_STACK_TTL)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("discover_stack_set_failed", key=key, error=str(e), exc_info=True)
 
 
 async def invalidate_discover_stack(redis: Redis, user_id: UUID):
     """Invalidate discover stack (e.g. on location update)."""
     try:
         await redis.delete(key_discover_stack(user_id))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("discover_stack_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True)
 
 
 # ── Swipe Deduplication ──────────────────────────────────────────────────────
@@ -140,8 +142,8 @@ async def record_swipe_cache(redis: Redis, swiper_id: UUID, swipee_id: UUID):
     try:
         await redis.sadd(key, str(swipee_id))
         await redis.expire(key, SWIPED_SET_TTL)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("record_swipe_cache_failed", swiper_id=str(swiper_id), error=str(e), exc_info=True)
 
 
 async def get_swiped_ids(redis: Redis, user_id: UUID) -> set[str]:
@@ -150,7 +152,8 @@ async def get_swiped_ids(redis: Redis, user_id: UUID) -> set[str]:
     try:
         members = await redis.smembers(key)
         return {m for m in members}
-    except Exception:
+    except Exception as e:
+        logger.warning("get_swiped_ids_failed", user_id=str(user_id), error=str(e), exc_info=True)
         return set()
 
 

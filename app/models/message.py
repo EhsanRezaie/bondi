@@ -5,6 +5,9 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 from app.core.encryption import encrypt_message, decrypt_message
+from app.core.logging import get_logger
+
+logger = get_logger("models.message")
 
 
 class Message(Base):
@@ -71,22 +74,25 @@ class Message(Base):
         try:
             # Decrypt using chat_id
             return decrypt_message(self._content, str(self.chat_id))
-        except Exception:
-            # If decryption fails, return encrypted content (for debugging)
+        except Exception as e:
+            # Data-integrity failure — never return a half-decrypted value silently.
+            logger.error(
+                "message_decrypt_failed",
+                message_id=str(getattr(self, "id", None)),
+                chat_id=str(getattr(self, "chat_id", None)),
+                error=str(e),
+                exc_info=True,
+            )
             return self._content
 
     @content.setter
     def content(self, value: str):
         """
         Encrypt content before storing.
+        Raises on encryption failure rather than storing plaintext.
         """
         if value and self.chat_id:
-            try:
-                # Encrypt using chat_id
-                self._content = encrypt_message(value, str(self.chat_id))
-            except Exception:
-                # If encryption fails, store as-is (should not happen)
-                self._content = value
+            self._content = encrypt_message(value, str(self.chat_id))
         else:
             self._content = value
 

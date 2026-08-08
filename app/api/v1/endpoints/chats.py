@@ -76,13 +76,16 @@ async def _background_websocket_send(
     other_user_id_str: str,
     redis: "Any",
 ):
-    await websocket_manager.send_to_conversation(
-        channel,
-        sender_id_str,
-        message_data,
-        other_user_id_str,
-        redis,
-    )
+    try:
+        await websocket_manager.send_to_conversation(
+            channel,
+            sender_id_str,
+            message_data,
+            other_user_id_str,
+            redis,
+        )
+    except Exception as e:
+        logger.error("bg_websocket_send_failed", channel=channel, error=str(e), exc_info=True)
 
 
 async def _background_personal_send(
@@ -90,7 +93,10 @@ async def _background_personal_send(
     message: dict,
     redis: "Any",
 ):
-    await websocket_manager.send_personal_message(user_id, message, redis)
+    try:
+        await websocket_manager.send_personal_message(user_id, message, redis)
+    except Exception as e:
+        logger.error("bg_personal_send_failed", user_id=user_id, error=str(e), exc_info=True)
 
 
 @router.post("", response_model=ChatCreateResponse)

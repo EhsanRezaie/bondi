@@ -59,6 +59,19 @@ class WebSocketManager:
 
     # ── Session Socket ─────────────────────────────────────────────────
 
+    def _log_listener_failure(self, task_key: str, task: "asyncio.Task"):
+        """Surface unhandled exceptions from background listener tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "ws_listener_task_failed",
+                task_key=task_key,
+                error=str(exc),
+                exc_info=exc,
+            )
+
     async def connect(self, websocket: WebSocket, user_id: str, redis: Redis):
         await websocket.accept()
 
@@ -73,6 +86,7 @@ class WebSocketManager:
             task = asyncio.create_task(
                 self._listen_user_channel(user_id, redis)
             )
+            task.add_done_callback(lambda t: self._log_listener_failure(task_key, t))
             self._listener_tasks[task_key] = task
 
         # Let peers who currently have a chat open with this user flip online.
@@ -173,6 +187,8 @@ class WebSocketManager:
                 await self._deliver_to_user_local(user_id, data)
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error("ws_user_listener_failed", user_id=user_id, error=str(e), exc_info=True)
         finally:
             await pubsub.unsubscribe(_user_channel(user_id))
             await pubsub.aclose()
@@ -195,6 +211,7 @@ class WebSocketManager:
         task_key = f"chat:{channel}"
         if task_key not in self._listener_tasks:
             task = asyncio.create_task(self._listen_chat_channel(channel, redis))
+            task.add_done_callback(lambda t: self._log_listener_failure(task_key, t))
             self._listener_tasks[task_key] = task
 
     def _release_chat_listener_if_unused(self, chat_id_or_channel: str):
@@ -226,6 +243,8 @@ class WebSocketManager:
                 await self._deliver_to_chat_local(channel, data, target_user)
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error("ws_chat_listener_failed", channel=channel, error=str(e), exc_info=True)
         finally:
             await pubsub.unsubscribe(channel)
             await pubsub.aclose()

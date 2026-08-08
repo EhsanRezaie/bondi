@@ -250,7 +250,8 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
         if not user_id:
             raise ValueError("No sub in token")
         return user_id
-    except Exception:
+    except Exception as e:
+        logger.warning("ws_token_validation_failed", error=str(e), exc_info=True)
         raise ValueError("Invalid token")
 
 

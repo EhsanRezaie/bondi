@@ -58,33 +58,36 @@ async def _background_match_notification(
     target_user_age: int,
 ):
     """Run after response is sent: create match notifications and broadcast WebSocket."""
-    notification_service = NotificationService(session)
-    await notification_service.notify_match(current_user_id, target_user_id, match_id)
+    try:
+        notification_service = NotificationService(session)
+        await notification_service.notify_match(current_user_id, target_user_id, match_id)
 
-    user1_main_photo_url = await get_user_main_photo_url(session, current_user_id)
-    user2_main_photo_url = await get_user_main_photo_url(session, target_user_id)
+        user1_main_photo_url = await get_user_main_photo_url(session, current_user_id)
+        user2_main_photo_url = await get_user_main_photo_url(session, target_user_id)
 
-    user1_data = {
-        "id": str(current_user_id),
-        "name": current_user_name,
-        "age": current_user_age,
-        "main_photo_url": user1_main_photo_url,
-    }
-    user2_data = {
-        "id": str(target_user_id),
-        "name": target_user_name,
-        "age": target_user_age,
-        "main_photo_url": user2_main_photo_url,
-    }
+        user1_data = {
+            "id": str(current_user_id),
+            "name": current_user_name,
+            "age": current_user_age,
+            "main_photo_url": user1_main_photo_url,
+        }
+        user2_data = {
+            "id": str(target_user_id),
+            "name": target_user_name,
+            "age": target_user_age,
+            "main_photo_url": user2_main_photo_url,
+        }
 
-    await websocket_manager.broadcast_match(
-        str(current_user_id),
-        str(target_user_id),
-        str(match_id),
-        user1_data,
-        user2_data,
-        redis_client,
-    )
+        await websocket_manager.broadcast_match(
+            str(current_user_id),
+            str(target_user_id),
+            str(match_id),
+            user1_data,
+            user2_data,
+            redis_client,
+        )
+    except Exception as e:
+        logger.error("bg_match_notification_failed", match_id=str(match_id), error=str(e), exc_info=True)
 
 
 @router.post("", response_model=SwipeResponse)
@@ -207,8 +210,9 @@ async def swipe(
     session.add(new_swipe)
     try:
         await session.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
+        logger.warning("swipe_duplicate", from_user=str(current_user_id), to_user=str(body.user_id), error=str(e), exc_info=True)
         existing = await session.execute(
             select(Swipe).where(
                 Swipe.from_user == current_user_id,
@@ -261,8 +265,9 @@ async def swipe(
                 )
                 session.add(new_match)
                 await session.flush()
-            except IntegrityError:
+            except IntegrityError as e:
                 await session.rollback()
+                logger.warning("match_duplicate", user1=str(current_user_id), user2=str(body.user_id), error=str(e), exc_info=True)
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Already matched with this user",

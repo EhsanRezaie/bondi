@@ -115,8 +115,9 @@ async def claim_referral(
     try:
         await session.commit()
         await invalidate_auth_user(redis_client, current_user.id)
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
+        logger.warning("referral_duplicate", user_id=str(current_user.id), error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Referral already claimed",

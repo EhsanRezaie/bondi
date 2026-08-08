@@ -29,7 +29,8 @@ async def _resolve_chat(
     canonical channel + other participant. Returns None if not authorized."""
     try:
         chat_uuid = UUID(chat_id)
-    except ValueError:
+    except ValueError as e:
+        logger.warning("ws_chat_uuid_invalid", chat_id=chat_id, error=str(e), exc_info=True)
         return None
 
     chat_obj = (
@@ -105,7 +106,8 @@ async def stream_websocket(
 ):
     try:
         user_id = await validate_ws_token(token, redis)
-    except Exception:
+    except Exception as e:
+        logger.warning("ws_auth_failed", error=str(e), exc_info=True)
         await websocket.close(code=4401, reason="Unauthorized")
         return
 
@@ -126,12 +128,14 @@ async def stream_websocket(
                 )
             except asyncio.TimeoutError:
                 break
-            except Exception:
+            except Exception as e:
+                logger.warning("ws_receive_failed", user_id=user_id, error=str(e), exc_info=True)
                 break
 
             try:
                 data = json.loads(raw)
-            except Exception:
+            except Exception as e:
+                logger.warning("ws_invalid_json", user_id=user_id, error=str(e), exc_info=True)
                 continue
             msg_type = data.get("type")
 
@@ -154,7 +158,8 @@ async def stream_websocket(
                     )
                     try:
                         await websocket.send_text(json.dumps(snapshot))
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("ws_snapshot_send_failed", user_id=user_id, error=str(e), exc_info=True)
                         break
                     logger.info(
                         "WS subscribed", user_id=user_id, chat_id=channel
@@ -216,8 +221,8 @@ async def stream_websocket(
                 )
             )
             hide_last_seen = bool(settings)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("ws_presence_read_failed", user_id=user_id, error=str(e), exc_info=True)
         await websocket_manager.broadcast_peer_presence(
             user_id,
             {

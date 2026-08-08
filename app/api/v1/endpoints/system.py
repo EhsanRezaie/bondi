@@ -59,7 +59,8 @@ async def get_maintenance_status() -> MaintenanceStatus:
             start_time=data.get("start_time"),
             end_time=data.get("end_time"),
         )
-    except Exception:
+    except Exception as e:
+        logger.warning("maintenance_status_read_failed", error=str(e), exc_info=True)
         return MaintenanceStatus(
             enabled=False,
             message=None,
@@ -92,9 +93,10 @@ async def set_maintenance_status(
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data_dict, f, indent=2)
             os.replace(tmp_path, str(MAINTENANCE_FILE))
-        except Exception:
+        except Exception as e:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+            logger.error("maintenance_status_write_failed", error=str(e), exc_info=True)
             raise
     else:
         if MAINTENANCE_FILE.exists():
@@ -156,7 +158,8 @@ async def system_status(request: Request, response: Response) -> SystemStatusRes
             start = datetime.now(timezone.utc)
             await conn.execute(text("SELECT 1"))
             db_latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
-    except Exception:
+    except Exception as e:
+        logger.warning("system_status_db_check_failed", error=str(e), exc_info=True)
         db_status = "error"
     
     # Check Redis connectivity
@@ -166,7 +169,8 @@ async def system_status(request: Request, response: Response) -> SystemStatusRes
         start = datetime.now(timezone.utc)
         await redis_client.ping()
         redis_latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
-    except Exception:
+    except Exception as e:
+        logger.warning("system_status_redis_check_failed", error=str(e), exc_info=True)
         redis_status = "error"
     
     # Check MinIO connectivity
@@ -175,7 +179,8 @@ async def system_status(request: Request, response: Response) -> SystemStatusRes
         from app.services.photo_service import PhotoService
         async with PhotoService._s3_client() as s3:
             await s3.head_bucket(Bucket=settings.S3_PRIVATE_BUCKET)
-    except Exception:
+    except Exception as e:
+        logger.warning("system_status_minio_check_failed", error=str(e), exc_info=True)
         minio_status = "error"
     
     # Determine overall status
@@ -358,7 +363,8 @@ async def get_version_override() -> Dict:
     try:
         with open(VERSION_OVERRIDE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.warning("version_override_read_failed", error=str(e), exc_info=True)
         return {}
 
 
@@ -369,9 +375,10 @@ async def set_version_override(data: Dict) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, str(VERSION_OVERRIDE_FILE))
-    except Exception:
+    except Exception as e:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        logger.error("version_override_write_failed", error=str(e), exc_info=True)
         raise
 
 

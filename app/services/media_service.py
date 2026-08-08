@@ -88,7 +88,7 @@ class MediaService:
             return True, url, None
 
         except Exception as e:
-            logger.error("Failed to save photo", error=str(e))
+            logger.error("Failed to save photo", error=str(e), exc_info=True)
             return False, None, "Invalid image file"
 
     @staticmethod
@@ -143,7 +143,7 @@ class MediaService:
             return True, url, None
 
         except Exception as e:
-            logger.error("Failed to save voice", error=str(e))
+            logger.error("Failed to save voice", error=str(e), exc_info=True)
             return False, None, "Failed to save voice message"
 
     @staticmethod
@@ -169,17 +169,17 @@ class MediaService:
                 # Delete from private bucket
                 try:
                     await s3.delete_object(Bucket=settings.S3_PRIVATE_BUCKET, Key=key)
-                except Exception:
-                    pass
-                
+                except Exception as delete_err:
+                    logger.warning("chat_media_delete_private_failed", key=key, error=str(delete_err), exc_info=True)
+
                 # Delete from public bucket too
                 try:
                     await s3.delete_object(Bucket=settings.S3_PUBLIC_BUCKET, Key=key)
-                except Exception:
-                    pass
+                except Exception as delete_err:
+                    logger.warning("chat_media_delete_public_failed", key=key, error=str(delete_err), exc_info=True)
                 
             logger.info("Deleted chat media", key=key)
             return True
         except Exception as e:
-            logger.error("Failed to delete media", error=str(e))
+            logger.error("Failed to delete media", error=str(e), exc_info=True)
             return False

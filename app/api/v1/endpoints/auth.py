@@ -202,8 +202,8 @@ async def register_init(
         ip_count = results[0]
         if ip_count >= 3:
             logger.warning("suspicious_registration_pattern", ip=client_ip, count=ip_count)
-    except Exception:
-        pass  # Redis failure shouldn't block registration
+    except Exception as e:
+        logger.warning("registration_ip_tracking_failed", error=str(e), exc_info=True)
 
     return RegisterInitResponse(
         message="If this email is new, a verification code has been sent.",
@@ -238,8 +238,9 @@ async def register_verify(
     session.add(user)
     try:
         await session.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
+        logger.warning("register_verify_duplicate_email", email=body.email, error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
@@ -414,7 +415,8 @@ async def google_auth(
             google_requests.Request(),
             settings.GOOGLE_CLIENT_ID,
         )
-    except ValueError:
+    except ValueError as e:
+        logger.warning("google_token_invalid", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Google token.",
@@ -442,8 +444,9 @@ async def google_auth(
                 )
                 session.add(user)
                 await session.flush()
-            except IntegrityError:
+            except IntegrityError as e:
                 await session.rollback()
+                logger.warning("google_auth_duplicate_email", email=email, error=str(e), exc_info=True)
                 existing_user = await get_user_by_email(session, email)
                 if existing_user:
                     existing_user.google_id = google_id

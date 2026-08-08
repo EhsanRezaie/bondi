@@ -57,13 +57,16 @@ async def _background_websocket_send(
     other_user_id_str: str,
     redis_client,
 ):
-    await websocket_manager.send_to_conversation(
-        channel,
-        sender_id_str,
-        message_data,
-        other_user_id_str,
-        redis_client,
-    )
+    try:
+        await websocket_manager.send_to_conversation(
+            channel,
+            sender_id_str,
+            message_data,
+            other_user_id_str,
+            redis_client,
+        )
+    except Exception as e:
+        logger.error("bg_websocket_send_failed", channel=channel, error=str(e), exc_info=True)
 
 
 async def _background_chat_updated(
@@ -76,29 +79,32 @@ async def _background_chat_updated(
 ):
     """Publish a chat_updated event on the recipient's personal channel so
     their chat list can reorder and refresh in real time."""
-    unread = await session.scalar(
-        select(func.count()).select_from(Message).where(
-            Message.chat_id == chat_id,
-            Message.receiver_id == recipient_user_id,
-            Message.is_read == False,
-            Message.is_deleted_for_all == False,
-            Message.is_deleted_for_receiver == False,
-        )
-    ) or 0
-    await websocket_manager.send_personal_message(
-        str(recipient_user_id),
-        {
-            "type": "chat_updated",
-            "data": {
-                "chat_id": str(chat_id),
-                "status": status,
-                "unread_count": unread,
-                "updated_at": updated_at.isoformat() if updated_at else None,
-                "last_message": last_message,
+    try:
+        unread = await session.scalar(
+            select(func.count()).select_from(Message).where(
+                Message.chat_id == chat_id,
+                Message.receiver_id == recipient_user_id,
+                Message.is_read == False,
+                Message.is_deleted_for_all == False,
+                Message.is_deleted_for_receiver == False,
+            )
+        ) or 0
+        await websocket_manager.send_personal_message(
+            str(recipient_user_id),
+            {
+                "type": "chat_updated",
+                "data": {
+                    "chat_id": str(chat_id),
+                    "status": status,
+                    "unread_count": unread,
+                    "updated_at": updated_at.isoformat() if updated_at else None,
+                    "last_message": last_message,
+                },
             },
-        },
-        redis_client,
-    )
+            redis_client,
+        )
+    except Exception as e:
+        logger.error("bg_chat_updated_failed", chat_id=str(chat_id), error=str(e), exc_info=True)
 
 
 def _build_message_response(
@@ -273,8 +279,8 @@ async def send_text_message(
             raise HTTPException(status_code=429, detail="Sending too fast. Please slow down.")
     except HTTPException:
         raise
-    except Exception:
-        logger.warning("Redis rate limit check failed, allowing message")
+    except Exception as e:
+        logger.warning("msg_rate_limit_check_failed", chat_id=str(chat.id), error=str(e), exc_info=True)
 
     new_message = await create_encrypted_message(
         session=session,

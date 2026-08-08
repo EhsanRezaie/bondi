@@ -77,8 +77,9 @@ async def block_user(
     session.add(block)
     try:
         await session.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
+        logger.warning("block_duplicate", blocker_id=str(current_user_id), blocked_id=str(user_id), error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User already blocked",
@@ -128,7 +129,10 @@ async def _end_blocked_chat(
 
 
 async def _background_personal_send(user_id: str, message: dict):
-    await websocket_manager.send_personal_message(user_id, message, redis_module.redis_client)
+    try:
+        await websocket_manager.send_personal_message(user_id, message, redis_module.redis_client)
+    except Exception as e:
+        logger.error("bg_personal_send_failed", user_id=user_id, error=str(e), exc_info=True)
 
 
 @router.post("/{user_id}/unblock", status_code=status.HTTP_204_NO_CONTENT)
