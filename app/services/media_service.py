@@ -5,6 +5,7 @@ from PIL import Image
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.storage import s3_client
 
 logger = get_logger("media_service")
 
@@ -52,17 +53,9 @@ class MediaService:
             file_data = output.getvalue()
 
             # Upload to MinIO
-            import aioboto3
-            
             key = f"chat/photos/{chat_id}/{message_id}.jpg"
             
-            async with aioboto3.Session().client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            ) as s3:
+            async with s3_client() as s3:
                 await s3.put_object(
                     Bucket=settings.S3_PRIVATE_BUCKET,
                     Key=key,
@@ -71,13 +64,7 @@ class MediaService:
                 )
 
             # Generate signed URL
-            async with aioboto3.Session().client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            ) as s3:
+            async with s3_client() as s3:
                 url = await s3.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
@@ -107,17 +94,9 @@ class MediaService:
 
         try:
             # Upload to MinIO
-            import aioboto3
-            
             key = f"chat/voice/{chat_id}/{message_id}.mp3"
             
-            async with aioboto3.Session().client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            ) as s3:
+            async with s3_client() as s3:
                 await s3.put_object(
                     Bucket=settings.S3_PRIVATE_BUCKET,
                     Key=key,
@@ -126,13 +105,7 @@ class MediaService:
                 )
 
             # Generate signed URL
-            async with aioboto3.Session().client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            ) as s3:
+            async with s3_client() as s3:
                 url = await s3.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
@@ -157,15 +130,7 @@ class MediaService:
             return False
 
         try:
-            import aioboto3
-            
-            async with aioboto3.Session().client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            ) as s3:
+            async with s3_client() as s3:
                 # Delete from private bucket
                 try:
                     await s3.delete_object(Bucket=settings.S3_PRIVATE_BUCKET, Key=key)

@@ -13,6 +13,8 @@ from app.models.report import Report
 from app.schemas.admin import AdminReportResponse, AdminReportUpdate
 
 from app.core.logging import get_logger
+from app.core.timezone import utcnow
+from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_reports")
 
@@ -134,9 +136,10 @@ async def admin_update_report(
         report.admin_note = body.admin_note
     
     if body.status in ["reviewed", "action_taken"]:
-        report.resolved_at = datetime.utcnow()
+        report.resolved_at = utcnow()
     
     await session.commit()
+    await log_admin_action(str(admin.id), "report_update", "report", report.id, request, session)
     
     reporter_result = await session.execute(
         select(User).options(selectinload(User.profile)).where(User.id == report.reporter_id)
@@ -180,5 +183,6 @@ async def admin_delete_report(
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     
+    await log_admin_action(str(admin.id), "report_delete", "report", report.id, request, session)
     await session.delete(report)
     await session.commit()

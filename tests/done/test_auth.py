@@ -321,6 +321,33 @@ class TestRefresh:
         assert res2.status_code == 401
         assert "revoked" in res2.json()["detail"]
 
+    async def test_refresh_reuse_revokes_family(self, client: AsyncClient, mock_verification_code):
+        """Replaying a rotated refresh token must revoke the WHOLE family.
+
+        A token acquired in the same family must stop working afterwards,
+        forcing a re-login everywhere (refresh-theft detection).
+        """
+        data = await register_user_full(client, mock_verification_code)
+        refresh_a = data["refresh_token"]
+
+        # First rotation: A -> B, same family.
+        res_b = await client.post(REFRESH_URL, json={"refresh_token": refresh_a})
+        assert res_b.status_code == 200
+        refresh_b = res_b.json()["refresh_token"]
+
+        # Second rotation: B -> C, still same family.
+        res_c = await client.post(REFRESH_URL, json={"refresh_token": refresh_b})
+        assert res_c.status_code == 200
+        refresh_c = res_c.json()["refresh_token"]
+
+        # Attacker replays the already-rotated B → family is revoked.
+        res_evil = await client.post(REFRESH_URL, json={"refresh_token": refresh_b})
+        assert res_evil.status_code == 401
+
+        # Even the fresh C token — same family — must now be dead.
+        res_c2 = await client.post(REFRESH_URL, json={"refresh_token": refresh_c})
+        assert res_c2.status_code == 401
+
 
 # ---------------------------------------------------------------------------
 # POST /auth/logout

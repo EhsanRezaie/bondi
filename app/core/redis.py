@@ -24,6 +24,10 @@ redis_client: aioredis.Redis = aioredis.from_url(
 )
 
 REFRESH_TOKEN_PREFIX = "refresh_token:"
+USER_TOKENS_PREFIX = "user_tokens:"
+TOKEN_FAMILY_PREFIX = "token_family:"      # token -> family id
+AUTH_FAMILY_PREFIX = "auth_family:"        # family id -> set of tokens
+ROTATED_TOKEN_PREFIX = "rotated_token:"
 REFRESH_TOKEN_TTL = 60 * 60 * 24 * 30  # 30 days in seconds
 
 VERIFICATION_CODE_PREFIX = "verification:"
@@ -43,18 +47,39 @@ async def _safe_redis_operation(operation, fallback=None):
 
 # ============ Refresh Token Functions ============
 
-async def store_refresh_token(token: str, user_id: str) -> bool:
+async def store_refresh_token(token: str, user_id: str, family_id: Optional[str] = None) -> str:
     """
     Save a refresh token → user_id mapping with 30-day TTL.
-    Returns True if successful, False if Redis is unavailable.
+    Also tracks the token in a per-user set so revoke_all_user_tokens is O(tokens),
+    and in a rotation family for theft detection.
+
+    Args:
+        token: The refresh token string.
+        user_id: Owning user.
+        family_id: Rotation family to join. If None, the token starts its own family.
+
+    Returns:
+        The family_id the token now belongs to ("" - empty string on failure).
     """
     key = f"{REFRESH_TOKEN_PREFIX}{token}"
+    member_key = f"{USER_TOKENS_PREFIX}{user_id}"
+    fam = family_id or token
+    fam_key = f"{TOKEN_FAMILY_PREFIX}{token}"
+    family_set = f"{AUTH_FAMILY_PREFIX}{fam}"
     try:
-        await redis_client.set(key, user_id, ex=REFRESH_TOKEN_TTL)
-        return True
+        async with redis_client.pipeline() as pipe:
+            pipe.set(key, user_id, ex=REFRESH_TOKEN_TTL)
+            pipe.sadd(member_key, token)
+            pipe.expire(member_key, REFRESH_TOKEN_TTL)
+            pipe.set(fam_key, fam)
+            pipe.expire(fam_key, REFRESH_TOKEN_TTL)
+            pipe.sadd(family_set, token)
+            pipe.expire(family_set, REFRESH_TOKEN_TTL)
+            await pipe.execute()
+        return fam
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to store refresh token", error=str(e))
-        return False
+        return ""
 
 
 async def get_refresh_token_owner(token: str) -> Optional[str]:
@@ -77,7 +102,16 @@ async def revoke_refresh_token(token: str) -> bool:
     """
     key = f"{REFRESH_TOKEN_PREFIX}{token}"
     try:
-        await redis_client.delete(key)
+        user_id = await redis_client.get(key)
+        fam = await redis_client.get(f"{TOKEN_FAMILY_PREFIX}{token}")
+        async with redis_client.pipeline() as pipe:
+            pipe.delete(key)
+            if user_id:
+                pipe.srem(f"{USER_TOKENS_PREFIX}{user_id}", token)
+            if fam:
+                pipe.srem(f"{AUTH_FAMILY_PREFIX}{fam}", token)
+                pipe.delete(f"{TOKEN_FAMILY_PREFIX}{token}")
+            await pipe.execute()
         return True
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to revoke refresh token", error=str(e))
@@ -90,17 +124,82 @@ async def revoke_all_user_tokens(user_id: str) -> int:
     Used when password changes or account is banned.
     Returns number of tokens revoked, -1 on error.
     """
-    pattern = f"{REFRESH_TOKEN_PREFIX}*"
+    member_key = f"{USER_TOKENS_PREFIX}{user_id}"
     revoked_count = 0
     try:
-        async for key in redis_client.scan_iter(match=pattern, count=100):
-            value = await redis_client.get(key)
-            if value == user_id:
-                await redis_client.delete(key)
-                revoked_count += 1
+        token_ids = await redis_client.smembers(member_key)
+        if token_ids:
+            async with redis_client.pipeline() as pipe:
+                for token in token_ids:
+                    pipe.delete(f"{REFRESH_TOKEN_PREFIX}{token}")
+                pipe.delete(member_key)
+                await pipe.execute()
+            revoked_count = len(token_ids)
+        else:
+            await redis_client.delete(member_key)
         return revoked_count
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to revoke all user tokens", error=str(e))
+        return -1
+
+
+async def get_token_family(token: str) -> Optional[str]:
+    """
+    Return the rotation-family id a token belongs to, or None.
+    Used on refresh to keep a token in its existing family.
+    """
+    try:
+        return await redis_client.get(f"{TOKEN_FAMILY_PREFIX}{token}")
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to get token family", error=str(e))
+        return None
+
+
+async def is_rotated_token(token: str) -> bool:
+    """
+    True if this token was already rotated (i.e. is being reused) —
+    the OAuth2 refreshed-token-reuse theft signal.
+    """
+    try:
+        return bool(await redis_client.exists(f"{ROTATED_TOKEN_PREFIX}{token}"))
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to check rotated token", error=str(e))
+        return False
+
+
+async def mark_token_rotated(token: str, family_id: str) -> bool:
+    """
+    Mark a token as already-rotated so presenting it again triggers family revocation.
+    """
+    try:
+        await redis_client.set(
+            f"{ROTATED_TOKEN_PREFIX}{token}", family_id, ex=REFRESH_TOKEN_TTL
+        )
+        return True
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to mark token rotated", error=str(e))
+        return False
+
+
+async def revoke_refresh_family(family_id: str) -> int:
+    """
+    Revoke ENTIRE rotation family (forced re-login everywhere).
+    Used when a rotated token is replayed. Returns number of tokens revoked.
+    """
+    family_set = f"{AUTH_FAMILY_PREFIX}{family_id}"
+    revoked_count = 0
+    try:
+        tokens = await redis_client.smembers(family_set)
+        async with redis_client.pipeline() as pipe:
+            for token in tokens:
+                pipe.delete(f"{REFRESH_TOKEN_PREFIX}{token}")
+                pipe.delete(f"{TOKEN_FAMILY_PREFIX}{token}")
+                pipe.delete(f"{ROTATED_TOKEN_PREFIX}{token}")
+            pipe.delete(family_set)
+            await pipe.execute()
+        return len(tokens)
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to revoke refresh family", error=str(e))
         return -1
 
 

@@ -21,6 +21,7 @@ from PIL import Image
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.storage import s3_client
 
 logger = get_logger("nsfw_service")
 
@@ -144,18 +145,9 @@ class NSFWService:
 
         Returns the S3 object key.
         """
-        import aioboto3
-
         key = f"quarantine/{user_id}/{photo_id}.jpg"
 
-        session = aioboto3.Session()
-        async with session.client(
-            "s3",
-            endpoint_url=settings.S3_ENDPOINT_URL,
-            aws_access_key_id=settings.S3_ACCESS_KEY,
-            aws_secret_access_key=settings.S3_SECRET_KEY,
-            region_name=settings.S3_REGION,
-        ) as s3:
+        async with s3_client() as s3:
             await s3.put_object(
                 Bucket=settings.S3_PRIVATE_BUCKET,
                 Key=key,

@@ -385,19 +385,16 @@ async def get_liked_users(
         Block.blocked_id == current_user_id
     ).subquery()
     
-    # Get total count first
-    count_query = select(func.count()).select_from(
-        select(User.id)
-        .join(UserProfile, User.id == UserProfile.user_id)
+    # Get total count first — plain count, no profile join, no ORDER BY
+    total = await session.scalar(
+        select(func.count(User.id))
         .where(
             User.id.in_(select(liked_user_ids.c.to_user)),
             User.is_active == True,
             User.id.not_in(select(blocked_by_me.c.blocked_id)),
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
-        .subquery()
     )
-    total = await session.scalar(count_query)
     
     # Get paginated results with profile data and swipe timestamp
     query = (
@@ -500,10 +497,9 @@ async def get_likers(
         Block.blocked_id == current_user_id
     ).subquery()
     
-    # Get total count
-    count_query = select(func.count()).select_from(
-        select(User.id)
-        .join(UserProfile, User.id == UserProfile.user_id)
+    # Get total count — plain count, no profile join, no ORDER BY
+    total = await session.scalar(
+        select(func.count(User.id))
         .where(
             User.id.in_(select(liker_ids.c.from_user)),
             User.is_active == True,
@@ -511,9 +507,7 @@ async def get_likers(
             User.id.not_in(select(blocked_by_me.c.blocked_id)),
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
-        .subquery()
     )
-    total = await session.scalar(count_query)
     
     # Get paginated results
     query = (

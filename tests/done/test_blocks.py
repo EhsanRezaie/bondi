@@ -11,6 +11,7 @@ REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 BLOCKS_URL = "/api/v1/blocks"
 SEARCH_URL = "/api/v1/search"
+CHATS_URL = "/api/v1/chats"
 
 VALID_EMAIL_MALE = "block_male@example.com"
 VALID_EMAIL_FEMALE = "block_female@example.com"
@@ -306,8 +307,31 @@ class TestBlocks:
         """Unblock endpoint requires authentication"""
         res = await client.post(f"{BLOCKS_URL}/123/unblock")
         assert res.status_code == 401
-    
+
     async def test_list_blocks_requires_auth(self, client: AsyncClient):
         """List blocks endpoint requires authentication"""
         res = await client.get(BLOCKS_URL)
         assert res.status_code == 401
+
+    async def test_blocked_target_cannot_be_unmatched_chatted(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """A blocked user must not be able to open an unmatched chat (403)."""
+        male_headers, male_id = await register_and_get_headers(
+            client, "block_chat_sender@example.com", COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, "block_chat_target@example.com", COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Female blocks male (reverse direction).
+        await client.post(
+            f"{BLOCKS_URL}/{male_id}/block", headers=female_headers
+        )
+
+        # Male now tries to message female directly.
+        res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        assert res.status_code == 403
+        assert "cannot start a chat" in res.json()["detail"].lower()

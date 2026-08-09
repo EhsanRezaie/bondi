@@ -5,16 +5,22 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import os
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from app.core.config import settings
 from app.core.limiter import limiter
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db.session import get_session
-
+from app.core.metrics import (
+    record_request,
+    update_db_pool,
+    update_ws_active,
+    update_celery_depth,
+    render as render_metrics,
+)
 from app.core.redis import redis_client
+
+from app.db.session import engine, get_session
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.photos import router as photos_router  
@@ -87,6 +93,46 @@ app.add_middleware(
 
 # GZip
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Prometheus request metrics (before routers; /metrics itself is excluded below)
+from starlette.responses import Response
+
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    import time as _time
+    start = _time.perf_counter()
+    path = request.url.path
+    response = await call_next(request)
+    if path != "/metrics":
+        record_request(request.method, path, response.status_code, _time.perf_counter() - start)
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint():
+    try:
+        _pool = getattr(engine, "pool", None)
+        if _pool is not None:
+            update_db_pool(
+                checkedout=_pool.checkedout(),
+                total=_pool.total(),
+            )
+        from app.services.websocket_manager import websocket_manager
+        update_ws_active(len(websocket_manager.active_connections))
+        try:
+            if redis_client:
+                depth = 0
+                try:
+                    depth = int(await redis_client.llen("celery") or 0)
+                except Exception:
+                    depth = 0
+                update_celery_depth(depth)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return Response(content=render_metrics(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 # Routers
 app.include_router(auth_router, prefix="/api/v1")

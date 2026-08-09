@@ -21,5 +21,5 @@ else
         WORKERS=8
     fi
     echo "Starting app (production, $CPU_CORES cores, $WORKERS workers)..."
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS --timeout-graceful-termination 30
 fi

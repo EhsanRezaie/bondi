@@ -214,7 +214,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P0-4 — Add PgBouncer + tune SQLAlchemy pool · `S`
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/db/session.py:8-12` creates the engine with **no** `pool_size`/`max_overflow` (defaults 5/10). No pooler in `docker-compose.yml`. `entrypoint.sh:21-27` runs up to 8 workers → 8 × 15 = **120 possible connections** vs Postgres default `max_connections=100`.
 
@@ -488,7 +488,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-3 — Redis password + MinIO non-default credentials · `XS`
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `docker-compose.yml:62-74` Redis has no `requirepass`; `:82-83` MinIO `minioadmin/minioadmin`. `security_plan` Session D (unchecked). Anyone on the Docker network (or host, since 6379/9000 are published) can read/write cache + tokens + photos.
 
@@ -519,7 +519,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-4 — Docker network isolation · `S`
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `docker-compose.yml` uses the default bridge; db/redis/minio ports are published to the host. `security_plan` Section 9.1 (unchecked).
 
@@ -542,7 +542,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-5 — `revoke_all_user_tokens` is O(N) over ALL refresh tokens · `S` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/core/redis.py:87-101` does `scan_iter(match="refresh_token:*")` then `GET` + `DEL` per key on every password change / ban. It scans **every** refresh token in Redis.
 
@@ -604,6 +604,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P1-7 — No durable task queue (Celery installed but 100% dead code) · `M` · NEW
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `requirements.txt` pins `celery`, `kombu`, `billiard`, `amqp`, but `app/tasks/*.py` are all **0 bytes** and `grep celery @task delay apply_async` returns nothing. No worker/beat service in `docker-compose.yml`. All async work uses in-process `BackgroundTasks`.
@@ -660,7 +662,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-1 — Daily-limit "midnight" uses server-local TZ, not Tehran · `S` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/services/reward_service.py:19-24` `_seconds_until_midnight()` uses `datetime.now()` (naive → server-local TZ). `models/daily_limit.py:13` comment says `Tehran date (UTC+3:30)` but `date.today()` is also server-local. If the server runs UTC (Docker default), limits reset at 03:30 Tehran time, not midnight.
 
@@ -688,7 +690,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-2 — Naive `datetime.utcnow()` mixed with timezone-aware datetimes · `XS` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `app/services/chat_service.py:354` `read_at=datetime.utcnow()`, `mark_messages_as_delivered` similarly. Everywhere else uses `datetime.now(timezone.utc)`.
 
@@ -705,6 +707,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** None — this is a pure, mechanical improvement.
 
 ### P2-3 — Unmatched-chat path has no block check + spam vector · `M` · NEW
+
+- [x] Done
 
 - [ ] Done
 
@@ -764,6 +768,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** This is a fail-closed change — make sure no existing code path relies on the silent plaintext fallback (none should). Test the rotation script (P0-8) still works with the new raising setter.
 
 ### P2-5 — `is_verified` inconsistent between discover and search · `XS` · NEW
+
+- [x] Done
 
 - [ ] Done
 
@@ -830,6 +836,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-8 — Nominatim reverse-geocode has no rate limit + weak User-Agent · `S` · NEW
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `app/services/location_service.py:290-303` calls `https://nominatim.openstreetmap.org/reverse` with `User-Agent: DatingApp/1.0`. Nominatim's usage policy requires a valid contact User-Agent and limits heavy use to ~1 req/sec; it will IP-ban at scale.
@@ -853,6 +861,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-9 — `get_notifications` count wraps the full ordered query · `XS` · NEW
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `app/api/v1/endpoints/notifications.py:43-45` does `select(func.count()).select_from(query.subquery())` where `query` already has `ORDER BY created_at DESC`. Wrapping an ordered query in a count subquery is wasteful (the planner may materialize the sort).
@@ -871,6 +881,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** Minor but it's a free win. The same pattern recurs in `matches.py` (P2-10) and `swipes.py` liked/likers.
 
 ### P2-10 — `get_matches` count wraps an eager-loaded query · `XS` · NEW
+
+- [x] Done
 
 - [ ] Done
 
@@ -892,6 +904,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-11 — `PhotoService.MAX_FILE_SIZE` hardcoded, ignores config · `XS` · NEW
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `app/services/photo_service.py:32` `MAX_FILE_SIZE = 5 * 1024 * 1024` (hardcoded 5MB) but `settings.MAX_PHOTO_SIZE_MB=10` exists (`config.py:76`) and is ignored.
@@ -909,6 +923,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** Make sure the nginx `client_max_body_size` (P2-13) is at least as large, or nginx 413s before the app's check runs.
 
 ### P2-12 — `media_service` creates a new `aioboto3.Session()` per call · `XS` · NEW
+
+- [x] Done
 
 - [ ] Done
 
@@ -978,6 +994,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P2-15 — No graceful shutdown / WebSocket drain on SIGTERM · `S` · NEW
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `entrypoint.sh:27` `exec uvicorn ... --workers $WORKERS` with no graceful-termination config. On `SIGTERM` (deploy/restart), in-flight requests and long-lived WebSocket connections can be killed mid-message.
@@ -1041,6 +1059,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P3-1 — WebSocket inbound message validation · `S`
 
+- [x] Done
+
 - [ ] Done
 
 **Evidence:** `app/api/v1/websocket/chat.py:62-87` parses client JSON (`json.loads(raw)`) and dispatches on `type` with no schema validation; `matches.py:40` similar. `security_plan` Section 8.2 (unchecked). Malformed input → unhandled exception → the WS loop breaks silently (`except Exception: break`).
@@ -1076,7 +1096,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P3-3 — Refresh-token theft detection (family tracking) · `M`
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `security_plan` lists "Token theft detection ❌". `redis.py` stores opaque refresh tokens but no family/rotation tracking — a stolen refresh token works until 30-day expiry.
 **Fix (step-by-step):**
@@ -1089,6 +1109,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** This is the gold-standard defense; optional before launch but expected for a dating app handling sensitive DMs.
 
 ### P3-4 — Verify admin audit-log coverage on every admin mutation · `S`
+
+- [x] Done
 
 - [ ] Done
 
@@ -1119,6 +1141,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Gotchas:** If GlitchTip is down, the Sentry SDK fails open (no crash) — good. Make sure the DSN's project number matches the GlitchTip project you created.
 
 ### P4-2 — Add app metrics (latency, DB pool, Redis, queue depth) · `M` · NEW
+
+- [x] Done
 
 - [ ] Done
 
@@ -1156,7 +1180,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ### P4-4 — `alembic/env.py` add `compare_type=True` · `XS` · NEW
 
-- [ ] Done
+- [x] Done
 
 **Evidence:** `alembic/env.py:41-45` configures `context.configure(...)` without `compare_type=True` → autogenerate won't detect column type changes (e.g. `String(20)` → `String(50)`), so migrations silently miss them.
 **Fix:**
@@ -1171,6 +1195,8 @@ context.configure(connection=conn, target_metadata=target_metadata,
 **Gotchas:** `compare_server_default=True` can be noisy on `server_default=func.now()` across PG versions — review generated diffs carefully.
 
 ### P4-5 — Tests create tables from models, not migrations · `S` · NEW
+
+- [x] Done
 
 - [ ] Done
 

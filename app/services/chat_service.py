@@ -18,6 +18,7 @@ from app.models.block import Block
 from app.models.daily_limit import DailyLimit
 from app.core.logging import get_logger
 from app.core.encryption import encrypt_message, decrypt_message, decrypt_message_async
+from app.core.timezone import utcnow
 
 logger = get_logger("chat_service")
 
@@ -344,7 +345,7 @@ async def mark_messages_as_delivered(
             Message.receiver_id == user_id,
             Message.is_delivered == False,
         )
-        .values(is_delivered=True, delivered_at=datetime.utcnow())
+        .values(is_delivered=True, delivered_at=utcnow())
     )
     await session.commit()
 
@@ -362,7 +363,7 @@ async def mark_messages_as_read(
             Message.receiver_id == user_id,
             Message.is_read == False,
         )
-        .values(is_read=True, read_at=datetime.utcnow())
+        .values(is_read=True, read_at=utcnow())
     )
     await session.commit()
 

@@ -22,7 +22,10 @@ from countrystatecity_countries import (
 )
 
 REVERSE_GC_CACHE_TTL = 60 * 60 * 24
-NOMINATIM_USER_AGENT = "DatingApp/1.0"
+# Nominatim usage policy: valid contact info + ~1 req/sec. Keep the app name
+# fixed but use a real admin contact so OSM reach out to us (not IP-ban) on abuse.
+NOMINATIM_USER_AGENT = "Bondi (prod@example.com)"
+NOMINATIM_GLOBAL_RATE_SEC = 1  # global token bucket, 1 req/sec
 
 
 # ============================================================================
@@ -263,7 +266,11 @@ def clear_cache() -> None:
 # ============================================================================
 
 async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional[dict]:
-    """Convert GPS coordinates to location text using Nominatim API."""
+    """Convert GPS coordinates to location text using Nominatim API.
+
+    The 24h cache is checked first; an un-cached miss consumes a global
+    Nominatim rate-limit token (1 req/sec) so the free OSM API doesn't ban us.
+    """
     cache_key = f"geo:reverse:{round(lat, 3)}:{round(lng, 3)}"
 
     if redis_client:
@@ -273,6 +280,17 @@ async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional
                 return json.loads(cached)
         except Exception as e:
             logger.warning("Redis cache read failed", error=str(e))
+
+        # Global token-bucket limiter: one Nominatim call per second.
+        try:
+            allowed = await redis_client.set(
+                "rl:nominatim:global", "1", nx=True, ex=NOMINATIM_GLOBAL_RATE_SEC
+            )
+        except Exception as e:
+            logger.warning("Nominatim limiter check failed", error=str(e))
+            allowed = True
+        if not allowed:
+            return None
 
     result = await _nominatim_reverse(lat, lng)
     if result is None:

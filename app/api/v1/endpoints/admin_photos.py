@@ -11,6 +11,7 @@ from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services.photo_service import PhotoService
+from app.services.admin_log_service import log_admin_action
 from app.schemas.admin import (
     AdminPendingPhotoResponse,
     AdminPhotoActionResponse,
@@ -119,6 +120,7 @@ async def admin_approve_photo(
 
     photo.status = "approved"
     await session.commit()
+    await log_admin_action(str(admin.id), "photo_approve", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
 
@@ -151,6 +153,7 @@ async def admin_reject_photo(
     photo.status = "rejected"
     photo.reject_reason = reason
     await session.commit()
+    await log_admin_action(str(admin.id), "photo_reject", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
 
@@ -242,6 +245,7 @@ async def admin_verify_face(
 
     photo.face_verified = True
     await session.commit()
+    await log_admin_action(str(admin.id), "photo_face_verify", "photo", photo_id, request, session)
 
     return {"message": "Photo verified", "photo_id": str(photo_id), "face_verified": True}
 

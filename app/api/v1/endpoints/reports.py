@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from uuid import UUID
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.db.session import get_session
 from app.core.deps import get_current_user, get_current_user_id
@@ -15,6 +16,7 @@ from app.schemas.report import ReportRequest, ReportMessageRequest, ReportRespon
 import app.core.redis as redis
 
 from app.core.logging import get_logger
+from app.core.timezone import utcnow, tehran_date_key
 
 logger = get_logger("reports")
 
@@ -23,7 +25,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 async def _enforce_daily_report_limit(current_user_id: UUID):
     """Shared daily report cap (5 per day). Returns 429 when exceeded."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = tehran_date_key()
     daily_key = f"reports:{current_user_id}:{today}"
     try:
         pipe = redis.redis_client.pipeline()
@@ -69,7 +71,7 @@ async def report_message(
         raise HTTPException(status_code=403, detail="You are not part of this chat")
 
     # Dedupe: one message report per reporter per 24h.
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+    twenty_four_hours_ago = utcnow() - timedelta(hours=24)
     existing = await session.execute(
         select(Report).where(
             Report.reporter_id == current_user_id,
@@ -132,7 +134,7 @@ async def report_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Check if already reported this user in last 24 hours
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+    twenty_four_hours_ago = utcnow() - timedelta(hours=24)
     existing = await session.execute(
         select(Report).where(
             Report.reporter_id == current_user_id,
@@ -144,7 +146,7 @@ async def report_user(
         raise HTTPException(status_code=400, detail="You have already reported this user recently")
 
     # Daily report limit (5 per day per user)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = tehran_date_key()
     daily_key = f"reports:{current_user_id}:{today}"
     try:
         pipe = redis.redis_client.pipeline()

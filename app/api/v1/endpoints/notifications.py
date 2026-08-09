@@ -37,16 +37,21 @@ async def get_notifications(
     """Get user's notifications (most recent first)"""
     
     # Query notifications
-    query = select(Notification).where(
-        Notification.user_id == current_user.id
-    ).order_by(Notification.created_at.desc())
-    
-    # Count total
-    count_query = select(func.count()).select_from(query.subquery())
-    total = await session.scalar(count_query)
-    
-    # Paginate
-    query = query.offset(offset).limit(limit)
+    filter_stmt = Notification.user_id == current_user.id
+
+    # Count total — plain count, no ORDER BY or pagination
+    total = await session.scalar(
+        select(func.count(Notification.id)).where(filter_stmt)
+    )
+
+    # Paginate (ORDER BY applied only on the data query)
+    query = (
+        select(Notification)
+        .where(filter_stmt)
+        .order_by(Notification.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await session.execute(query)
     notifications = result.scalars().all()
     

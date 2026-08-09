@@ -148,6 +148,23 @@ async def create_chat(
             created_at=existing.created_at,
         )
 
+    # ── Per-pair open cap: guard against mass opening chats with the same user ──
+    pair_key = f"chat_open:{user_id}:{target_user_id}"
+    try:
+        pipe = redis_module.redis_client.pipeline()
+        pipe.incr(pair_key)
+        pipe.expire(pair_key, 86400)
+        results = await pipe.execute()
+        if results[0] > 3:
+            raise HTTPException(
+                status_code=429,
+                detail="You have opened too many conversations with this user. Please like them from discover instead.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("chat_open_limit_check_failed", error=str(e), exc_info=True)
+
     # ── New chat: daily limit ─────────────────────────────────────────
     is_premium = bool(current_user.profile and current_user.profile.is_premium)
     can_start, reason = await can_start_new_chat(session, user_id, is_premium)

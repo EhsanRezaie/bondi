@@ -37,21 +37,25 @@ async def get_matches(
     Returns matches sorted by most recent message or match date.
     """
 
+    user_filter = or_(
+        Match.user1_id == current_user.id,
+        Match.user2_id == current_user.id
+    )
+
+    # Count total — no eager loads, no ORDER BY
+    total = await session.scalar(
+        select(func.count(Match.id)).where(user_filter, Match.is_active == True)
+    )
+
     query = select(Match).options(
         selectinload(Match.user1).selectinload(User.profile),
         selectinload(Match.user1).selectinload(User.photos),
         selectinload(Match.user2).selectinload(User.profile),
         selectinload(Match.user2).selectinload(User.photos),
     ).where(
-        or_(
-            Match.user1_id == current_user.id,
-            Match.user2_id == current_user.id
-        ),
+        user_filter,
         Match.is_active == True
     ).order_by(Match.matched_at.desc())
-
-    count_query = select(func.count()).select_from(query.subquery())
-    total = await session.scalar(count_query)
 
     query = query.offset(offset).limit(limit)
     result = await session.execute(query)

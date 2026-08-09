@@ -22,6 +22,8 @@ def run_migrations_offline():
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        compare_type=True,
+        compare_server_default=False,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -42,6 +44,8 @@ async def run_migrations_online():
                 connection=conn,
                 target_metadata=target_metadata,
                 include_object=include_object,
+                compare_type=True,
+                compare_server_default=False,
             )
         )
         async with connection.begin():

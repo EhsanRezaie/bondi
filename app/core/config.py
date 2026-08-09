@@ -131,6 +131,14 @@ class Settings(BaseSettings):
     FCM_SERVICE_ACCOUNT_PATH: str = ""
 
     # ============================================
+    # Celery
+    # When True, notification/push work is enqueued to Redis and processed by
+    # the celery-worker service (durable, retryable). When False, it runs
+    # inline/in-process (used by tests and minimal dev setups).
+    # ============================================
+    CELERY_ENABLED: bool = False
+
+    # ============================================
     # NSFW Detection
     # ============================================
     NSFW_ENABLED: bool = True

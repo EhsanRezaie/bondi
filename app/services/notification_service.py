@@ -49,14 +49,21 @@ class NotificationService:
         )
 
         # Push notification
-        from app.services.push_service import PushService
-        await PushService.send_to_user(
+        from app.tasks.notifications import dispatch_push_to_celery
+        if not dispatch_push_to_celery(
             user_id=liked_user_id,
             title="Someone liked you!",
             body=f"{liker_name} (age {liker_age}) liked your profile",
             data={"type": "like", "user_id": str(liker_id)},
-            db=self.db,
-        )
+        ):
+            from app.services.push_service import PushService
+            await PushService.send_to_user(
+                user_id=liked_user_id,
+                title="Someone liked you!",
+                body=f"{liker_name} (age {liker_age}) liked your profile",
+                data={"type": "like", "user_id": str(liker_id)},
+                db=self.db,
+            )
 
     async def notify_match(self, user1_id: UUID, user2_id: UUID, match_id: UUID):
         """Send match notification to both users"""
@@ -83,13 +90,21 @@ class NotificationService:
                 body=f"You matched with {user2.profile.name}! Start chatting now.",
                 data={"match_id": str(match_id), "user_id": str(user2_id)}
             )
-            await PushService.send_to_user(
+            from app.tasks.notifications import dispatch_push_to_celery
+            if not dispatch_push_to_celery(
                 user_id=user1_id,
                 title="It's a match!",
                 body=f"You matched with {user2.profile.name}!",
                 data={"type": "match", "match_id": str(match_id), "user_id": str(user2_id)},
-                db=self.db,
-            )
+            ):
+                from app.services.push_service import PushService
+                await PushService.send_to_user(
+                    user_id=user1_id,
+                    title="It's a match!",
+                    body=f"You matched with {user2.profile.name}!",
+                    data={"type": "match", "match_id": str(match_id), "user_id": str(user2_id)},
+                    db=self.db,
+                )
 
         if user2:
             await self.create(
@@ -99,13 +114,20 @@ class NotificationService:
                 body=f"You matched with {user1.profile.name}! Start chatting now.",
                 data={"match_id": str(match_id), "user_id": str(user1_id)}
             )
-            await PushService.send_to_user(
+            if not dispatch_push_to_celery(
                 user_id=user2_id,
                 title="It's a match!",
                 body=f"You matched with {user1.profile.name}!",
                 data={"type": "match", "match_id": str(match_id), "user_id": str(user1_id)},
-                db=self.db,
-            )
+            ):
+                from app.services.push_service import PushService
+                await PushService.send_to_user(
+                    user_id=user2_id,
+                    title="It's a match!",
+                    body=f"You matched with {user1.profile.name}!",
+                    data={"type": "match", "match_id": str(match_id), "user_id": str(user1_id)},
+                    db=self.db,
+                )
 
     async def notify_message(self, receiver_id: UUID, sender_name: str, chat_id: UUID):
         """Send message notification when recipient is offline"""
@@ -117,11 +139,18 @@ class NotificationService:
             data={"chat_id": str(chat_id)}
         )
 
-        from app.services.push_service import PushService
-        await PushService.send_to_user(
+        from app.tasks.notifications import dispatch_push_to_celery
+        if not dispatch_push_to_celery(
             user_id=receiver_id,
             title="New message",
             body=f"{sender_name} sent you a message",
             data={"type": "message", "chat_id": str(chat_id)},
-            db=self.db,
-        )
+        ):
+            from app.services.push_service import PushService
+            await PushService.send_to_user(
+                user_id=receiver_id,
+                title="New message",
+                body=f"{sender_name} sent you a message",
+                data={"type": "message", "chat_id": str(chat_id)},
+                db=self.db,
+            )

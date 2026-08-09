@@ -1,5 +1,5 @@
 # app/api/v1/endpoints/admin_messages.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
@@ -19,6 +19,8 @@ from app.schemas.admin import (
 from app.services.chat_service import get_message_for_admin
 
 from app.core.logging import get_logger
+from app.core.timezone import utcnow
+from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_messages")
 
@@ -52,6 +54,7 @@ async def admin_decrypt_message(
 
 @router.delete("/{message_id}", response_model=AdminMessageDeleteResponse)
 async def admin_delete_message(
+    request: Request,
     message_id: UUID,
     reason: str = "Violates terms of service",
     session: AsyncSession = Depends(get_session),
@@ -70,11 +73,12 @@ async def admin_delete_message(
     
     # Admin deletion - mark as deleted for all
     message.is_deleted_for_all = True
-    message.deleted_at = datetime.utcnow()  # ✅ Now works with import
+    message.deleted_at = utcnow()  # ✅ Now works with import
     message._content = f"[Deleted by admin: {reason}]"
     
     await session.commit()
-    
+    await log_admin_action(str(admin_user.id), "message_delete", "message", message_id, request, session)
+
     return {
         "message": "Message deleted by admin",
         "message_id": str(message_id),

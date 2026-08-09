@@ -490,6 +490,18 @@ async def refresh(
             detail="Refresh token has been revoked.",
         )
 
+    # Refresh-rotation theft detection: if this token was already rotated,
+    # it's reuse → revoke the whole family so the attacker is locked out too.
+    family_id = await redis.get_token_family(body.refresh_token)
+    if await redis.is_rotated_token(body.refresh_token):
+        if family_id:
+            await redis.revoke_refresh_family(family_id)
+        await redis.revoke_all_user_tokens(user_id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked.",
+        )
+
     user = await get_user_with_profile(session, user_id)
     if not user or not user.is_active:
         raise HTTPException(
@@ -497,11 +509,12 @@ async def refresh(
             detail="User not found or deactivated.",
         )
 
-    await redis.revoke_refresh_token(body.refresh_token)
+    family_id = await redis.get_token_family(body.refresh_token) or str(user.id)
+    await redis.mark_token_rotated(body.refresh_token, family_id)
 
     new_access = create_access_token(str(user.id), user.token_version)
     new_refresh = create_refresh_token(str(user.id), user.token_version)
-    await redis.store_refresh_token(new_refresh, str(user.id))
+    await redis.store_refresh_token(new_refresh, str(user.id), family_id=family_id)
 
     return RefreshTokenResponse(
         access_token=new_access,

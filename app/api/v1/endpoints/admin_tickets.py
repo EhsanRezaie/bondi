@@ -14,6 +14,8 @@ from app.schemas.admin import AdminTicketResponse, AdminTicketUpdate
 from app.schemas.ticket import TicketListResponse
 
 from app.core.logging import get_logger
+from app.core.timezone import utcnow
+from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_tickets")
 
@@ -134,8 +136,9 @@ async def admin_update_ticket(
         ticket.admin_response = body.admin_response
         ticket.status = "closed" if not body.status else ticket.status
     
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = utcnow()
     await session.commit()
+    await log_admin_action(str(admin.id), "ticket_update", "ticket", ticket.id, request, session)
     
     user_result = await session.execute(
         select(User).options(selectinload(User.profile)).where(User.id == ticket.user_id)
@@ -174,5 +177,6 @@ async def admin_delete_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     
+    await log_admin_action(str(admin.id), "ticket_delete", "ticket", ticket.id, request, session)
     await session.delete(ticket)
     await session.commit()

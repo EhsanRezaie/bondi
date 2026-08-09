@@ -619,3 +619,50 @@ class TestWsTokenValidation:
 
         with _pytest.raises(ValueError):
             await validate_ws_token(bad_token, None)
+
+
+class TestWsInboundValidation:
+    """P3-1: malformed/garbage WS frames must be rejected before dispatch."""
+
+    def test_ping_valid(self):
+        from app.schemas.message import WsInbound
+        msg = WsInbound.model_validate({"type": "ping"})
+        assert msg.type == "ping"
+
+    def test_subscribe_requires_chat_id(self):
+        from pydantic import ValidationError
+        from app.schemas.message import WsInbound
+        with pytest.raises(ValidationError):
+            WsInbound.model_validate({"type": "subscribe"})
+
+    def test_subscribe_requires_valid_uuid(self):
+        from pydantic import ValidationError
+        from app.schemas.message import WsInbound
+        with pytest.raises(ValidationError):
+            WsInbound.model_validate({"type": "subscribe", "chat_id": "not-a-uuid"})
+
+    def test_unknown_type_rejected(self):
+        from pydantic import ValidationError
+        from app.schemas.message import WsInbound
+        with pytest.raises(ValidationError):
+            WsInbound.model_validate({"type": "exploit"})
+
+    def test_read_caps_message_ids(self):
+        from pydantic import ValidationError
+        from app.schemas.message import WsInbound
+        big = {"type": "read", "message_ids": [str(UUID(int=i)) for i in range(201)]}
+        with pytest.raises(ValidationError):
+            WsInbound.model_validate(big)
+        ok = {"type": "read", "message_ids": [str(UUID(int=i)) for i in range(200)]}
+        assert len(WsInbound.model_validate(ok).message_ids) == 200
+
+    def test_read_rejects_bad_message_id(self):
+        from pydantic import ValidationError
+        from app.schemas.message import WsInbound
+        with pytest.raises(ValidationError):
+            WsInbound.model_validate({"type": "read", "message_ids": ["garbage"]})
+
+    def test_read_empty_ids_ok(self):
+        from app.schemas.message import WsInbound
+        msg = WsInbound.model_validate({"type": "read", "message_ids": []})
+        assert msg.message_ids == []

@@ -134,17 +134,23 @@ async def stream_websocket(
 
             try:
                 data = json.loads(raw)
+                from app.schemas.message import WsInbound
+                msg = WsInbound.model_validate(data)
             except Exception as e:
-                logger.warning("ws_invalid_json", user_id=user_id, error=str(e), exc_info=True)
+                logger.warning("ws_invalid_message", user_id=user_id, error=str(e), exc_info=True)
+                try:
+                    await websocket.send_text(json.dumps({"type": "error", "reason": "bad_message"}))
+                except Exception:
+                    pass
                 continue
-            msg_type = data.get("type")
+            msg_type = msg.type
 
             if msg_type == "ping":
                 await websocket_manager.heartbeat(user_id, redis)
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
             elif msg_type == "subscribe":
-                chat_id = data.get("chat_id")
+                chat_id = msg.chat_id
                 resolved = await _resolve_chat(db, str(chat_id), user_id) if chat_id else None
                 if resolved:
                     channel, other_user_id = resolved
@@ -166,7 +172,7 @@ async def stream_websocket(
                     )
 
             elif msg_type == "unsubscribe":
-                chat_id = data.get("chat_id")
+                chat_id = msg.chat_id
                 if chat_id:
                     await websocket_manager.unsubscribe(user_id, str(chat_id))
                     if active_chat_id == str(chat_id):
@@ -189,7 +195,7 @@ async def stream_websocket(
                     )
 
             elif msg_type == "read":
-                message_ids = data.get("message_ids", [])
+                message_ids = [str(x) for x in (msg.message_ids or [])]
                 if active_chat_id and active_peer_id:
                     await websocket_manager.send_to_conversation(
                         channel=active_chat_id,
@@ -204,6 +210,14 @@ async def stream_websocket(
                         redis=redis,
                     )
 
+    except asyncio.CancelledError:
+        # Graceful shutdown (SIGTERM): tell the client we're draining, then
+        # re-raise so uvicorn's CancelledError propagates normally.
+        try:
+            await websocket.send_text(json.dumps({"type": "server_shutdown"}))
+        except Exception:
+            pass
+        raise
     except Exception:
         logger.exception("WS stream error", user_id=user_id)
     finally:

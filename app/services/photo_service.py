@@ -2,36 +2,22 @@ import io
 import uuid
 from typing import Optional, Tuple
 
-import aioboto3
-from botocore.exceptions import ClientError
 from PIL import Image
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.core.logging import get_logger
 import app.core.redis as redis_module
 from app.core.redis import redis_client
+from app.services.storage import s3_client as _s3_client
 
 logger = get_logger("photo_service")
-
-# Single shared session; aioboto3 clients are created per-call (cheap, connection-pooled under the hood)
-_s3_session = aioboto3.Session()
-
-
-def _s3_client():
-    """Return an async context-manager S3 client configured for MinIO."""
-    return _s3_session.client(
-        "s3",
-        endpoint_url=settings.S3_ENDPOINT_URL,
-        aws_access_key_id=settings.S3_ACCESS_KEY,
-        aws_secret_access_key=settings.S3_SECRET_KEY,
-        region_name=settings.S3_REGION,
-    )
 
 
 class PhotoService:
     """Handle photo upload, validation, and storage (MinIO / S3-compatible)."""
 
-    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+    MAX_FILE_SIZE = settings.MAX_PHOTO_SIZE_MB * 1024 * 1024
     ALLOWED_FORMATS = ["JPEG", "PNG", "WEBP"]
     MIN_WIDTH = 200
     MIN_HEIGHT = 200

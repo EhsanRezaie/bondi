@@ -21,6 +21,7 @@ from app.models.subscription import Subscription
 from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminMessageRequest, AdminMessageResponse, UserActivityEntry
 
 from app.core.logging import get_logger
+from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_users")
 
@@ -196,6 +197,7 @@ async def admin_update_user(
     await session.refresh(user)
 
     await invalidate_auth_user(redis_module.redis_client, user.id)
+    await log_admin_action(str(admin.id), "user_update", "user", user.id, request, session)
 
     return AdminUserResponse(
         id=user.id,
@@ -234,6 +236,7 @@ async def admin_delete_user(
     await session.commit()
 
     await invalidate_auth_user(redis_module.redis_client, user_id)
+    await log_admin_action(str(admin.id), "user_delete", "user", user_id, request, session)
 
 
 @router.post("/{user_id}/premium", response_model=AdminUserResponse)
@@ -280,6 +283,7 @@ async def admin_grant_premium(
     await session.refresh(user)
 
     await invalidate_auth_user(redis_module.redis_client, user.id)
+    await log_admin_action(str(admin.id), "premium_grant", "user", user.id, request, session)
 
     return AdminUserResponse(
         id=user.id,
@@ -395,6 +399,7 @@ async def admin_message_user(
     )
     session.add(notification)
     await session.commit()
+    await log_admin_action(str(admin.id), "user_message", "user", user_id, request, session)
 
     return AdminMessageResponse(
         success=True,

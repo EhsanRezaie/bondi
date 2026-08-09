@@ -117,7 +117,7 @@ async def serialize_profile(
         interests=interests if interests else None,
         prompts=prompts if prompts else None,
         is_premium=profile.is_premium,
-        is_verified=user.phone_verified if user.phone_verified is not None else False,
+        is_verified=profile.is_verified if profile.is_verified is not None else False,
         last_seen_at=last_seen_at,
         is_online=resolved_online,
     )

@@ -165,7 +165,7 @@ async def discover(
             user,
             is_online=is_online,
             distance_km=fuzz_distance(distance),
-            is_verified=user.phone_verified if user.phone_verified is not None else False,
+            is_verified=user.profile.is_verified if user.profile.is_verified is not None else False,
         ))
 
     has_more = offset + limit < total

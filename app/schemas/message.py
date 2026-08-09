@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import Optional, List, Literal, Union
+from pydantic import BaseModel, Field, model_validator
 
 
 class ReplyToResponse(BaseModel):
@@ -108,3 +108,63 @@ class ForwardMessageResponse(BaseModel):
     """Response for forwarding a message."""
     message: str
     new_message_id: str
+
+
+# ---------------------------------------------------------------------------
+# WebSocket inbound message models (P3-1)
+# ---------------------------------------------------------------------------
+WS_MAX_READ_IDS = 200
+
+
+class WsPingInbound(BaseModel):
+    type: Literal["ping"]
+
+
+class WsSubscribeInbound(BaseModel):
+    type: Literal["subscribe"]
+    chat_id: UUID
+
+
+class WsUnsubscribeInbound(BaseModel):
+    type: Literal["unsubscribe"]
+    chat_id: UUID
+
+
+class WsTypingInbound(BaseModel):
+    type: Literal["typing", "typing_stopped"]
+
+
+class WsReadInbound(BaseModel):
+    type: Literal["read"]
+    message_ids: List[UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _cap_message_ids(self):
+        if len(self.message_ids) > WS_MAX_READ_IDS:
+            raise ValueError("too_many_message_ids")
+        return self
+
+
+class WsInbound(BaseModel):
+    """Union of all accepted inbound WS messages."""
+    type: str
+    chat_id: Optional[UUID] = None
+    message_ids: Optional[List[UUID]] = None
+
+    @model_validator(mode="after")
+    def _validate_shape(self):
+        if self.type == "subscribe":
+            if self.chat_id is None:
+                raise ValueError("missing_chat_id")
+        elif self.type == "unsubscribe":
+            if self.chat_id is None:
+                raise ValueError("missing_chat_id")
+        elif self.type in ("ping", "typing", "typing_stopped"):
+            pass
+        elif self.type == "read":
+            ids = self.message_ids or []
+            if len(ids) > WS_MAX_READ_IDS:
+                raise ValueError("too_many_message_ids")
+        else:
+            raise ValueError("unknown_type")
+        return self

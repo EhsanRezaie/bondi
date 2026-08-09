@@ -18,6 +18,7 @@ from app.schemas.admin import (
 )
 
 from app.core.logging import get_logger
+from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_announcements")
 
@@ -64,7 +65,8 @@ async def admin_send_announcement(
     
     session.add_all(notifications)
     await session.commit()
-    
+    await log_admin_action(str(admin.id), "announcement_send", "system", admin.id, request, session)
+
     return AdminAnnouncementResponse(
         success=True,
         message=f"Announcement sent to {len(users)} users",
@@ -92,7 +94,8 @@ async def admin_send_test_announcement(
     )
     session.add(notification)
     await session.commit()
-    
+    await log_admin_action(str(admin.id), "announcement_test", "system", admin.id, request, session)
+
     return AdminMessageResponse(
         success=True,
         message="Test announcement sent to admin",
