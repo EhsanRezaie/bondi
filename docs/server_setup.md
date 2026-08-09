@@ -1,5 +1,9 @@
 # Server Setup Guide
 
+> 📖 **The canonical, up-to-date guide lives at [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).**
+> This older doc is retained for the GlitchTip walkthrough and seed-data commands;
+> refer to the canonical guide first.
+
 Full deployment guide for the dating app on Ubuntu 24.04 LTS with Docker.
 
 ---

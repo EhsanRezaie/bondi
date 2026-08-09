@@ -1,5 +1,9 @@
 # Deployment Operations Guide
 
+> 📖 **The canonical, up-to-date guide lives at [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).**
+> This file covers only the secret/password flows; specifics like first-boot,
+> Celery, metrics and rollback are in the canonical guide.
+
 Companion to `server_setup.md`. Covers the secret configuration that protects
 Redis, MinIO and PostgreSQL when running the `docker compose` stack.
 
