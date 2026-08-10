@@ -216,11 +216,11 @@ ssh deploy@1.2.3.4 "chmod 600 /opt/demo-bondi/firebase-service-account.json"
 
 ## 4. First boot 🚀 (full stack — not app-only)
 
-> **Pretend 🙂 this line is red:**
-> `docker compose up -d --no-deps app` (the one inside `scripts/deploy.sh`)
-> does **NOT create** brand-new services or networks. The **first** boot must be
-> the full-stack command so `pgbouncer`, `celery-worker`, `celery-beat`, and the
-> two networks (`dating_frontend`, `dating_internal`) are created.
+> **Good news 🙂** `deploy.sh` now runs full `docker compose up -d` (not
+> `--no-deps app`), so it **creates** brand-new services (`pgbouncer`,
+> `celery-worker`, `celery-beat`) and the two networks (`dating_frontend`,
+> `dating_internal`) on first boot. A one-time manual hand-rolled first boot is
+> still shown below for reference:
 
 ```bash
 cd /opt/demo-bondi
@@ -388,19 +388,22 @@ docker compose run --rm migrate alembic current
 |-----|------|
 | You | commit + `git push origin main` |
 | CI | `migrations` job (fresh DB + `alembic check`), `test` job (`pytest tests/done/`) |
-| `scripts/deploy.sh` (on server, via CI ssh action) | `git pull` → build base → `docker compose build app migrate` → `docker compose run --rm migrate` → `docker compose up -d --no-deps app` → health check → rollback on failure |
+| CI ssh step | `git fetch + reset --hard + clean` (server = pure mirror) → upload FCM key |
+| `scripts/deploy.sh` | build base → `docker compose build app migrate celery-worker celery-beat` → `docker compose run --rm migrate` → `docker compose up -d` (full stack, idempotent) → nginx reload → health check → rollback on failure |
 
 ```bash
 # Manual deploy (if you aren't using CI)
 cd /opt/demo-bondi && bash scripts/deploy.sh
 ```
 
-### 8.1 What deploy does NOT do (as of this release)
+### 8.1 What deploy does (as of this release)
 
-- It does **not** `up -d` new services/volumes/networks on an existing first-stack.
-  → after any compose-struct change (services, volumes, networks, creds), run
-  `docker compose up -d` / `--force-recreate` **once** post-pull before relying
-  on deploy.sh.
+- The CI ssh step and `deploy.sh` both `git fetch origin main && git reset --hard origin/main && git clean -fd` before building, so a pushed commit **always** deploys regardless of server drift (rsync/manual edits are discarded).
+- `docker compose up -d` is idempotent: containers whose image/config changed are
+  recreated; unchanged services (db, redis, minio, glitchtip) stay up. It also
+  creates new services/volumes/networks on first boot, so a fresh box needs no
+  separate `up -d` step.
+- `firebase-service-account.json` and `.env` are gitignored → `git clean -fd` never touches them.
 
 ### 8.2 Rollback
 

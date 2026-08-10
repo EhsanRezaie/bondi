@@ -4,8 +4,8 @@ set -e
 # ── Config ────────────────────────────────────────────────────────────────────
 DEPLOY_DIR="/opt/demo-bondi"
 HEALTH_URL="http://localhost/health/ready"
-HEALTH_RETRIES=8
-HEALTH_INTERVAL=5
+HEALTH_RETRIES=24
+HEALTH_INTERVAL=10
 ROLLBACK_IMAGE="dating-app:rollback"
 COMPOSE_FILE="docker-compose.yml"
 
@@ -61,9 +61,12 @@ else
     log "No existing image — first deploy, rollback not available"
 fi
 
-# 2. Pull latest code
-log "Pulling latest code..."
-git pull origin main
+# 2. Pull latest code (authoritative: server is a mirror of origin/main).
+#    CI pre-cleans the tree, but do it here too so the script works standalone.
+log "Syncing to origin/main (clean, fast-forward)..."
+git fetch origin main
+git reset --hard origin/main
+git clean -fd
 
 # 3. Check FCM service account file
 if [ ! -f firebase-service-account.json ]; then
@@ -81,17 +84,21 @@ fi
 log "Ensuring base image (deps)..."
 bash scripts/build-base.sh
 
-# 5. Build new images (thin — skips pip, takes seconds)
+# 5. Build new images (thin — skips pip, takes seconds).
+#    All code-bearing services share the same Dockerfile; build them together so
+#    celery worker/beat get the same code as the API.
 log "Building..."
-docker compose build app migrate
+docker compose build app migrate celery-worker celery-beat
 
-# 5b. Auto-generate migrations from new code, then apply them (one-shot)
-log "Auto-generating + applying migrations..."
+# 5b. Apply migrations to the database (one-shot, direct to db — not pgbouncer)
+log "Applying migrations..."
 docker compose run --rm migrate
 
-# 6. Deploy
+# 6. Deploy the whole stack. Idempotent: containers whose image/config changed
+#    are recreated; unchanged services (db, redis, minio, glitchtip) stay up.
+#    First boot also creates the new services/networks (pgbouncer, celery, …).
 log "Starting services..."
-docker compose up -d --no-deps app
+docker compose up -d
 
 # 6b. Reload nginx so bind-mounted nginx.conf changes take effect
 log "Reloading nginx (proxy config)..."
