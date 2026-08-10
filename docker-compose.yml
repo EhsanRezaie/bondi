@@ -66,7 +66,11 @@ services:
       CELERY_ENABLED: "true"
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=200
+    command: >
+      /bin/sh -c
+      'CONC=${CELERY_CONCURRENCY:-auto};
+       if [ "$CONC" = "auto" ]; then CONC=$(nproc); fi;
+       exec celery -A app.tasks.celery_app worker --loglevel=info --concurrency="$CONC" --max-tasks-per-child=200'
     depends_on:
       redis:
         condition: service_healthy

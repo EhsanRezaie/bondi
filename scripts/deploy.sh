@@ -61,12 +61,23 @@ else
     log "No existing image — first deploy, rollback not available"
 fi
 
-# 2. Pull latest code (authoritative: server is a mirror of origin/main).
-#    CI pre-cleans the tree, but do it here too so the script works standalone.
-log "Syncing to origin/main (clean, fast-forward)..."
+# 2. Sync to origin/main — SAFE. Refuse to deploy if the server has any local
+#    drift (dirty files, untracked non-gitignored files, local commits, wrong
+#    branch) and fast-forward only. Local server state is never overwritten.
+#    gitignored files (.env, firebase-service-account.json) never appear in the
+#    check.
+log "Syncing to origin/main (fast-forward only, refusal on drift)..."
 git fetch origin main
-git reset --hard origin/main
-git clean -fd
+DIRTY="$(git status --porcelain)"
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo 'detached')"
+LOCAL_ONLY="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 1)"
+if [ -n "$DIRTY" ] || [ "$BRANCH" != "main" ] || [ "${LOCAL_ONLY:-1}" -gt 0 ]; then
+    fail "Server has local drift — refusing to overwrite server state."
+    if [ -n "$DIRTY" ]; then echo "$DIRTY"; fi
+    fail "Aborting deploy. Resolve the drift on the server (or commit it), then re-run CI."
+    exit 1
+fi
+git merge --ff-only origin/main
 
 # 3. Check FCM service account file
 if [ ! -f firebase-service-account.json ]; then

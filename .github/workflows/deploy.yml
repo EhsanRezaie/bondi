@@ -141,13 +141,29 @@ jobs:
 
             git config --global --add safe.directory /opt/demo-bondi || true
 
-            # Clean + fast-forward to the exact pushed commit BEFORE anything else.
-            # The server is a pure mirror of origin/main — any drift (rsync,
-            # manual edits) is discarded so `git pull` inside deploy.sh can never
-            # abort the deploy.
+            set -e
+
+            # Safe sync — NEVER clobbers server state. Deploys only when the
+            # server tree exactly matches origin/main (on `main`, no local
+            # commits, no dirty/untracked files). Any drift aborts the pipeline
+            # so nothing on the server is ever overwritten. gitignored files
+            # (.env, firebase-service-account.json) never appear in the check.
             git fetch origin main
-            git reset --hard origin/main
-            git clean -fd
+            DIRTY="$(git status --porcelain)"
+            BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo 'detached')"
+            LOCAL_ONLY="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 1)"
+            if [ -n "$DIRTY" ] || [ "$BRANCH" != "main" ] || [ "${LOCAL_ONLY:-1}" -gt 0 ]; then
+              echo "ERROR: refusing to deploy — server has local drift (never overwritten by CI)."
+              echo "branch: $BRANCH"
+              if [ -n "$DIRTY" ]; then echo "$DIRTY"; fi
+              exit 1
+            fi
+
+            # Fast-forward only — applies the new commit without touching anything
+            # local. Runs BEFORE deploy.sh so the newly pushed scripts/deploy.sh
+            # lands on disk and is what executes below.
+            git merge --ff-only origin/main
+            git log --oneline -1
 
             if [ -n "$FCM_SERVICE_ACCOUNT_JSON" ]; then
               echo "$FCM_SERVICE_ACCOUNT_JSON" > firebase-service-account.json

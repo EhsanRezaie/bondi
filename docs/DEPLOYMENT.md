@@ -388,7 +388,7 @@ docker compose run --rm migrate alembic current
 |-----|------|
 | You | commit + `git push origin main` |
 | CI | `migrations` job (fresh DB + `alembic check`), `test` job (`pytest tests/done/`) |
-| CI ssh step | `git fetch + reset --hard + clean` (server = pure mirror) → upload FCM key |
+| CI ssh step | drift guard (abort if server ≠ origin/main) → fast-forward merge → upload FCM key |
 | `scripts/deploy.sh` | build base → `docker compose build app migrate celery-worker celery-beat` → `docker compose run --rm migrate` → `docker compose up -d` (full stack, idempotent) → nginx reload → health check → rollback on failure |
 
 ```bash
@@ -398,12 +398,24 @@ cd /opt/demo-bondi && bash scripts/deploy.sh
 
 ### 8.1 What deploy does (as of this release)
 
-- The CI ssh step and `deploy.sh` both `git fetch origin main && git reset --hard origin/main && git clean -fd` before building, so a pushed commit **always** deploys regardless of server drift (rsync/manual edits are discarded).
+- **Server state is never overwritten.** Both the CI ssh step and `deploy.sh`
+  refuse to proceed if the server working tree has ANY drift — dirty tracked
+  files, untracked non-gitignored files, local commits, or not being on `main`
+  (`git status --porcelain` non-empty, `git rev-list origin/main..HEAD` > 0, or
+  branch ≠ `main`) → **deploy aborts and the pipeline fails**. Resolve the drift
+  first, then push again. Sync is a strict `git merge --ff-only origin/main` —
+  no `reset --hard`, no `git clean`.
 - `docker compose up -d` is idempotent: containers whose image/config changed are
   recreated; unchanged services (db, redis, minio, glitchtip) stay up. It also
   creates new services/volumes/networks on first boot, so a fresh box needs no
   separate `up -d` step.
-- `firebase-service-account.json` and `.env` are gitignored → `git clean -fd` never touches them.
+- `firebase-service-account.json` and `.env` are gitignored → they never appear
+  in `git status --porcelain`, so they neither block deploys nor get touched by
+  the merge.
+- **Auto-scaling to the box** (dynamic at container start): FastAPI workers =
+  `min(2·cores+1, available RAM / 250 MB, 8)` (override with `WEB_WORKERS`);
+  celery worker concurrency = `nproc` (override with `CELERY_CONCURRENCY`);
+  nginx already uses `worker_processes auto;`.
 
 ### 8.2 Rollback
 
