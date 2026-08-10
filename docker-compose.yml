@@ -71,6 +71,7 @@ services:
       pgbouncer:
         condition: service_healthy
     networks:
+      - frontend
       - internal
     healthcheck:
       test: ["CMD", "celery", "-A", "app.tasks.celery_app", "inspect", "ping"]
@@ -95,6 +96,7 @@ services:
       celery-worker:
         condition: service_healthy
     networks:
+      - frontend
       - internal
 
   nginx:
@@ -111,6 +113,7 @@ services:
       - app
     networks:
       - frontend
+      - internal
 
   db:
     image: postgis/postgis:15-3.3
