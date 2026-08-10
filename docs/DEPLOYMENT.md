@@ -51,11 +51,15 @@ in order the first time; use the section headers as a checklist thereafter.
 
 | Network | Name | Visibility | Attached to |
 |---------|------|-----------|-------------|
-| `frontend` | `dating_frontend` | Public bridge | `nginx` (host) + `app` |
-| `internal` | `dating_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, glitchtip*, migrate, celery-* |
+| `frontend` | `dating_frontend` | Public bridge | `nginx`, `app`, `celery-worker`, `celery-beat` (outbound egress for FCM) |
+| `internal` | `dating_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, glitchtip*, migrate, plus nginx/app/workers (media proxy + DB/Redis) |
 
 - The `internal` network is created with `internal: true` — containers on it can
   only reach each other; nothing there is reachable from the host or internet.
+- `nginx` sits on **both** networks: public side (`frontend`) serves HTTP, while
+  attaching to `internal` is what lets it proxy `/photos-*` to `minio:9000`.
+- `celery-worker`/`celery-beat` also join both: `internal` for DB (via pgbouncer)
+  + Redis, `frontend` so FCM push calls can reach Google.
 - Only `nginx` (80/443) and `glitchtip` (8080) publish host ports.
 - **db / redis / minio do NOT publish ports** — never expose them directly.
 
@@ -261,6 +265,9 @@ docker exec dating_redis redis-cli ping                            # (error)
 ### 5.3 PgBouncer
 
 ```bash
+# AUTH_TYPE is scram-sha-256 — pgbouncer must speak SCRAM to PG15 (the DB user
+# stores a scram verifier, not md5). Without this you'll see:
+#   "cannot do SCRAM authentication: wrong password type"
 docker exec dating_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U dating_user -d pgbouncer'
 # Expect 1–N pools, e.g. line cl_chat: 20 5 5 ...
 ```
