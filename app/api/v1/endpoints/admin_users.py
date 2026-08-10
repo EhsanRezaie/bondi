@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from uuid import UUID
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
+from typing import Optional
 from app.models.notification import Notification
 from app.db.session import get_session
 from app.core.deps import get_admin_user
@@ -12,13 +13,14 @@ import app.core.redis as redis_module
 from app.core.cache import invalidate_auth_user
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.models.user_settings import UserSettings
+from app.models.user_interest import UserInterest
 from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.message import Message
 from app.models.report import Report
 from app.models.subscription import Subscription
-from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminMessageRequest, AdminMessageResponse, UserActivityEntry
+from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminMessageRequest, AdminMessageResponse, UserActivityEntry, AdminUserPhotoResponse
+from app.services.photo_service import PhotoService
 
 from app.core.logging import get_logger
 from app.services.admin_log_service import log_admin_action
@@ -27,66 +29,180 @@ logger = get_logger("admin_users")
 
 router = APIRouter(prefix="/admin/users", tags=["admin"])
 
+USER_LOAD_OPTIONS = (
+    selectinload(User.profile),
+    selectinload(User.settings),
+    selectinload(User.photos),
+    selectinload(User.user_interests).selectinload(UserInterest.interest),
+)
+
+
+async def _build_admin_user_response(
+    user: User,
+    total_likes_sent: Optional[int] = None,
+    total_matches: Optional[int] = None,
+    total_messages: Optional[int] = None,
+    report_count: Optional[int] = None,
+) -> AdminUserResponse:
+    profile = user.profile
+    photos_resp: list[AdminUserPhotoResponse] = []
+    if user.photos:
+        for p in sorted(user.photos, key=lambda x: (x.order or 0)):
+            photos_resp.append(AdminUserPhotoResponse(
+                id=p.id,
+                url=await PhotoService.get_photo_url(p.url, p.status),
+                is_main=p.is_main,
+                status=p.status,
+                reject_reason=p.reject_reason,
+                face_verified=getattr(p, "face_verified", False),
+                order=p.order or 0,
+                created_at=p.created_at.isoformat() if p.created_at else None,
+            ))
+    return AdminUserResponse(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        phone_verified=bool(user.phone_verified),
+        google_id=user.google_id,
+        registration_status=user.registration_status,
+        token_version=user.token_version,
+        referral_code=user.referral_code,
+        referred_by=user.referred_by,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        last_seen_at=user.last_seen_at,
+        name=profile.name if profile else "",
+        birth_date=profile.birth_date if profile else None,
+        age=profile.age if profile else 0,
+        gender=profile.gender if profile else None,
+        sexual_orientation=profile.sexual_orientation if profile else None,
+        bio=profile.bio if profile else None,
+        height=profile.height if profile else None,
+        weight=profile.weight if profile else None,
+        body_type=profile.body_type if profile else None,
+        relationship_status=profile.relationship_status if profile else None,
+        living_situation=profile.living_situation if profile else None,
+        children_status=profile.children_status if profile else None,
+        smoking=profile.smoking if profile else None,
+        drinking=profile.drinking if profile else None,
+        languages=profile.languages if profile else None,
+        education=profile.education if profile else None,
+        workplace=profile.workplace if profile else None,
+        religion=profile.religion if profile else None,
+        ethnicity=profile.ethnicity if profile else None,
+        political_orientation=profile.political_orientation if profile else None,
+        lat=profile.lat if profile else None,
+        lng=profile.lng if profile else None,
+        country=profile.country if profile else None,
+        province=profile.province if profile else None,
+        city=profile.city if profile else None,
+        location_manual=profile.location_manual if profile else None,
+        is_verified=profile.is_verified if profile else None,
+        verified_at=profile.verified_at if profile else None,
+        is_premium=profile.is_premium if profile else False,
+        premium_until=profile.premium_until if profile else None,
+        hide_last_seen=user.settings.hide_last_seen if user.settings else False,
+        hide_online_status=user.settings.hide_online_status if user.settings else False,
+        interests=[ui.interest.name for ui in (user.user_interests or []) if ui.interest],
+        photos=photos_resp,
+        total_likes_sent=total_likes_sent,
+        total_matches=total_matches,
+        total_messages=total_messages,
+        report_count=report_count,
+    )
+
+
+def _years_ago(years: int, today: date) -> date:
+    try:
+        return today.replace(year=today.year - years)
+    except ValueError:  # Feb 29
+        return today.replace(year=today.year - years, month=2, day=28)
+
 
 @router.get("", response_model=AdminUserListResponse)
-@limiter.limit("60/minute")
+@limiter.limit("120/minute")
 async def admin_list_users(
     request: Request,
-    search: str = Query(None, description="Search by name or email"),
+    search: str = Query(None, description="Search by name, email, phone or bio"),
+    id: UUID = Query(None, description="Search by exact user UUID"),
     is_active: bool = Query(None),
     is_premium: bool = Query(None),
+    is_verified: bool = Query(None),
+    gender: str = Query(None, description="Filter by gender (male/female)"),
+    city: str = Query(None, description="Filter by city (case-insensitive)"),
+    age_min: int = Query(None, ge=18, le=120, description="Minimum age"),
+    age_max: int = Query(None, ge=18, le=120, description="Maximum age"),
     limit: int = 50,
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(get_admin_user),
 ):
-    """Admin: List all users with filters"""
+    """Admin: List all users with full-profile fields and filters"""
 
-    query = select(User).options(selectinload(User.profile), selectinload(User.settings))
+    query = select(User).options(*USER_LOAD_OPTIONS)
+    joined_profile = False
+
+    def join_profile():
+        nonlocal joined_profile
+        if not joined_profile:
+            return query.join(User.profile)
+        return query
 
     if search:
-        query = query.join(User.profile).where(
-            or_(
-                UserProfile.name.ilike(f"%{search}%"),
-                User.email.ilike(f"%{search}%")
-            )
-        )
+        query = query.join(User.profile)
+        joined_profile = True
+        like = f"%{search}%"
+        query = query.where(or_(
+            UserProfile.name.ilike(like),
+            User.email.ilike(like),
+            User.phone.ilike(like),
+            UserProfile.bio.ilike(like),
+        ))
+
+    if id is not None:
+        query = query.where(User.id == id)
 
     if is_active is not None:
         query = query.where(User.is_active == is_active)
 
+    now = datetime.now(timezone.utc)
     if is_premium is not None:
-        now = datetime.now(timezone.utc)
-        query = query.join(User.profile)
+        query = join_profile()
         if is_premium:
             query = query.where(UserProfile.premium_until > now)
         else:
             query = query.where(or_(UserProfile.premium_until.is_(None), UserProfile.premium_until <= now))
+
+    if is_verified is not None:
+        query = join_profile()
+        query = query.where(UserProfile.is_verified == is_verified)
+
+    if gender:
+        query = join_profile()
+        query = query.where(UserProfile.gender == gender)
+
+    if city:
+        query = join_profile()
+        query = query.where(UserProfile.city.ilike(f"%{city}%"))
+
+    if age_min is not None or age_max is not None:
+        query = join_profile()
+        today = date.today()
+        if age_min is not None:
+            query = query.where(UserProfile.birth_date <= _years_ago(age_min, today))
+        if age_max is not None:
+            query = query.where(UserProfile.birth_date >= _years_ago(age_max + 1, today))
 
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)
 
     query = query.order_by(User.created_at.desc()).offset(offset).limit(limit)
     result = await session.execute(query)
-    users = result.scalars().all()
+    users = result.scalars().unique().all()
 
     response_users = []
     for user in users:
-        response_users.append(AdminUserResponse(
-            id=user.id,
-            email=user.email,
-            name=user.profile.name if user.profile else "",
-            age=user.profile.age if user.profile else 0,
-            gender=user.profile.gender if user.profile else "unknown",
-            is_active=user.is_active,
-            is_premium=user.profile.is_premium if user.profile else False,
-            premium_until=user.profile.premium_until if user.profile else None,
-            phone_verified=user.phone_verified if user.phone_verified is not None else False,
-            created_at=user.created_at,
-            last_seen_at=user.last_seen_at,
-            hide_last_seen=user.settings.hide_last_seen if user.settings else False,
-            hide_online_status=user.settings.hide_online_status if user.settings else False
-        ))
+        response_users.append(await _build_admin_user_response(user))
 
     return AdminUserListResponse(
         users=response_users,
@@ -106,9 +222,9 @@ async def admin_get_user(
     """Admin: Get user details with stats"""
 
     result = await session.execute(
-        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(User.id == user_id)
+        select(User).options(*USER_LOAD_OPTIONS).where(User.id == user_id)
     )
-    user = result.scalar_one_or_none()
+    user = result.scalars().unique().one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -145,24 +261,12 @@ async def admin_get_user(
     )
     report_count = reports_result.scalar() or 0
 
-    return AdminUserResponse(
-        id=user.id,
-        email=user.email,
-        name=user.profile.name if user.profile else "",
-        age=user.profile.age if user.profile else 0,
-        gender=user.profile.gender if user.profile else "unknown",
-        is_active=user.is_active,
-        is_premium=user.profile.is_premium if user.profile else False,
-        premium_until=user.profile.premium_until if user.profile else None,
-        phone_verified=user.phone_verified if user.phone_verified is not None else False,
-        created_at=user.created_at,
-        last_seen_at=user.last_seen_at,
-        hide_last_seen=user.settings.hide_last_seen if user.settings else False,
-        hide_online_status=user.settings.hide_online_status if user.settings else False,
+    return await _build_admin_user_response(
+        user,
         total_likes_sent=total_likes,
         total_matches=total_matches,
         total_messages=total_messages,
-        report_count=report_count
+        report_count=report_count,
     )
 
 
@@ -178,9 +282,9 @@ async def admin_update_user(
     """Admin: Update user (activate/deactivate, etc.)"""
 
     result = await session.execute(
-        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(User.id == user_id)
+        select(User).options(*USER_LOAD_OPTIONS).where(User.id == user_id)
     )
-    user = result.scalar_one_or_none()
+    user = result.scalars().unique().one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -194,26 +298,16 @@ async def admin_update_user(
         user.profile.premium_until = body.premium_until
 
     await session.commit()
-    await session.refresh(user)
+
+    result = await session.execute(
+        select(User).options(*USER_LOAD_OPTIONS).where(User.id == user_id)
+    )
+    user = result.scalars().unique().one_or_none()
 
     await invalidate_auth_user(redis_module.redis_client, user.id)
     await log_admin_action(str(admin.id), "user_update", "user", user.id, request, session)
 
-    return AdminUserResponse(
-        id=user.id,
-        email=user.email,
-        name=user.profile.name if user.profile else "",
-        age=user.profile.age if user.profile else 0,
-        gender=user.profile.gender if user.profile else "unknown",
-        is_active=user.is_active,
-        is_premium=user.profile.is_premium if user.profile else False,
-        premium_until=user.profile.premium_until if user.profile else None,
-        phone_verified=user.phone_verified if user.phone_verified is not None else False,
-        created_at=user.created_at,
-        last_seen_at=user.last_seen_at,
-        hide_last_seen=user.settings.hide_last_seen if user.settings else False,
-        hide_online_status=user.settings.hide_online_status if user.settings else False
-    )
+    return await _build_admin_user_response(user)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,24 +1,87 @@
 from uuid import UUID
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, date
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
 # User Management Schemas
+class AdminUserPhotoResponse(BaseModel):
+    id: UUID
+    url: str
+    is_main: bool = False
+    status: str
+    reject_reason: Optional[str] = None
+    face_verified: bool = False
+    order: int = 0
+    created_at: Optional[str] = None
+
+
 class AdminUserResponse(BaseModel):
+    # Account
     id: UUID
     email: str
-    name: str
-    age: int
-    gender: str
-    is_active: bool
-    is_premium: bool
-    premium_until: Optional[datetime] = None
+    phone: Optional[str] = None
     phone_verified: bool
+    google_id: Optional[str] = None
+    registration_status: Optional[str] = None
+    token_version: Optional[int] = None
+    referral_code: Optional[str] = None
+    referred_by: Optional[UUID] = None
+    is_active: bool
     created_at: datetime
     last_seen_at: Optional[datetime] = None
-    hide_last_seen: bool = False   
+
+    # Profile / identity
+    name: str
+    birth_date: Optional[date] = None
+    age: int
+    gender: Optional[str] = None
+    sexual_orientation: Optional[str] = None
+    bio: Optional[str] = None
+
+    # Appearance
+    height: Optional[int] = None
+    weight: Optional[int] = None
+    body_type: Optional[str] = None
+
+    # Lifestyle
+    relationship_status: Optional[str] = None
+    living_situation: Optional[str] = None
+    children_status: Optional[str] = None
+    smoking: Optional[str] = None
+    drinking: Optional[str] = None
+
+    # Background
+    languages: Optional[List[str]] = None
+    education: Optional[str] = None
+    workplace: Optional[str] = None
+    religion: Optional[str] = None
+    ethnicity: Optional[str] = None
+    political_orientation: Optional[str] = None
+
+    # Location
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    country: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    location_manual: Optional[bool] = None
+
+    # Verification / premium
+    is_verified: Optional[bool] = None
+    verified_at: Optional[datetime] = None
+    is_premium: bool
+    premium_until: Optional[datetime] = None
+
+    # Settings
+    hide_last_seen: bool = False
     hide_online_status: bool = False
+
+    # Relations
+    interests: Optional[List[str]] = None
+    photos: Optional[List[AdminUserPhotoResponse]] = None
+
+    # Stats
     total_likes_sent: Optional[int] = None
     total_matches: Optional[int] = None
     total_messages: Optional[int] = None

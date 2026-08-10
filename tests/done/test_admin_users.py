@@ -14,8 +14,23 @@ COMPLETE_PROFILE = {
     "name": "Test User",
     "birth_date": "1995-06-15",
     "gender": "male",
+    "bio": "Looking for fun adventures in Tehran",
+    "height": 180,
+    "weight": 75,
+    "body_type": "average",
+    "relationship_status": "single",
+    "smoking": "never",
+    "drinking": "socially",
+    "education": "bachelor",
+    "workplace": "Acme Corp",
+    "religion": "none",
+    "ethnicity": "persian",
     "lat": 35.6892,
     "lng": 51.3890,
+    "country": "Iran",
+    "province": "Tehran",
+    "city": "Tehran",
+    "languages": ["fa", "en"],
 }
 
 
@@ -247,6 +262,100 @@ class TestAdminUsers:
         assert len(body) >= 1
         assert "date" in body[0]
         assert "swipes" in body[0]
+
+    async def test_admin_search_by_bio(self, client: AsyncClient, mock_verification_code):
+        """Admin should search users by bio text"""
+        await register_user(client, "bio_search@example.com", mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            ADMIN_USERS_URL,
+            params={"search": "fun adventures in Tehran"},
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert any(u["email"] == "bio_search@example.com" for u in body["users"])
+
+    async def test_admin_search_by_id(self, client: AsyncClient, mock_verification_code):
+        """Admin should search users by UUID"""
+        user_data = await register_user(client, "id_search@example.com", mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            ADMIN_USERS_URL,
+            params={"id": str(user_data["user"]["id"])},
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert any(u["id"] == str(user_data["user"]["id"]) for u in body["users"])
+
+    async def test_admin_filter_by_gender(self, client: AsyncClient, mock_verification_code):
+        """Admin should filter users by gender"""
+        await register_user(client, "gender@example.com", mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            ADMIN_USERS_URL,
+            params={"gender": "male"},
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body["users"]) >= 1
+        assert all(u["gender"] == "male" for u in body["users"])
+
+    async def test_admin_filter_by_city(self, client: AsyncClient, mock_verification_code):
+        """Admin should filter users by city"""
+        await register_user(client, "city@example.com", mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            ADMIN_USERS_URL,
+            params={"city": "Tehran"},
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert any(u["email"] == "city@example.com" for u in body["users"])
+
+    async def test_admin_filter_by_age_range(self, client: AsyncClient, mock_verification_code):
+        """Admin should filter users by age range"""
+        await register_user(client, "age@example.com", mock_verification_code)  # born 1995 => ~31
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            ADMIN_USERS_URL,
+            params={"age_min": 25, "age_max": 35},
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert any(u["email"] == "age@example.com" for u in body["users"])
+
+    async def test_admin_user_detail_full_profile(self, client: AsyncClient, mock_verification_code):
+        """Admin detail should include full profile, photos, interests and UID"""
+        user_data = await register_user(client, "full@example.com", mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(
+            f"{ADMIN_USERS_URL}/{user_data['user']['id']}",
+            headers=admin_headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+        # UID = the user id
+        assert body["id"] == str(user_data["user"]["id"])
+        # Full profile fields
+        assert body["name"] == "Test User"
+        assert body["birth_date"] == "1995-06-15"
+        assert body["bio"] == "Looking for fun adventures in Tehran"
+        assert body["height"] == 180
+        assert body["weight"] == 75
+        assert body["relationship_status"] == "single"
+        assert body["education"] == "bachelor"
+        assert body["workplace"] == "Acme Corp"
+        assert body["city"] == "Tehran"
+        assert body["languages"] == ["fa", "en"]
+        # Relations
+        assert "interests" in body
+        assert "photos" in body
+        assert isinstance(body["photos"], list)
 
     async def test_admin_users_requires_admin_key(self, client: AsyncClient):
         """Should return 403 without admin key"""
