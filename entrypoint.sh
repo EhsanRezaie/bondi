@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# If the container was started with an explicit command (e.g. celery worker/beat
+# via `docker compose` command:), run it as-is instead of the web server.
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi
+
 echo "Applying migrations..."
 alembic upgrade head
 
