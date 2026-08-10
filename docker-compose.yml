@@ -69,8 +69,8 @@ services:
     command: >
       /bin/sh -c
       'CONC=${CELERY_CONCURRENCY:-auto};
-       if [ "$CONC" = "auto" ]; then CONC=$(nproc); fi;
-       exec celery -A app.tasks.celery_app worker --loglevel=info --concurrency="$CONC" --max-tasks-per-child=200'
+       if [ "$$CONC" = "auto" ]; then CONC=$$(nproc); fi;
+       exec celery -A app.tasks.celery_app worker --loglevel=info --concurrency="$$CONC" --max-tasks-per-child=200'
     depends_on:
       redis:
         condition: service_healthy
