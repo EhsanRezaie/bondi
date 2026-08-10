@@ -49,14 +49,13 @@ class TestAdminLogin:
 class TestAdminJWTAccess:
 
     async def test_access_with_valid_jwt(self, client: AsyncClient):
-        """Should allow admin access with valid JWT token."""
+        """Should allow admin access with valid JWT token (no user row needed)."""
         from app.core.security import create_admin_token
         token = create_admin_token("admin")
         res = await client.get(ADMIN_USERS_URL, headers={
             "Authorization": f"Bearer {token}",
         })
-        # 200 if admin@test.com exists in DB, 500 if not
-        assert res.status_code in (200, 500)
+        assert res.status_code == 200
 
     async def test_access_with_invalid_jwt(self, client: AsyncClient):
         """Should reject invalid JWT token."""
@@ -66,13 +65,12 @@ class TestAdminJWTAccess:
         assert res.status_code == 403
 
     async def test_access_with_legacy_key(self, client: AsyncClient):
-        """Should allow admin access with legacy X-Admin-Key."""
+        """Should allow admin access with legacy X-Admin-Key (no user row needed)."""
         from app.core.config import settings
         res = await client.get(ADMIN_USERS_URL, headers={
             "X-Admin-Key": settings.ADMIN_SECRET_KEY,
         })
-        # 200 if admin@test.com exists, 500 if not
-        assert res.status_code in (200, 500)
+        assert res.status_code == 200
 
     async def test_access_without_auth(self, client: AsyncClient):
         """Should reject request without any auth."""

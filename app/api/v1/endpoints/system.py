@@ -13,6 +13,7 @@ from app.db.session import get_session, engine
 from app.core.redis import redis_client
 from app.core.limiter import limiter
 from app.core.config import settings
+from app.core.deps import get_admin_user, AdminIdentity
 from app.core.cache import cache_get, cache_set, key_system_status, TTL_SYSTEM_STATUS
 from app.schemas.system import (
     SystemStatusResponse,
@@ -127,7 +128,11 @@ def version_compare(v1: str, v2: str) -> int:
 
 
 async def check_admin_auth(request: Request) -> bool:
-    """Check if request has admin authentication."""
+    """Legacy admin check via X-Admin-Key header (kept for reference).
+
+    Routes below now use Depends(get_admin_user), which accepts both the
+    admin JWT and the X-Admin-Key header, so this helper is deprecated.
+    """
     admin_key = request.headers.get("X-Admin-Key")
     return admin_key and admin_key == settings.ADMIN_SECRET_KEY
 
@@ -286,19 +291,13 @@ async def version_check(
 
 @router.post("/maintenance/enable", response_model=MaintenanceEnableResponse)
 async def enable_maintenance(
-    request: Request,
     body: MaintenanceEnableRequest,
+    admin: AdminIdentity = Depends(get_admin_user),
 ) -> MaintenanceEnableResponse:
     """
     Enable maintenance mode.
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     data = await set_maintenance_status(True, body.message)
     return MaintenanceEnableResponse(
         status="ok",
@@ -308,17 +307,13 @@ async def enable_maintenance(
 
 
 @router.post("/maintenance/disable", response_model=MaintenanceEnableResponse)
-async def disable_maintenance(request: Request) -> MaintenanceEnableResponse:
+async def disable_maintenance(
+    admin: AdminIdentity = Depends(get_admin_user),
+) -> MaintenanceEnableResponse:
     """
     Disable maintenance mode.
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     data = await set_maintenance_status(False)
     return MaintenanceEnableResponse(
         status="ok",
@@ -328,17 +323,13 @@ async def disable_maintenance(request: Request) -> MaintenanceEnableResponse:
 
 
 @router.get("/maintenance/status", response_model=MaintenanceStatusResponse)
-async def maintenance_status(request: Request) -> MaintenanceStatusResponse:
+async def maintenance_status(
+    admin: AdminIdentity = Depends(get_admin_user),
+) -> MaintenanceStatusResponse:
     """
     Get current maintenance status.
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     data = await get_maintenance_status()
     return MaintenanceStatusResponse(
         maintenance_mode=data.enabled,
@@ -384,20 +375,14 @@ async def set_version_override(data: Dict) -> None:
 
 @router.post("/version/set-minimum")
 async def set_minimum_version(
-    request: Request,
     platform: str,
     version: str,
+    admin: AdminIdentity = Depends(get_admin_user),
 ) -> dict:
     """
     Set minimum required version for a platform (runtime override).
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     if platform not in ["android", "ios"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -420,20 +405,14 @@ async def set_minimum_version(
 
 @router.post("/version/force-update")
 async def set_force_update(
-    request: Request,
     force: bool,
     message: Optional[str] = None,
+    admin: AdminIdentity = Depends(get_admin_user),
 ) -> dict:
     """
     Enable or disable force update.
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     override = await get_version_override()
     override["force_update"] = force
     if message:
@@ -449,17 +428,13 @@ async def set_force_update(
 
 
 @router.get("/version/config")
-async def get_version_config(request: Request) -> dict:
+async def get_version_config(
+    admin: AdminIdentity = Depends(get_admin_user),
+) -> dict:
     """
     Get current version configuration (settings + overrides).
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     override = await get_version_override()
     
     # Merge settings with overrides
@@ -482,17 +457,13 @@ async def get_version_config(request: Request) -> dict:
 
 
 @router.delete("/version/override")
-async def clear_version_override(request: Request) -> dict:
+async def clear_version_override(
+    admin: AdminIdentity = Depends(get_admin_user),
+) -> dict:
     """
     Clear all version overrides (revert to settings).
     Admin only endpoint.
     """
-    if not await check_admin_auth(request):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    
     if VERSION_OVERRIDE_FILE.exists():
         VERSION_OVERRIDE_FILE.unlink()
     

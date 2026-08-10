@@ -271,12 +271,12 @@ class TestMaintenanceAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.post(
             MAINTENANCE_ENABLE_URL,
             json={"message": "Maintenance"},
         )
-        assert res.status_code == 401
+        assert res.status_code == 403
     
     async def test_disable_maintenance_success(
         self,
@@ -311,9 +311,9 @@ class TestMaintenanceAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.post(MAINTENANCE_DISABLE_URL)
-        assert res.status_code == 401
+        assert res.status_code == 403
     
     async def test_maintenance_status_success(
         self,
@@ -335,9 +335,9 @@ class TestMaintenanceAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.get(MAINTENANCE_STATUS_URL)
-        assert res.status_code == 401
+        assert res.status_code == 403
 
 
 class TestVersionAdmin:
@@ -404,12 +404,12 @@ class TestVersionAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.post(
             VERSION_SET_MINIMUM_URL,
             params={"platform": "android", "version": "2.0.0"},
         )
-        assert res.status_code == 401
+        assert res.status_code == 403
     
     async def test_force_update_enable(
         self,
@@ -463,12 +463,12 @@ class TestVersionAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.post(
             VERSION_FORCE_UPDATE_URL,
             params={"force": True},
         )
-        assert res.status_code == 401
+        assert res.status_code == 403
     
     async def test_get_version_config(
         self,
@@ -514,9 +514,9 @@ class TestVersionAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.get(VERSION_CONFIG_URL)
-        assert res.status_code == 401
+        assert res.status_code == 403
     
     async def test_clear_version_override(
         self,
@@ -548,9 +548,9 @@ class TestVersionAdmin:
         self,
         client: AsyncClient,
     ):
-        """Should return 401 without admin key."""
+        """Should return 403 without admin auth."""
         res = await client.delete(VERSION_OVERRIDE_DELETE_URL)
-        assert res.status_code == 401
+        assert res.status_code == 403
 
 
 class TestVersionEdgeCases:

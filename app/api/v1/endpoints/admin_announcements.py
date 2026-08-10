@@ -4,7 +4,7 @@ from sqlalchemy import select
 from datetime import datetime, timezone
 
 from app.db.session import get_session
-from app.core.deps import get_admin_user
+from app.core.deps import get_admin_user, AdminIdentity
 from app.core.limiter import limiter
 from sqlalchemy.orm import selectinload
 from app.models.user import User
@@ -31,7 +31,7 @@ async def admin_send_announcement(
     request: Request,
     body: AdminAnnouncementRequest,
     session: AsyncSession = Depends(get_session),
-    admin: User = Depends(get_admin_user),
+    admin: AdminIdentity = Depends(get_admin_user),
 ):
     """Admin: Send announcement to all active users (or premium only)"""
     
@@ -65,7 +65,7 @@ async def admin_send_announcement(
     
     session.add_all(notifications)
     await session.commit()
-    await log_admin_action(str(admin.id), "announcement_send", "system", admin.id, request, session)
+    await log_admin_action(str(admin.id), "announcement_send", "system", None, request, session)
 
     return AdminAnnouncementResponse(
         success=True,
@@ -80,12 +80,38 @@ async def admin_send_test_announcement(
     request: Request,
     body: AdminMessageRequest,
     session: AsyncSession = Depends(get_session),
-    admin: User = Depends(get_admin_user),
+    admin: AdminIdentity = Depends(get_admin_user),
 ):
-    """Admin: Send test announcement to admin only"""
-    
+    """Admin: Send test announcement to a specific user.
+
+    The admin identity is no longer an app User account, so the recipient is
+    resolved explicitly: `body.target_user_id` if given, otherwise the legacy
+    `admin@test.com` user (if it still exists) for backward compatibility.
+    """
+    target = None
+    if body.target_user_id:
+        result = await session.execute(
+            select(User).options(selectinload(User.profile)).where(User.id == body.target_user_id)
+        )
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=404, detail="Target user not found")
+    else:
+        result = await session.execute(
+            select(User).options(selectinload(User.profile)).where(User.email == "admin@test.com")
+        )
+        target = result.scalar_one_or_none()
+
+    if not target:
+        return AdminMessageResponse(
+            success=False,
+            message="No test recipient — pass target_user_id or keep an admin@test.com user",
+            user_id=None,
+            user_name=None,
+        )
+
     notification = Notification(
-        user_id=admin.id,
+        user_id=target.id,
         type="system",
         title=f"[TEST] {body.title}",
         body=body.message,
@@ -94,11 +120,11 @@ async def admin_send_test_announcement(
     )
     session.add(notification)
     await session.commit()
-    await log_admin_action(str(admin.id), "announcement_test", "system", admin.id, request, session)
+    await log_admin_action(str(admin.id), "announcement_test", "system", target.id, request, session)
 
     return AdminMessageResponse(
         success=True,
-        message="Test announcement sent to admin",
-        user_id=admin.id,
-        user_name=admin.profile.name if admin.profile else None
+        message="Test announcement sent",
+        user_id=target.id,
+        user_name=target.profile.name if target.profile else None
     )

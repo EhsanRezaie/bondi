@@ -109,12 +109,15 @@ class AdminPhotoDetailResponse(BaseModel):
 class AdminMessageRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     message: str = Field(..., min_length=1, max_length=2000)
+    # Optional explicit recipient for the "test announcement" flow. When omitted,
+    # the test endpoint falls back to the legacy admin@test.com user if it exists.
+    target_user_id: Optional[UUID] = None
 
 
 class AdminMessageResponse(BaseModel):
     success: bool
     message: str
-    user_id: UUID
+    user_id: Optional[UUID] = None
     user_name: Optional[str] = None
 
 
@@ -211,3 +214,24 @@ class UserActivityEntry(BaseModel):
     swipes: int
     matches: int
     messages: int
+
+
+# Audit log
+class AdminLogEntry(BaseModel):
+    id: UUID
+    admin_id: str
+    action: str
+    target_type: Optional[str] = None
+    target_id: Optional[UUID] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminLogListResponse(BaseModel):
+    logs: list[AdminLogEntry]
+    total: int
+    page: int
+    page_size: int

@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +22,18 @@ logger = get_logger("core.deps")
 
 # HTTP Bearer security
 security = HTTPBearer(auto_error=False)
+
+
+@dataclass
+class AdminIdentity:
+    """Authenticated admin (username), not an app User account.
+
+    `.id` holds the admin username. A `.profile` attribute is kept as None for
+    backward compatibility with code that reads `admin.profile.name`.
+    """
+
+    id: str
+    profile: Optional[object] = None
 
 
 async def get_current_user(
@@ -255,11 +269,14 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
         raise ValueError("Invalid token")
 
 
-async def get_admin_user(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-) -> User:
-    """Verify admin access via JWT token or legacy X-Admin-Key header."""
+async def get_admin_user(request: Request) -> "AdminIdentity":
+    """Verify admin access via JWT token or legacy X-Admin-Key header.
+
+    Returns an AdminIdentity whose `.id` is the admin username — taken from the
+    JWT `sub` claim (create_admin_token) or `settings.ADMIN_USERNAME` for the
+    key-header path. No app User row is required, so admins are no longer
+    coupled to a fake database account.
+    """
     from app.core.security import verify_admin_token
 
     # Try JWT token first (Authorization: Bearer <token>)
@@ -268,23 +285,12 @@ async def get_admin_user(
         token = auth_header.split(" ", 1)[1]
         payload = verify_admin_token(token)
         if payload:
-            # Valid admin JWT — get admin user from database
-            result = await session.execute(
-                select(User).options(selectinload(User.profile)).where(User.email == "admin@test.com")
-            )
-            admin_user = result.scalar_one_or_none()
-            if admin_user:
-                return admin_user
+            return AdminIdentity(id=str(payload.get("sub") or settings.ADMIN_USERNAME))
 
     # Fallback: legacy X-Admin-Key header
     admin_key = request.headers.get("X-Admin-Key")
     if admin_key and admin_key == settings.ADMIN_SECRET_KEY:
-        result = await session.execute(
-            select(User).options(selectinload(User.profile)).where(User.email == "admin@test.com")
-        )
-        admin_user = result.scalar_one_or_none()
-        if admin_user:
-            return admin_user
+        return AdminIdentity(id=settings.ADMIN_USERNAME)
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

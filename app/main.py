@@ -47,6 +47,7 @@ from app.api.v1.endpoints.interests import router as interests_router
 from app.api.v1.endpoints.prompts import router as prompts_router
 from app.api.v1.endpoints.admin_messages import router as admin_messages_router
 from app.api.v1.endpoints.admin_auth import router as admin_auth_router
+from app.api.v1.endpoints.admin_logs import router as admin_logs_router
 from app.api.v1.endpoints.system import router as admin_system_router
 
 
@@ -124,7 +125,7 @@ async def metrics_endpoint():
             if redis_client:
                 depth = 0
                 try:
-                    depth = int(await redis_client.llen("celery") or 0)
+                    depth = int(await redis_client.llen("bondi") or 0)
                 except Exception:
                     depth = 0
                 update_celery_depth(depth)
@@ -164,6 +165,7 @@ app.include_router(interests_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")
 app.include_router(admin_messages_router, prefix="/api/v1")
 app.include_router(admin_auth_router, prefix="/api/v1")
+app.include_router(admin_logs_router, prefix="/api/v1")
 app.include_router(admin_system_router, prefix="/api/v1")
 
 # WebSocket Routers
