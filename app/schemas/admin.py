@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime, date
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # User Management Schemas
@@ -14,6 +14,8 @@ class AdminUserPhotoResponse(BaseModel):
     face_verified: bool = False
     order: int = 0
     created_at: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AdminUserResponse(BaseModel):
@@ -87,8 +89,7 @@ class AdminUserResponse(BaseModel):
     total_messages: Optional[int] = None
     report_count: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AdminUserUpdate(BaseModel):

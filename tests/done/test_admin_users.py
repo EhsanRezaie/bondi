@@ -1,6 +1,9 @@
 import pytest
 from httpx import AsyncClient
+from uuid import uuid4
+from datetime import datetime, timezone
 from app.core.config import settings
+from app.schemas.admin import AdminUserResponse, AdminUserPhotoResponse
 
 ADMIN_USERS_URL = "/api/v1/admin/users"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
@@ -361,3 +364,25 @@ class TestAdminUsers:
         """Should return 403 without admin key"""
         res = await client.get(ADMIN_USERS_URL)
         assert res.status_code == 403
+
+
+def test_admin_response_accepts_photo_instances():
+    """Regression: nested AdminUserPhotoResponse instances must validate
+    even though AdminUserResponse uses from_attributes (Pydantic 2.13 bug)."""
+    photo = AdminUserPhotoResponse(
+        id=uuid4(), url="https://cdn.example.com/photo.jpg",
+        is_main=True, status="approved", order=0,
+    )
+    user = AdminUserResponse(
+        id=uuid4(),
+        email="test@example.com",
+        name="Test User",
+        age=28,
+        is_active=True,
+        is_premium=False,
+        phone_verified=True,
+        created_at=datetime.now(timezone.utc),
+        photos=[photo],
+    )
+    assert len(user.photos) == 1
+    assert user.photos[0].url == "https://cdn.example.com/photo.jpg"
