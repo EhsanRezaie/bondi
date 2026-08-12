@@ -145,15 +145,7 @@ async def swipe(
             detail="User not found"
         )
     
-    # Check Redis set first (fast path)
-    swiped_ids = await get_swiped_ids(redis_client, current_user_id)
-    if str(body.user_id) in swiped_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Already swiped on this user"
-        )
-
-    # Check if already swiped (DB check for race condition safety)
+    # Check if already swiped (DB check first so a direction change is allowed)
     existing_result = await session.execute(
         select(Swipe).where(
             Swipe.from_user == current_user_id,
@@ -162,11 +154,28 @@ async def swipe(
     )
     existing_swipe = existing_result.scalar_one_or_none()
 
-    if existing_swipe:
+    if existing_swipe and existing_swipe.direction == body.direction:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Already swiped {existing_swipe.direction} on this user"
         )
+
+    # Redis fast path — only blocks brand-new duplicates. A prior swipe in the
+    # DB with a different direction is allowed so a reverted pass can become a
+    # like without an error.
+    if not existing_swipe:
+        swiped_ids = await get_swiped_ids(redis_client, current_user_id)
+        if str(body.user_id) in swiped_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Already swiped on this user"
+            )
+
+    # Re-swiping a user in a different direction (e.g. pass -> like after a
+    # client-side revert): drop the old swipe so the new one is recorded.
+    if existing_swipe:
+        await session.delete(existing_swipe)
+        await session.flush()
     
     # Check daily like limit using RewardService
     reward_service = RewardService(session)

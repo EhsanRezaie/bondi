@@ -147,8 +147,8 @@ class TestSwipe:
         assert res.status_code == 400
         assert "Cannot swipe on yourself" in res.json()["detail"]
 
-    async def test_cannot_swipe_twice(self, client, mock_verification_code):
-        """Should not allow swiping on same user twice."""
+    async def test_cannot_swipe_twice_same_direction(self, client, mock_verification_code):
+        """Should not allow swiping on same user twice in the same direction."""
         male = await register_male(client, mock_verification_code)
         female = await register_female(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {male['access_token']}"}
@@ -160,14 +160,42 @@ class TestSwipe:
             headers=headers,
         )
 
-        # Second swipe — same user, different direction
+        # Second swipe — same user, same direction
         res = await client.post(
             SWIPE_URL,
-            json={"user_id": female["user"]["id"], "direction": "pass"},
+            json={"user_id": female["user"]["id"], "direction": "like"},
             headers=headers,
         )
         assert res.status_code == 400
         assert "Already swiped" in res.json()["detail"]
+
+    async def test_swipe_direction_change_allowed(self, client, mock_verification_code):
+        """A reverted (previously passed) card can be liked: pass -> like must succeed."""
+        male = await register_male(client, mock_verification_code)
+        female = await register_female(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {male['access_token']}"}
+
+        # Pass first
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": female["user"]["id"], "direction": "pass"},
+            headers=headers,
+        )
+
+        # Like the same user (client-side revert) — allowed now
+        res = await client.post(
+            SWIPE_URL,
+            json={"user_id": female["user"]["id"], "direction": "like"},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["matched"] is False
+
+        # Stats reflect the final direction (like), not the old pass
+        stats = await client.get(f"{SWIPE_URL}/stats", headers=headers)
+        data = stats.json()
+        assert data["total_likes_sent"] == 1
+        assert data["total_passes_sent"] == 0
 
     async def test_swipe_nonexistent_user(self, client, mock_verification_code):
         """Should return 404 when swiping on non-existent user."""
