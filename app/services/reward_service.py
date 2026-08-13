@@ -13,13 +13,20 @@ from app.models.subscription import Subscription
 from app.core.logging import get_logger
 from app.core.redis import redis_client
 from app.core.cache import cache_get, cache_set, key_daily_limits
-from app.core.timezone import tehran_today, seconds_until_tehran_midnight
 
 logger = get_logger("reward_service")
 
 
-def _seconds_until_midnight() -> int:
-    return seconds_until_tehran_midnight()
+def _seconds_until_utc_midnight() -> int:
+    """Seconds until next UTC midnight for cache TTL."""
+    now = datetime.now(timezone.utc)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+    return int((midnight - now).total_seconds())
+
+
+def utc_today() -> date:
+    """Today's date in UTC for daily limit records."""
+    return datetime.now(timezone.utc).date()
 
 
 class RewardService:
@@ -75,7 +82,7 @@ class RewardService:
             "chats_used": daily_limit.chats_used,
             "ad_likes_bonus": daily_limit.ad_likes_bonus,
             "ad_chats_bonus": daily_limit.ad_chats_bonus,
-        }, _seconds_until_midnight())
+        }, _seconds_until_utc_midnight())
         
         return daily_limit
     
@@ -84,7 +91,7 @@ class RewardService:
         if is_premium:
             return -1
         
-        today = tehran_today()
+        today = utc_today()
         daily_limit = await self.get_or_create_daily_limit(user_id, today)
         
         available = settings.FREE_USER_DAILY_LIKES + daily_limit.ad_likes_bonus - daily_limit.likes_used
@@ -96,7 +103,7 @@ class RewardService:
         if user.profile and user.profile.is_premium:
             return -1
         
-        today = tehran_today()
+        today = utc_today()
         daily_limit = await self.get_or_create_daily_limit(user.id, today)
         
         available = settings.FREE_USER_DAILY_CHATS + daily_limit.ad_chats_bonus - daily_limit.chats_used
@@ -107,7 +114,7 @@ class RewardService:
         if is_premium:
             return True
 
-        today = tehran_today()
+        today = utc_today()
 
         # Atomic: increment only if under the limit (prevents TOCTOU race)
         stmt = (
@@ -135,7 +142,7 @@ class RewardService:
             "chats_used": updated.chats_used,
             "ad_likes_bonus": updated.ad_likes_bonus,
             "ad_chats_bonus": updated.ad_chats_bonus,
-        }, _seconds_until_midnight())
+        }, _seconds_until_utc_midnight())
 
         return True
     
@@ -154,7 +161,7 @@ class RewardService:
         if user.profile and user.profile.is_premium:
             return True
 
-        today = tehran_today()
+        today = utc_today()
 
         # Atomic: increment only if under the limit (prevents TOCTOU race)
         stmt = (
@@ -182,7 +189,7 @@ class RewardService:
             "chats_used": updated.chats_used,
             "ad_likes_bonus": updated.ad_likes_bonus,
             "ad_chats_bonus": updated.ad_chats_bonus,
-        }, _seconds_until_midnight())
+        }, _seconds_until_utc_midnight())
 
         return True
     
@@ -191,7 +198,7 @@ class RewardService:
         Claim reward for watching an ad atomically.
         Returns: {'success': bool, 'likes_added': int, 'chats_added': int, 'message': str}
         """
-        today = tehran_today()
+        today = utc_today()
 
         # Ensure daily limit row exists before atomic update
         await self.get_or_create_daily_limit(user.id, today)
@@ -235,7 +242,7 @@ class RewardService:
             "chats_used": updated.chats_used,
             "ad_likes_bonus": updated.ad_likes_bonus,
             "ad_chats_bonus": updated.ad_chats_bonus,
-        }, _seconds_until_midnight())
+        }, _seconds_until_utc_midnight())
 
         new_ad_count = updated.ad_likes_bonus // settings.AD_REWARD_LIKES_BONUS
         return {
@@ -249,7 +256,7 @@ class RewardService:
     
     async def get_daily_stats(self, user: User) -> dict:
         """Get complete daily stats for user."""
-        today = tehran_today()
+        today = utc_today()
         daily_limit = await self.get_or_create_daily_limit(user.id, today)
         
         # ✅ FIX: Check profile exists and is_premium

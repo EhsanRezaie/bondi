@@ -213,7 +213,7 @@ class TestCreateChat:
         # Pre-fill today's daily limit so no chats remain.
         db_session.add(DailyLimit(
             user_id=uuid.UUID(male_id),
-            date=date.today(),
+            date=datetime.now(timezone.utc).date(),
             likes_used=0,
             chats_used=settings.FREE_USER_DAILY_CHATS,
             ad_likes_bonus=0,
