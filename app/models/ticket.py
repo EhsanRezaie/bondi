@@ -20,3 +20,4 @@ class Ticket(Base):
 
     # Relationships
     user = relationship("User", back_populates="tickets")
+    messages = relationship("TicketMessage", back_populates="ticket", cascade="all, delete-orphan", order_by="TicketMessage.created_at")

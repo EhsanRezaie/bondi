@@ -179,3 +179,105 @@ class TestAdminTickets:
             headers=admin_headers
         )
         assert res.status_code == 404
+
+
+class TestAdminTicketConversation:
+    """Test the ticket conversation (admin replies via messages endpoint)"""
+
+    async def _create_ticket(self, client: AsyncClient, mock_verification_code, subject="Conv Test") -> tuple:
+        user_data = await register_user(client, "conv@example.com", mock_verification_code)
+        user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
+        create_res = await client.post(
+            "/api/v1/tickets",
+            json={"subject": subject, "message": "Initial conversation message"},
+            headers=user_headers
+        )
+        return create_res.json()["id"], user_headers
+
+    async def test_admin_reply_appends_message(self, client: AsyncClient, mock_verification_code):
+        """Admin reply should append an admin message to the conversation"""
+        ticket_id, _ = await self._create_ticket(client, mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+
+        res = await client.post(
+            f"{ADMIN_TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "We are looking into this for you."},
+            headers=admin_headers
+        )
+        assert res.status_code == 201
+        body = res.json()
+        assert len(body["messages"]) == 2
+        assert body["messages"][0]["sender_type"] == "user"
+        assert body["messages"][1]["sender_type"] == "admin"
+        assert body["messages"][1]["content"] == "We are looking into this for you."
+        assert body["admin_response"] == "We are looking into this for you."
+
+    async def test_admin_reply_does_not_change_status(self, client: AsyncClient, mock_verification_code):
+        """Admin reply should NOT auto-change ticket status (manual only)"""
+        ticket_id, _ = await self._create_ticket(client, mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+
+        res = await client.post(
+            f"{ADMIN_TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Reply without changing status."},
+            headers=admin_headers
+        )
+        assert res.status_code == 201
+        assert res.json()["status"] == "open"
+
+    async def test_admin_reply_roundtrip_with_user(self, client: AsyncClient, mock_verification_code):
+        """Full conversation: user creates, admin replies, user replies again"""
+        ticket_id, user_headers = await self._create_ticket(client, mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+
+        await client.post(
+            f"{ADMIN_TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Thanks, we fixed it."},
+            headers=admin_headers
+        )
+        res = await client.post(
+            f"/api/v1/tickets/{ticket_id}/messages",
+            json={"content": "Great, thank you so much!"},
+            headers=user_headers
+        )
+        assert res.status_code == 201
+        body = res.json()
+        assert len(body["messages"]) == 3
+        assert body["messages"][0]["sender_type"] == "user"
+        assert body["messages"][1]["sender_type"] == "admin"
+        assert body["messages"][2]["sender_type"] == "user"
+
+    async def test_admin_reply_to_nonexistent(self, client: AsyncClient):
+        """Should return 404 when replying to a non-existent ticket"""
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.post(
+            f"{ADMIN_TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
+            json={"content": "No such ticket"},
+            headers=admin_headers
+        )
+        assert res.status_code == 404
+
+    async def test_admin_reply_requires_admin_key(self, client: AsyncClient):
+        """Should return 403 without admin key"""
+        res = await client.post(
+            f"{ADMIN_TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
+            json={"content": "No auth"}
+        )
+        assert res.status_code == 403
+
+    async def test_admin_get_ticket_includes_messages(self, client: AsyncClient, mock_verification_code):
+        """Admin detail should include the conversation messages"""
+        ticket_id, _ = await self._create_ticket(client, mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+
+        await client.post(
+            f"{ADMIN_TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Support reply here."},
+            headers=admin_headers
+        )
+
+        res = await client.get(f"{ADMIN_TICKETS_URL}/{ticket_id}", headers=admin_headers)
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body["messages"]) == 2
+        assert body["messages"][1]["sender_type"] == "admin"

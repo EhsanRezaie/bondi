@@ -239,3 +239,144 @@ class TestUserTickets:
         """Should return 401 without authentication"""
         res = await client.get(f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001")
         assert res.status_code == 401
+
+
+class TestUserTicketReplies:
+    """Test user replying to their own ticket (conversation)"""
+
+    async def test_create_ticket_seeds_initial_message(self, client: AsyncClient, mock_verification_code):
+        """Creating a ticket should seed the initial message in the thread"""
+        data = await register_user(client, mock_verification_code=mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        res = await client.post(
+            TICKETS_URL,
+            json={"subject": "Thread Test", "message": "Initial message body here"},
+            headers=headers
+        )
+        assert res.status_code == 201
+        body = res.json()
+        assert len(body["messages"]) == 1
+        assert body["messages"][0]["sender_type"] == "user"
+        assert body["messages"][0]["content"] == "Initial message body here"
+
+    async def test_reply_to_ticket_success(self, client: AsyncClient, mock_verification_code):
+        """User should be able to reply to their own open ticket"""
+        data = await register_user(client, mock_verification_code=mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        create_res = await client.post(
+            TICKETS_URL,
+            json={"subject": "Reply Test", "message": "Please help me"},
+            headers=headers
+        )
+        ticket_id = create_res.json()["id"]
+
+        res = await client.post(
+            f"{TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Adding more details now"},
+            headers=headers
+        )
+        assert res.status_code == 201
+        body = res.json()
+        assert body["status"] == "open"
+        assert len(body["messages"]) == 2
+        assert body["messages"][0]["sender_type"] == "user"
+        assert body["messages"][1]["sender_type"] == "user"
+        assert body["messages"][1]["content"] == "Adding more details now"
+
+    async def test_reply_to_closed_ticket_reopens(self, client: AsyncClient, mock_verification_code):
+        """Replying to a closed ticket should reopen it to 'open'"""
+        from app.core.config import settings
+
+        data = await register_user(client, mock_verification_code=mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        create_res = await client.post(
+            TICKETS_URL,
+            json={"subject": "Reopen Test", "message": "Ticket to be closed"},
+            headers=headers
+        )
+        ticket_id = create_res.json()["id"]
+
+        # Admin closes the ticket
+        admin_headers = {"X-Admin-Key": settings.ADMIN_SECRET_KEY}
+        await client.patch(
+            f"/api/v1/admin/tickets/{ticket_id}",
+            json={"status": "closed"},
+            headers=admin_headers
+        )
+
+        # User replies → reopened
+        res = await client.post(
+            f"{TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "This should reopen the ticket"},
+            headers=headers
+        )
+        assert res.status_code == 201
+        assert res.json()["status"] == "open"
+
+    async def test_reply_to_other_users_ticket(self, client: AsyncClient, mock_verification_code):
+        """Should not allow replying to another user's ticket (IDOR)"""
+        userA_data = await register_user(
+            client, VALID_EMAIL, mock_verification_code=mock_verification_code
+        )
+        userA_headers = {"Authorization": f"Bearer {userA_data['access_token']}"}
+
+        create_res = await client.post(
+            TICKETS_URL,
+            json={"subject": "User A Ticket", "message": "This is user A's ticket"},
+            headers=userA_headers
+        )
+        ticket_id = create_res.json()["id"]
+
+        userB_data = await register_user(
+            client, "userb_reply@example.com", mock_verification_code=mock_verification_code
+        )
+        userB_headers = {"Authorization": f"Bearer {userB_data['access_token']}"}
+
+        res = await client.post(
+            f"{TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Intrusion attempt"},
+            headers=userB_headers
+        )
+        assert res.status_code == 404
+
+    async def test_reply_to_nonexistent_ticket(self, client: AsyncClient, mock_verification_code):
+        """Should return 404 for reply to non-existent ticket"""
+        data = await register_user(client, mock_verification_code=mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        res = await client.post(
+            f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
+            json={"content": "No such ticket"},
+            headers=headers
+        )
+        assert res.status_code == 404
+
+    async def test_reply_message_too_short(self, client: AsyncClient, mock_verification_code):
+        """Should reject reply shorter than 10 characters"""
+        data = await register_user(client, mock_verification_code=mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        create_res = await client.post(
+            TICKETS_URL,
+            json={"subject": "Short Reply", "message": "Full message here"},
+            headers=headers
+        )
+        ticket_id = create_res.json()["id"]
+
+        res = await client.post(
+            f"{TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "short"},
+            headers=headers
+        )
+        assert res.status_code == 422
+
+    async def test_reply_requires_auth(self, client: AsyncClient):
+        """Should return 401 without authentication"""
+        res = await client.post(
+            f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
+            json={"content": "No auth message"}
+        )
+        assert res.status_code == 401

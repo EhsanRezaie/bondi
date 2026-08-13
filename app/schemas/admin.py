@@ -3,6 +3,8 @@ from datetime import datetime, date
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.schemas.ticket import TicketMessageResponse
+
 
 # User Management Schemas
 class AdminUserPhotoResponse(BaseModel):
@@ -141,6 +143,7 @@ class AdminTicketResponse(BaseModel):
     admin_response: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    messages: Optional[List["TicketMessageResponse"]] = None
 
     class Config:
         from_attributes = True

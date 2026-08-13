@@ -9,6 +9,21 @@ class TicketCreate(BaseModel):
     message: str = Field(..., min_length=10, max_length=2000)
 
 
+class TicketMessageCreate(BaseModel):
+    content: str = Field(..., min_length=10, max_length=2000)
+
+
+class TicketMessageResponse(BaseModel):
+    id: UUID
+    sender_type: str
+    admin_name: Optional[str] = None
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class TicketResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -18,6 +33,7 @@ class TicketResponse(BaseModel):
     admin_response: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    messages: list[TicketMessageResponse] = []
 
     class Config:
         from_attributes = True

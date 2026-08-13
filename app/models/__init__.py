@@ -13,6 +13,7 @@ from app.models.review_reward import ReviewReward
 from app.models.referral_reward import ReferralReward
 from app.models.notification import Notification
 from app.models.ticket import Ticket
+from app.models.ticket_message import TicketMessage
 from app.models.block import Block
 from app.models.interest import Interest
 from app.models.user_interest import UserInterest
