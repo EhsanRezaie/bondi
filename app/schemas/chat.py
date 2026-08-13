@@ -42,6 +42,7 @@ class ChatListResponse(BaseModel):
     chats: List[ChatItemResponse]
     total: int
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None
 
 
 class ChatDetailResponse(BaseModel):

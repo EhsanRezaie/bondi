@@ -55,7 +55,7 @@ async def get_matches(
     ).where(
         user_filter,
         Match.is_active == True
-    ).order_by(Match.matched_at.desc())
+    ).order_by(Match.matched_at.desc(), Match.id.desc())
 
     query = query.offset(offset).limit(limit)
     result = await session.execute(query)

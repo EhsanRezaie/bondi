@@ -1,7 +1,9 @@
 # tests/test_search.py
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.models.user import User
@@ -1307,3 +1309,296 @@ class TestSearchOnlineSort:
         # Without Redis key, is_online depends on last_seen_at window
         assert female_user["is_online"] is not None
         assert female_user["is_online"] is False
+
+
+class TestSearchCursorPagination:
+    """Keyset (cursor) pagination must never return the same user twice —
+
+    even when the sort order shifts between page loads (new signups inserted,
+    equal keys, live last_seen updates). Covers the fix where plain
+    offset+ORDER BY by a shifting column produced duplicate rows across pages.
+    """
+
+    CURSOR_EMAILS = [
+        "cursor_f1@example.com",
+        "cursor_f2@example.com",
+        "cursor_f3@example.com",
+        "cursor_f4@example.com",
+        "cursor_f5@example.com",
+        "cursor_f6@example.com",
+    ]
+
+    async def _register_searcher(self, client, mock_verification_code) -> dict:
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        return male_headers
+
+    async def _register_candidate(
+        self,
+        client: AsyncClient,
+        mock_verification_code,
+        index: int,
+        **payload_overrides,
+    ) -> str:
+        """Register one female candidate with a unique email/name."""
+        payload = dict(COMPLETE_PROFILE_PAYLOAD_FEMALE)
+        payload["name"] = f"Cursor Candidate {index}"
+        payload.update(payload_overrides)
+        _, uid = await register_and_get_headers(
+            client, self.CURSOR_EMAILS[index], payload, mock_verification_code
+        )
+        return uid
+
+    async def _register_candidates(
+        self, client: AsyncClient, mock_verification_code, count: int = 5
+    ) -> tuple[dict, list[str]]:
+        male_headers = await self._register_searcher(client, mock_verification_code)
+        ids = [
+            await self._register_candidate(client, mock_verification_code, i)
+            for i in range(count)
+        ]
+        return male_headers, ids
+
+    async def _walk_pages(
+        self,
+        client: AsyncClient,
+        headers: dict,
+        limit: int,
+        params: dict,
+        start_cursor: str | None = None,
+    ) -> tuple[dict, list[str]]:
+        """Fetch every page via cursor. Returns (last_response, all ids in order)."""
+        all_ids: list[str] = []
+        cursor = start_cursor
+        pages = 0
+        while True:
+            query_params = dict(params)
+            query_params["limit"] = limit
+            if cursor:
+                query_params["cursor"] = cursor
+            res = await client.get(SEARCH_URL, params=query_params, headers=headers)
+            assert res.status_code == 200, res.text
+            data = res.json()
+            page_ids = [u["id"] for u in data["users"]]
+            assert len(page_ids) <= limit
+            all_ids.extend(page_ids)
+            pages += 1
+            cursor = data.get("next_cursor")
+            if not cursor:
+                return data, all_ids
+
+    async def test_cursor_walks_all_pages_without_duplicates(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Walking every page via cursor yields each user exactly once."""
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=5)
+        data, all_ids = await self._walk_pages(
+            client, male_headers, limit=2, params={"gender": "female"}
+        )
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5  # no duplicates, nothing missing
+
+    async def test_cursor_has_next_only_until_last_page(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """next_cursor is present on non-final pages and null on the last one."""
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=4
+        )
+        res1 = await client.get(
+            SEARCH_URL, params={"limit": 2, "gender": "female"}, headers=male_headers
+        )
+        assert res1.status_code == 200
+        p1 = res1.json()
+        assert len(p1["users"]) == 2
+        assert p1["total"] == 4
+        assert p1["next_cursor"]  # more pages remain
+
+        res2 = await client.get(
+            SEARCH_URL,
+            params={"limit": 2, "gender": "female", "cursor": p1["next_cursor"]},
+            headers=male_headers,
+        )
+        assert res2.status_code == 200
+        p2 = res2.json()
+        assert len(p2["users"]) == 2
+        assert p2["next_cursor"] is None  # end of list
+
+        ids1 = {u["id"] for u in p1["users"]}
+        ids2 = {u["id"] for u in p2["users"]}
+        assert ids1.isdisjoint(ids2)  # offset bug produced duplicates here
+        assert ids1 | ids2 == set(candidate_ids)
+
+    async def test_cursor_no_duplicates_when_list_shifted_by_insert(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """New users signing up mid-scroll must NOT push old rows into a later
+        page — this is exactly the offset-pagination bug: with a shifting
+        'recent' order, offset page 2 would return rows already seen on page 1."""
+        male_headers = await self._register_searcher(client, mock_verification_code)
+        originals = [
+            await self._register_candidate(client, mock_verification_code, i)
+            for i in range(4)
+        ]
+
+        res1 = await client.get(
+            SEARCH_URL,
+            params={"limit": 2, "gender": "female"},
+            headers=male_headers,
+        )
+        assert res1.status_code == 200
+        p1 = res1.json()
+        page1_ids = {u["id"] for u in p1["users"]}
+        cursor = p1["next_cursor"]
+        assert cursor
+
+        # Two new users register — in 'recent' order they move to the TOP,
+        # shifting the window relative to a naive offset.
+        for i in (4, 5):
+            await self._register_candidate(client, mock_verification_code, i)
+
+        _, later_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female"},
+            start_cursor=cursor,
+        )
+        assert len(set(later_ids)) == len(later_ids)  # no internal dup pages
+        assert page1_ids.isdisjoint(set(later_ids))  # no return of page-1 rows
+        assert page1_ids | set(later_ids) == set(originals)  # every original once
+
+    async def test_cursor_stable_when_sort_keys_tie(
+        self, client: AsyncClient, db_session, mock_verification_code
+    ):
+        """Ties on the sort key (identical created_at) rely on the id
+        tiebreaker — pagination must stay stable instead of duplicating rows
+        due to arbitrary per-query ordering on equal keys."""
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=4
+        )
+        fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        await db_session.execute(
+            update(User).where(User.id.in_(candidate_ids)).values(created_at=fixed)
+        )
+        await db_session.commit()
+
+        data, all_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female"},
+        )
+        assert data["total"] == 4
+        assert len(all_ids) == 4
+        assert len(set(all_ids)) == 4
+
+    async def test_cursor_sort_by_name(self, client: AsyncClient, mock_verification_code):
+        """String sort keys work through the cursor path, duplicate-free."""
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=5)
+        # names: "Cursor Candidate 0".."Cursor Candidate 4" — distinct + sortable
+        data, all_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female", "sort_by": "name", "sort_order": "asc"},
+        )
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5
+
+    async def test_cursor_sort_by_age(self, client: AsyncClient, mock_verification_code):
+        """Cursor pagination respects age order while staying duplicate-free."""
+        birth_dates = ["2000-01-01", "1996-02-03", "1992-04-05", "1998-08-09", "1994-12-25"]
+        male_headers = await self._register_searcher(client, mock_verification_code)
+        for i, bd in enumerate(birth_dates):
+            await self._register_candidate(
+                client, mock_verification_code, i, birth_date=bd
+            )
+
+        data, all_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female", "sort_by": "age", "sort_order": "asc"},
+        )
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5
+
+    async def test_cursor_sort_by_last_seen(self, client: AsyncClient, db_session, mock_verification_code):
+        """Cursor pages stay consistent when sorting by live last_seen_at."""
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=4
+        )
+        base = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        for i, uid in enumerate(candidate_ids):
+            await db_session.execute(
+                update(User)
+                .where(User.id == uid)
+                .values(last_seen_at=base - timedelta(days=i))
+            )
+        await db_session.commit()
+
+        data, all_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female", "sort_by": "last_seen", "sort_order": "desc"},
+        )
+        assert len(all_ids) == 4
+        assert len(set(all_ids)) == 4
+        seen_values = []
+        for uid in all_ids:
+            row = await db_session.execute(
+                select(User.last_seen_at).where(User.id == uid)
+            )
+            seen_values.append(row.scalar_one_or_none())
+        assert seen_values == sorted(seen_values, reverse=True)
+
+    async def test_cursor_sort_by_distance(self, client: AsyncClient, mock_verification_code):
+        """Distance sort uses a computed column — cursor must still be stable."""
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=5)
+        data, all_ids = await self._walk_pages(
+            client,
+            male_headers,
+            limit=2,
+            params={"gender": "female", "sort_by": "distance", "sort_order": "asc"},
+        )
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5
+
+    async def test_cursor_none_when_no_results(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """An empty result set returns users=[], total=0 and no cursor."""
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=2)
+        res = await client.get(
+            SEARCH_URL, params={"gender": "female", "city": "Nowhere"}, headers=male_headers
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["users"] == []
+        assert data["total"] == 0
+        assert data["next_cursor"] is None
+
+    async def test_invalid_cursor_falls_back_to_offset(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """A malformed cursor degrades gracefully to the offset path instead of erroring."""
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=3)
+        res = await client.get(
+            SEARCH_URL,
+            params={"limit": 2, "gender": "female", "cursor": "::not-a-real-cursor::"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["users"]) >= 1
+        # Offset path is used: it keeps offset semantics but still hands the
+        # client a cursor so it can continue paging without a fresh offset.
+        assert data["next_offset"] == 2
+        assert data["next_cursor"] is not None

@@ -62,7 +62,7 @@ async def get_my_tickets(
     
     query = select(Ticket).where(
         Ticket.user_id == current_user.id
-    ).order_by(Ticket.created_at.desc())
+    ).order_by(Ticket.created_at.desc(), Ticket.id.desc())
     
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)

@@ -48,7 +48,7 @@ async def get_notifications(
     query = (
         select(Notification)
         .where(filter_stmt)
-        .order_by(Notification.created_at.desc())
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
         .offset(offset)
         .limit(limit)
     )

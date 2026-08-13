@@ -193,7 +193,7 @@ async def get_my_reports(
     result = await session.execute(
         select(Report).where(
             Report.reporter_id == current_user.id
-        ).order_by(Report.created_at.desc())
+        ).order_by(Report.created_at.desc(), Report.id.desc())
     )
     reports = result.scalars().all()
     

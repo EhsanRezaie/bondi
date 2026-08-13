@@ -64,6 +64,7 @@ class DiscoverResponse(BaseModel):
     """Response for discover endpoint"""
     users: List[CardProfileResponse]
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None
     total: int
 
 

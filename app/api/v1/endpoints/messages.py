@@ -188,7 +188,7 @@ async def get_chat_history(
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)
 
-    query = query.order_by(Message.sent_at.desc())
+    query = query.order_by(Message.sent_at.desc(), Message.id.desc())
     if not before:
         query = query.offset(offset)
     query = query.limit(limit)

@@ -2,9 +2,9 @@
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -879,3 +879,200 @@ class TestDiscover:
         assert "photos" not in user
         assert "languages" not in user
         assert "last_seen_at" not in user
+
+
+class TestDiscoverCursorPagination:
+    """Keyset cursor pagination for the discover deck must never return the
+    same user twice — even when the deck shifts (swipes excluded, last_seen
+    churns, equal keys) between page loads."""
+
+    CURSOR_EMAILS = [
+        "cursor_d1@example.com",
+        "cursor_d2@example.com",
+        "cursor_d3@example.com",
+        "cursor_d4@example.com",
+        "cursor_d5@example.com",
+        "cursor_d6@example.com",
+    ]
+
+    async def _register_searcher(self, client, mock_verification_code) -> dict:
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        return male_headers
+
+    async def _register_candidate(
+        self, client: AsyncClient, mock_verification_code, index: int
+    ) -> str:
+        payload = dict(COMPLETE_PROFILE_PAYLOAD_FEMALE)
+        payload["name"] = f"Cursor Deck {index}"
+        _, uid = await register_and_get_headers(
+            client, self.CURSOR_EMAILS[index], payload, mock_verification_code
+        )
+        return uid
+
+    async def _register_candidates(
+        self, client: AsyncClient, mock_verification_code, count: int = 5
+    ) -> tuple[dict, list[str]]:
+        male_headers = await self._register_searcher(client, mock_verification_code)
+        ids = [
+            await self._register_candidate(client, mock_verification_code, i)
+            for i in range(count)
+        ]
+        return male_headers, ids
+
+    async def _walk_pages(
+        self,
+        client: AsyncClient,
+        headers: dict,
+        limit: int,
+        start_cursor: str | None = None,
+    ) -> tuple[dict, list[str]]:
+        """Fetch every page via cursor. Returns (last_response, all ids in order)."""
+        all_ids: list[str] = []
+        cursor = start_cursor
+        while True:
+            params = {"gender": "female", "limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+            res = await client.get(DISCOVER_URL, params=params, headers=headers)
+            assert res.status_code == 200, res.text
+            data = res.json()
+            page_ids = [u["id"] for u in data["users"]]
+            assert len(page_ids) <= limit
+            all_ids.extend(page_ids)
+            cursor = data.get("next_cursor")
+            if not cursor:
+                return data, all_ids
+
+    async def test_cursor_walks_all_pages_without_duplicates(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=5)
+        data, all_ids = await self._walk_pages(client, male_headers, limit=2)
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5  # no duplicates, nothing missing
+
+    async def test_cursor_has_next_only_until_last_page(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=4
+        )
+        res1 = await client.get(
+            DISCOVER_URL, params={"gender": "female", "limit": 2}, headers=male_headers
+        )
+        assert res1.status_code == 200
+        p1 = res1.json()
+        assert len(p1["users"]) == 2
+        assert p1["total"] == 4
+        assert p1["next_cursor"]
+
+        res2 = await client.get(
+            DISCOVER_URL,
+            params={"gender": "female", "limit": 2, "cursor": p1["next_cursor"]},
+            headers=male_headers,
+        )
+        assert res2.status_code == 200
+        p2 = res2.json()
+        assert len(p2["users"]) == 2
+        assert p2["next_cursor"] is None
+
+        ids1 = {u["id"] for u in p1["users"]}
+        ids2 = {u["id"] for u in p2["users"]}
+        assert ids1.isdisjoint(ids2)
+        assert ids1 | ids2 == set(candidate_ids)
+
+    async def test_cursor_no_duplicates_when_deck_shifts_by_swipe(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Swiping (which excludes users) must not push already-seen rows into
+        a later page — the discover-specific version of the offset bug."""
+        male_headers = await self._register_searcher(client, mock_verification_code)
+        originals = [
+            await self._register_candidate(client, mock_verification_code, i)
+            for i in range(4)
+        ]
+
+        res1 = await client.get(
+            DISCOVER_URL, params={"gender": "female", "limit": 2}, headers=male_headers
+        )
+        p1 = res1.json()
+        page1_ids = {u["id"] for u in p1["users"]}
+        cursor = p1["next_cursor"]
+        assert cursor
+
+        # Swipe away (pass) both users shown on page 1 — the deck shrinks and
+        # the remaining rows shift up relative to a naive offset.
+        for uid in page1_ids:
+            res = await client.post(
+                SWIPE_URL,
+                json={"user_id": uid, "direction": "pass"},
+                headers=male_headers,
+            )
+            assert res.status_code == 200
+
+        _, later_ids = await self._walk_pages(client, male_headers, limit=2, start_cursor=cursor)
+        assert len(set(later_ids)) == len(later_ids)
+        assert page1_ids.isdisjoint(set(later_ids))
+        assert page1_ids | set(later_ids) == set(originals)
+
+    async def test_cursor_stable_when_sort_keys_tie(
+        self, client: AsyncClient, db_session, mock_verification_code
+    ):
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=4
+        )
+        fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        await db_session.execute(
+            update(User).where(User.id.in_(candidate_ids)).values(last_seen_at=fixed)
+        )
+        await db_session.commit()
+
+        data, all_ids = await self._walk_pages(client, male_headers, limit=2)
+        assert data["total"] == 4
+        assert len(all_ids) == 4
+        assert len(set(all_ids)) == 4
+
+    async def test_cursor_null_last_seen_tail(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Users who never went online (NULL last_seen_at) sit in the null tail;
+        paging through them must stay duplicate-free."""
+        male_headers, candidate_ids = await self._register_candidates(
+            client, mock_verification_code, count=5
+        )
+        data, all_ids = await self._walk_pages(client, male_headers, limit=2)
+        assert data["total"] == 5
+        assert len(all_ids) == 5
+        assert len(set(all_ids)) == 5
+
+    async def test_cursor_none_when_no_results(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=2)
+        res = await client.get(
+            DISCOVER_URL,
+            params={"gender": "female", "age_min": 80, "age_max": 100},
+            headers=male_headers,
+        )
+        data = res.json()
+        assert data["users"] == []
+        assert data["total"] == 0
+        assert data["next_cursor"] is None
+
+    async def test_invalid_cursor_falls_back_to_offset(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await self._register_candidates(client, mock_verification_code, count=3)
+        res = await client.get(
+            DISCOVER_URL,
+            params={"gender": "female", "limit": 2, "cursor": "::not-a-real-cursor::"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["users"]) >= 1
+        assert data["next_offset"] == 2
+        assert data["next_cursor"] is not None

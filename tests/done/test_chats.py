@@ -4,7 +4,7 @@ from datetime import date, timedelta, datetime, timezone
 from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.models.user import User
@@ -686,3 +686,153 @@ class TestChatDetail:
             f"{CHATS_URL}/00000000-0000-0000-0000-000000000888", headers=male_headers
         )
         assert res.status_code == 404
+
+
+class TestChatsCursorPagination:
+    """Keyset cursor pagination for the chat list must never return the same
+    conversation twice — even when a chat's activity (updated_at) moves it up
+    the list between page loads."""
+
+    async def _create_pending_chat(
+        self,
+        client: AsyncClient,
+        male_headers: dict,
+        female_email: str,
+        index: int,
+        mock_verification_code,
+    ) -> str:
+        """Register a female and create a pending chat with the male."""
+        female_headers, female_id = await register_and_get_headers(
+            client, female_email, {**PAYLOAD_FEMALE, "name": f"Chat Cursor {index}"},
+            mock_verification_code,
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        res = await client.post(
+            CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
+        )
+        assert res.status_code == 200, res.text
+        return res.json()["chat_id"]
+
+    async def _walk_pages(
+        self, client: AsyncClient, headers: dict, limit: int, start_cursor: str | None = None
+    ) -> tuple[dict, list[str]]:
+        all_ids: list[str] = []
+        cursor = start_cursor
+        while True:
+            params = {"limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+            res = await client.get(CHATS_URL, params=params, headers=headers)
+            assert res.status_code == 200, res.text
+            data = res.json()
+            page_ids = [c["id"] for c in data["chats"]]
+            assert len(page_ids) <= limit
+            all_ids.extend(page_ids)
+            cursor = data.get("next_cursor")
+            if not cursor:
+                return data, all_ids
+
+    async def test_cursor_walks_all_pages_without_duplicates(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await register_and_get_headers(
+            client, "cursor_male@example.com", PAYLOAD_MALE, mock_verification_code
+        )
+        chat_ids = []
+        for i in range(4):
+            chat_ids.append(await self._create_pending_chat(
+                client, male_headers, f"cursor_chat{i}@example.com", i, mock_verification_code
+            ))
+
+        data, all_ids = await self._walk_pages(client, male_headers, limit=2)
+        assert data["total"] == 4
+        assert len(all_ids) == 4
+        assert len(set(all_ids)) == 4
+        assert set(all_ids) == set(chat_ids)
+
+    async def test_cursor_no_duplicates_when_chat_moves_up(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        """A new message bumping a chat to the top between pages must NOT make
+        it appear again on a later page (the offset-pagination chat bug)."""
+        male_headers, _ = await register_and_get_headers(
+            client, "cursor_shift_male@example.com", PAYLOAD_MALE, mock_verification_code
+        )
+        chat_ids = []
+        for i in range(4):
+            chat_ids.append(await self._create_pending_chat(
+                client, male_headers, f"cursor_shift{i}@example.com", i, mock_verification_code
+            ))
+
+        res1 = await client.get(CHATS_URL, params={"limit": 2}, headers=male_headers)
+        assert res1.status_code == 200
+        p1 = res1.json()
+        page1_ids = {c["id"] for c in p1["chats"]}
+        cursor = p1["next_cursor"]
+        assert cursor
+
+        # Simulate a fresh message arriving in one of the chats already shown:
+        # its sort key (last message sent_at) jumps to 'now', moving it to the top.
+        bumped_chat = next(iter(page1_ids))
+        await db_session.execute(
+            update(Message)
+            .where(Message.chat_id == bumped_chat)
+            .values(sent_at=datetime.now(timezone.utc) + timedelta(seconds=30))
+        )
+        await db_session.commit()
+
+        data, later_ids = await self._walk_pages(
+            client, male_headers, limit=2, start_cursor=cursor
+        )
+        assert len(set(later_ids)) == len(later_ids)  # no internal dupes
+        assert page1_ids.isdisjoint(set(later_ids))  # bumped chat NOT re-returned
+        assert page1_ids | set(later_ids) == set(chat_ids)  # every chat exactly once
+
+    async def test_cursor_stable_when_sort_keys_tie(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        male_headers, _ = await register_and_get_headers(
+            client, "cursor_tie_male@example.com", PAYLOAD_MALE, mock_verification_code
+        )
+        chat_ids = []
+        for i in range(4):
+            chat_ids.append(await self._create_pending_chat(
+                client, male_headers, f"cursor_tie{i}@example.com", i, mock_verification_code
+            ))
+
+        fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        await db_session.execute(
+            update(Message)
+            .where(Message.chat_id.in_(chat_ids))
+            .values(sent_at=fixed)
+        )
+        await db_session.commit()
+
+        data, all_ids = await self._walk_pages(client, male_headers, limit=2)
+        assert data["total"] == 4
+        assert len(all_ids) == 4
+        assert len(set(all_ids)) == 4
+
+    async def test_invalid_cursor_falls_back_to_offset(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await register_and_get_headers(
+            client, "cursor_bad_male@example.com", PAYLOAD_MALE, mock_verification_code
+        )
+        for i in range(3):
+            await self._create_pending_chat(
+                client, male_headers, f"cursor_bad{i}@example.com", i, mock_verification_code
+            )
+
+        res = await client.get(
+            CHATS_URL,
+            params={"limit": 2, "cursor": "::not-a-real-cursor::"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["chats"]) >= 1
+        assert data["next_offset"] == 2
+        assert data["next_cursor"] is not None

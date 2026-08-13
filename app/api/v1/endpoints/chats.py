@@ -5,6 +5,9 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import Optional
+from datetime import datetime
+import base64
+import json
 
 from app.db.session import get_session
 from app.models.user import User
@@ -46,6 +49,27 @@ from app.core.logging import get_logger
 logger = get_logger("chats")
 
 router = APIRouter(prefix="/chats", tags=["chats"])
+
+
+def _encode_chat_cursor(updated_at, chat_id):
+    """Encode a keyset cursor for the chat list (updated_at + chat_id)."""
+    payload = json.dumps({
+        "k": updated_at.isoformat() if updated_at else None,
+        "id": str(chat_id),
+    })
+    return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _decode_chat_cursor(cursor: str):
+    """Decode a chat-list cursor. Returns (updated_at, chat_id) or (None, None)."""
+    try:
+        data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        key = data.get("k")
+        if key is not None:
+            key = datetime.fromisoformat(key)
+        return key, data.get("id")
+    except Exception:
+        return None, None
 
 
 async def _main_photo_url(session: AsyncSession, photo) -> Optional[str]:
@@ -333,6 +357,7 @@ async def list_chats(
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
     status: Optional[str] = Query(None, pattern="^(accepted|pending)$"),
+    cursor: str = Query(None, description="Opaque keyset cursor for stable pagination"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ChatListResponse:
@@ -430,9 +455,42 @@ async def list_chats(
             "is_ended": is_ended,
         })
 
-    rows.sort(key=lambda r: r["updated_at"] or r["chat_id"], reverse=True)
+    rows.sort(
+        key=lambda r: (r["updated_at"] or r["chat_id"], r["chat_id"]),
+        reverse=True,
+    )
     total = len(rows)
-    page = rows[offset: offset + limit]
+
+    # Keyset (cursor) pagination vs legacy offset pagination. The list is
+    # re-sorted live by activity (updated_at changes on every message), so
+    # plain offset can re-return chats whose key moved up. Cursor slicing finds
+    # the first row strictly AFTER the previous page's last row, which skips
+    # shifted rows instead of duplicating them.
+    start = 0
+    cursor_ts, cursor_raw_id = None, None
+    use_cursor = False
+    if cursor:
+        cursor_ts, cursor_raw_id = _decode_chat_cursor(cursor)
+        if cursor_raw_id:
+            use_cursor = True
+            cursor_id = UUID(cursor_raw_id) if not isinstance(cursor_raw_id, UUID) else cursor_raw_id
+            start = total
+            for i, r in enumerate(rows):
+                if (r["updated_at"] or r["chat_id"], r["chat_id"]) < (cursor_ts, cursor_id):
+                    start = i
+                    break
+
+    if use_cursor:
+        page = rows[start: start + limit]
+    else:
+        page = rows[offset: offset + limit]
+
+    has_next = (start + limit < total) if use_cursor else (offset + limit < total)
+    next_offset = offset + limit if (has_next and not use_cursor) else None
+    next_cursor = None
+    if has_next and page:
+        last = page[-1]
+        next_cursor = _encode_chat_cursor(last["updated_at"], last["chat_id"])
 
     # ── Presence (online) for the page ────────────────────────────────
     page_user_ids = [r["other"].id for r in page]
@@ -467,12 +525,11 @@ async def list_chats(
             )
         )
 
-    next_offset = offset + limit if offset + limit < total else None
-
     return ChatListResponse(
         chats=chats_out,
         total=total,
         next_offset=next_offset,
+        next_cursor=next_cursor,
     )
 
 

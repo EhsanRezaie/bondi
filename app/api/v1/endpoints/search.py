@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, Float
+from sqlalchemy import select, func, Float, and_, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
-from datetime import timedelta, date
+from datetime import datetime, timedelta, date
+import base64
+import json
 
 from app.db.session import get_session
 from app.models.user import User
@@ -37,6 +39,43 @@ def haversine_distance(lat1, lng1, lat2_col, lng2_col):
     return 6371 * func.acos(func.least(1.0, func.greatest(-1.0, cos_val)))
 
 
+def _encode_cursor(key, user_id):
+    """Encode a keyset cursor into an opaque URL-safe token."""
+    payload = json.dumps({"k": key, "id": str(user_id)})
+    return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _decode_cursor(cursor: str):
+    """Decode a keyset cursor. Returns (key, user_id) or (None, None)."""
+    try:
+        data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        return data.get("k"), data.get("id")
+    except Exception:
+        return None, None
+
+
+def _parse_cursor_key(sort_by: str, key):
+    """Convert a raw cursor key into the Python type matching `sort_by`."""
+    if key is None:
+        return None
+    if sort_by in ("recent", "last_seen"):
+        try:
+            return datetime.fromisoformat(key)
+        except Exception:
+            return None
+    if sort_by == "age":
+        try:
+            return date.fromisoformat(key)
+        except Exception:
+            return None
+    if sort_by == "distance":
+        try:
+            return float(key)
+        except Exception:
+            return None
+    return str(key)  # name
+
+
 @router.get("", response_model=SearchResponse)
 @limiter.limit("60/minute")
 async def search_users(
@@ -68,6 +107,7 @@ async def search_users(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    cursor: str = Query(None, description="Opaque keyset cursor for stable pagination"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
@@ -196,29 +236,108 @@ async def search_users(
 
     if sort_by == "age":
         col = UserProfile.birth_date
-        query = query.order_by(col.asc() if sort_order == "desc" else col.desc())
-    elif sort_by == "distance" and has_coords:
-        col = distance_expr
-        if sort_order == "desc":
-            query = query.order_by(col.desc().nullslast())
-        else:
-            query = query.order_by(col.asc().nullslast())
-    elif sort_by == "name":
-        col = UserProfile.name
-        query = query.order_by(col.desc() if sort_order == "desc" else col.asc())
+        col_asc = sort_order == "desc"
     elif sort_by == "last_seen":
         col = User.last_seen_at
-        query = query.order_by(col.desc().nullslast())
+        col_asc = False
     else:
-        col = User.created_at
-        query = query.order_by(col.desc() if sort_order == "desc" else col.asc())
+        if sort_by == "distance" and has_coords:
+            col = distance_expr
+        elif sort_by == "name":
+            col = UserProfile.name
+        else:
+            col = User.created_at
+        col_asc = sort_order == "asc"
 
+    # Stable ordering: always break ties on user id so pages never shift or
+    # duplicate at boundaries even when rows are inserted/updated in between.
+    if col_asc:
+        query = query.order_by(col.asc().nullslast(), User.id.asc())
+    else:
+        query = query.order_by(col.desc().nullslast(), User.id.desc())
+
+    # Keyset (cursor) pagination vs legacy offset pagination.
+    cursor_key, cursor_id = None, None
+    use_cursor = False
+    if cursor:
+        parsed_key, parsed_id = _decode_cursor(cursor)
+        if parsed_id:
+            cursor_id = parsed_id
+            cursor_key = _parse_cursor_key(sort_by, parsed_key)
+            use_cursor = True
+
+    # Count the FULL filtered result set (before any cursor/offset slicing) so
+    # `total` stays the same on every page regardless of pagination mode.
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)
 
-    query = query.offset(offset).limit(limit)
+    if use_cursor:
+        if cursor_key is None:
+            # Last row was in the null tail — every remaining row is also null.
+            if col_asc:
+                query = query.where(col.is_(None), User.id > cursor_id)
+            else:
+                query = query.where(col.is_(None), User.id < cursor_id)
+        elif col_asc:
+            query = query.where(or_(
+                col > cursor_key,
+                and_(col == cursor_key, User.id > cursor_id),
+            ))
+        else:
+            query = query.where(or_(
+                col < cursor_key,
+                and_(col == cursor_key, User.id < cursor_id),
+            ))
+
+    if use_cursor:
+        # Fetch one extra row to detect whether another page exists.
+        query = query.limit(limit + 1)
+    else:
+        query = query.offset(offset).limit(limit)
+
     result = await session.execute(query)
     rows = result.all()
+
+    has_next = False
+    next_cursor = None
+    next_offset = None
+    if use_cursor:
+        if len(rows) > limit:
+            rows = rows[:limit]
+            has_next = True
+    else:
+        has_next = offset + limit < total
+        if has_next:
+            next_offset = offset + limit
+
+    # Always derive next_cursor from the last returned row whenever more rows
+    # exist, even on an offset-based first request. The client only ever needs
+    # to follow next_cursor, so it can switch to keyset pagination seamlessly.
+    if has_next and rows:
+        last_row = rows[-1]
+        last_user = last_row[0]
+        if sort_by == "distance":
+            key = None if last_row[1] is None else last_row[1]
+        elif sort_by == "age":
+            key = (
+                last_user.profile.birth_date.isoformat()
+                if last_user.profile and last_user.profile.birth_date
+                else None
+            )
+        elif sort_by == "last_seen":
+            key = (
+                last_user.last_seen_at.isoformat()
+                if last_user.last_seen_at else None
+            )
+        elif sort_by == "name":
+            key = (
+                last_user.profile.name
+                if last_user.profile and last_user.profile.name
+                else None
+            )
+        else:
+            key = last_user.created_at.isoformat()
+        next_cursor = _encode_cursor(key, last_user.id)
 
     # Batch query swipe directions for current user → all result users
     result_user_ids = [row[0].id for row in rows]
@@ -263,5 +382,6 @@ async def search_users(
     return SearchResponse(
         users=response_users,
         total=total,
-        next_offset=offset + limit if offset + limit < total else None,
+        next_offset=next_offset,
+        next_cursor=next_cursor,
     )

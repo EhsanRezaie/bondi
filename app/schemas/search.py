@@ -66,6 +66,7 @@ class SearchResponse(BaseModel):
     users: List[CardProfileResponse]
     total: int
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None  # opaque keyset cursor for the next page
 
 
 class SearchFilters(BaseModel):

@@ -294,10 +294,10 @@ async def patch_redis():
 
 @pytest_asyncio.fixture(autouse=True)
 def disable_rate_limiting():
-    original_enabled = getattr(limiter, "_enabled", True)
-    limiter._enabled = False
+    original_enabled = getattr(limiter, "enabled", True)
+    limiter.enabled = False
     yield
-    limiter._enabled = original_enabled
+    limiter.enabled = original_enabled
 
 
 # ---------------------------------------------------------------------------

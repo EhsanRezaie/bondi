@@ -417,7 +417,7 @@ async def get_liked_users(
             User.id.not_in(select(blocked_by_me.c.blocked_id)),
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
-        .order_by(Swipe.created_at.desc())
+        .order_by(Swipe.created_at.desc(), Swipe.id.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -531,7 +531,7 @@ async def get_likers(
             User.id.not_in(select(blocked_by_me.c.blocked_id)),
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
-        .order_by(Swipe.created_at.desc())
+        .order_by(Swipe.created_at.desc(), Swipe.id.desc())
         .offset(offset)
         .limit(limit)
     )

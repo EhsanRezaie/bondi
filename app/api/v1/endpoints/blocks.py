@@ -189,7 +189,7 @@ async def list_blocks(
         .options(selectinload(User.profile))
         .join(User, Block.blocked_id == User.id)
         .where(Block.blocker_id == current_user.id)
-        .order_by(Block.created_at.desc())
+        .order_by(Block.created_at.desc(), Block.id.desc())
         .offset(offset)
         .limit(limit)
     )
