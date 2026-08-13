@@ -16,6 +16,7 @@ from app.schemas.notification import (
     MarkReadRequest,
     DeviceTokenRequest,
     DeviceTokenResponse,
+    NotificationCountsResponse,
 )
 
 from app.core.logging import get_logger
@@ -59,6 +60,38 @@ async def get_notifications(
         notifications=[NotificationResponse.model_validate(n) for n in notifications],
         total=total or 0,
         next_offset=offset + limit if offset + limit < total else None
+    )
+
+
+@router.get("/counts", response_model=NotificationCountsResponse)
+@limiter.limit("60/minute")
+async def get_notification_counts(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Get unread notification counts by type for badge display"""
+    filter_stmt = Notification.user_id == current_user.id
+
+    # Total unread count
+    total = await session.scalar(
+        select(func.count(Notification.id)).where(
+            filter_stmt, Notification.is_read == False
+        )
+    )
+
+    # Unread counts by type
+    from sqlalchemy import case
+    type_counts = await session.execute(
+        select(Notification.type, func.count(Notification.id)).where(
+            filter_stmt, Notification.is_read == False
+        ).group_by(Notification.type)
+    )
+    by_type = {row[0]: row[1] for row in type_counts.all()}
+
+    return NotificationCountsResponse(
+        total=total or 0,
+        by_type=by_type,
     )
 
 

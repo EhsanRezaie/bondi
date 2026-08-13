@@ -8,6 +8,7 @@ wrapped with `asyncio.run(...)` / a new loop. Do NOT run them from a running
 event loop's process.
 """
 import asyncio
+from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
@@ -17,12 +18,12 @@ from app.tasks.celery_app import celery_app
 logger = get_logger("tasks.notifications")
 
 
-def dispatch_push_to_celery(*, user_id, title: str, body: str, data: dict) -> bool:
+def dispatch_push_to_celery(*, user_id, title: str, body: str, data: dict, image_url: Optional[str] = None) -> bool:
     """Enqueue an FCM push to the worker. Returns True if dispatched, False if
     Celery is disabled (in which case the caller must send inline)."""
     if not settings.CELERY_ENABLED:
         return False
-    send_push.delay(str(user_id), title, body, data)
+    send_push.delay(str(user_id), title, body, data, image_url)
     return True
 
 
@@ -33,7 +34,7 @@ def dispatch_push_to_celery(*, user_id, title: str, body: str, data: dict) -> bo
     retry_backoff=True,
     max_retries=3,
 )
-def send_push(self, user_id: str, title: str, body: str, data: dict | None = None):
+def send_push(self, user_id: str, title: str, body: str, data: dict | None = None, image_url: Optional[str] = None):
     """Send an FCM push (with retry) from the worker, using its own session."""
     async def _run():
         from app.db.session import AsyncSessionLocal
@@ -46,6 +47,7 @@ def send_push(self, user_id: str, title: str, body: str, data: dict | None = Non
                 body=body,
                 data=data or {},
                 db=session,
+                image_url=image_url,
             )
 
     return asyncio.run(_run())

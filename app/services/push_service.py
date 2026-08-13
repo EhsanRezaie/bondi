@@ -45,6 +45,7 @@ class PushService:
         body: str,
         data: Optional[dict] = None,
         db: Optional[AsyncSession] = None,
+        image_url: Optional[str] = None,
     ):
         if not _initialized:
             _initialize_firebase()
@@ -58,9 +59,13 @@ class PushService:
         if not tokens:
             return
 
+        notification = messaging.Notification(title=title, body=body)
+        if image_url:
+            notification.image = image_url
+
         message = messaging.MulticastMessage(
             tokens=tokens,
-            notification=messaging.Notification(title=title, body=body),
+            notification=notification,
             data={k: str(v) for k, v in (data or {}).items()},
             android=messaging.AndroidConfig(priority="high"),
         )

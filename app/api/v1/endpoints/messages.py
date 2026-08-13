@@ -297,6 +297,7 @@ async def send_text_message(
     sender_name = current_user.profile.name if current_user.profile else "Someone"
     await notification_service.notify_message(
         receiver_id=other_user_id,
+        sender_id=current_user.id,
         sender_name=sender_name,
         chat_id=chat.id,
     )

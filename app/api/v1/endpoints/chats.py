@@ -227,6 +227,7 @@ async def create_chat(
     notification_service = NotificationService(session)
     await notification_service.notify_message(
         receiver_id=target_user_id,
+        sender_id=current_user.id,
         sender_name=sender_name,
         chat_id=chat.id,
     )

@@ -242,11 +242,19 @@ async def swipe(
     # Send like notification (only if recipient is premium)
     if body.direction == "like":
         notification_service = NotificationService(session)
+        liker_photo_url = await get_user_main_photo_url(session, current_user_id)
         await notification_service.notify_like(
             liker_id=current_user_id,
             liked_user_id=target_user.id,
             liker_name=current_profile.name,
-            liker_age=current_profile.age
+            liker_age=current_profile.age,
+            liker_photo_url=liker_photo_url,
+        )
+        # Also notify the liker so the app can render an "I liked" section
+        await notification_service.notify_liked(
+            user_id=current_user_id,
+            target_user_id=target_user.id,
+            target_name=target_user.profile.name if target_user.profile else "Someone",
         )
     
     # Check for match (if both liked each other)

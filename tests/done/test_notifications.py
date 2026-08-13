@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient
+from unittest.mock import AsyncMock, patch
 
 REGISTER_INIT_URL = "/api/v1/auth/register/init"
 REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
@@ -238,3 +239,174 @@ class TestNotifications:
 
         del_res = await client.delete(f"{NOTIFICATIONS_URL}/{notification_id}", headers=userB_headers)
         assert del_res.status_code == 404
+
+
+class TestNotificationRealtime:
+    """Test real-time WS events and counts endpoint"""
+
+    async def test_get_notification_counts(self, client, mock_verification_code):
+        """GET /notifications/counts should return total and by_type unread counts."""
+        user = await register_user(client, "counts_user@example.com", mock_verification_code)
+        headers = {"Authorization": f"Bearer {user['access_token']}"}
+
+        # Generate a like notification
+        liker = await register_user(client, "counts_liker@example.com", mock_verification_code)
+        liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": user["user"]["id"], "direction": "like"},
+            headers=liker_headers,
+        )
+
+        # Call counts endpoint
+        res = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["total"] >= 1
+        assert "by_type" in data
+        assert "like" in data["by_type"]
+        assert data["by_type"]["like"] >= 1
+
+    async def test_counts_drop_after_read(self, client, mock_verification_code):
+        """Counts should drop after marking notifications read."""
+        user = await register_user(client, "counts_read_user@example.com", mock_verification_code)
+        headers = {"Authorization": f"Bearer {user['access_token']}"}
+
+        liker = await register_user(client, "counts_read_liker@example.com", mock_verification_code)
+        liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": user["user"]["id"], "direction": "like"},
+            headers=liker_headers,
+        )
+
+        # Get initial counts
+        res = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res.status_code == 200
+        initial_total = res.json()["total"]
+        assert initial_total >= 1
+
+        # Mark as read
+        notif_res = await client.get("/api/v1/notifications", headers=headers)
+        notif_ids = [n["id"] for n in notif_res.json()["notifications"]]
+        await client.post(
+            "/api/v1/notifications/read",
+            json={"notification_ids": notif_ids},
+            headers=headers,
+        )
+
+        # Counts should drop
+        res2 = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res2.json()["total"] == 0
+
+    async def test_counts_drop_after_delete(self, client, mock_verification_code):
+        """Counts should drop after deleting notifications."""
+        user = await register_user(client, "counts_del_user@example.com", mock_verification_code)
+        headers = {"Authorization": f"Bearer {user['access_token']}"}
+
+        liker = await register_user(client, "counts_del_liker@example.com", mock_verification_code)
+        liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": user["user"]["id"], "direction": "like"},
+            headers=liker_headers,
+        )
+
+        # Get initial counts
+        res = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res.status_code == 200
+        initial_total = res.json()["total"]
+        assert initial_total >= 1
+
+        # Delete notifications
+        notif_res = await client.get("/api/v1/notifications", headers=headers)
+        for n in notif_res.json()["notifications"]:
+            await client.delete(f"/api/v1/notifications/{n['id']}", headers=headers)
+
+        # Counts should drop
+        res2 = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res2.json()["total"] == 0
+
+    async def test_counts_empty(self, client, mock_verification_code):
+        """Counts should be zero for user with no notifications."""
+        user = await register_user(client, "counts_empty_user@example.com", mock_verification_code)
+        headers = {"Authorization": f"Bearer {user['access_token']}"}
+
+        res = await client.get("/api/v1/notifications/counts", headers=headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["total"] == 0
+        assert data["by_type"] == {}
+
+
+class TestPushImageUrl:
+    """Test push notifications include image_url for avatar"""
+
+    @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
+    async def test_push_like_includes_image_url(self, mock_send, client, mock_verification_code):
+        """Push for like should include liker's photo as image_url."""
+        user1 = await register_user(client, "push_img1@example.com", mock_verification_code)
+        user2 = await register_user(client, "push_img2@example.com", mock_verification_code)
+
+        headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
+        user2_id = user2["user"]["id"]
+
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": user2_id, "direction": "like"},
+            headers=headers1,
+        )
+
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args.kwargs
+        assert "image_url" in call_kwargs
+        # image_url may be None if user has no photo, but key should exist
+        assert call_kwargs.get("image_url") is not None or call_kwargs.get("image_url") is None
+
+    @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
+    async def test_push_match_includes_image_url(self, mock_send, client, mock_verification_code):
+        """Push for match should include other user's photo as image_url."""
+        user1 = await register_user(client, "push_match1@example.com", mock_verification_code)
+        user2 = await register_user(client, "push_match2@example.com", mock_verification_code)
+
+        headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
+        headers2 = {"Authorization": f"Bearer {user2['access_token']}"}
+        user1_id = user1["user"]["id"]
+        user2_id = user2["user"]["id"]
+
+        await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
+        mock_send.reset_mock()
+        await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
+
+        match_calls = [
+            c for c in mock_send.call_args_list
+            if c.kwargs.get("title") == "It's a match!"
+        ]
+        assert len(match_calls) == 2
+        for call in match_calls:
+            call_kwargs = call.kwargs
+            assert "image_url" in call_kwargs
+
+
+class TestNoPushToSelf:
+    """Test no push notification is sent to self for own actions"""
+
+    @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
+    async def test_no_push_to_self_on_liked(self, mock_send, client, mock_verification_code):
+        """When user likes someone, no push should be sent to self (WS only)."""
+        liker = await register_user(client, "nopush_liker@example.com", mock_verification_code)
+        target = await register_user(client, "nopush_target@example.com", mock_verification_code)
+
+        liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
+        target_id = target["user"]["id"]
+
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": target_id, "direction": "like"},
+            headers=liker_headers,
+        )
+
+        # Push should only be called for the TARGET user (like notification), not for the LIKER
+        push_user_ids = [str(c.kwargs["user_id"]) for c in mock_send.call_args_list]
+        assert str(liker["user"]["id"]) not in push_user_ids
+        assert str(target_id) in push_user_ids

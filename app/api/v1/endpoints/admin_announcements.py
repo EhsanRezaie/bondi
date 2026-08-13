@@ -16,6 +16,8 @@ from app.schemas.admin import (
     AdminAnnouncementRequest,
     AdminAnnouncementResponse
 )
+from app.services.websocket_manager import websocket_manager
+from app.core.redis import redis_client
 
 from app.core.logging import get_logger
 from app.services.admin_log_service import log_admin_action
@@ -65,6 +67,31 @@ async def admin_send_announcement(
     
     session.add_all(notifications)
     await session.commit()
+    
+    # Publish WS events for real-time delivery
+    for n in notifications:
+        try:
+            await websocket_manager.send_personal_message(
+                str(n.user_id),
+                {
+                    "type": "new_notification",
+                    "data": {
+                        "id": str(n.id),
+                        "type": n.type,
+                        "title": n.title,
+                        "body": n.body,
+                        "is_read": n.is_read,
+                        "created_at": n.created_at.isoformat() if n.created_at else None,
+                        "user_id": (n.data or {}).get("user_id"),
+                        "match_id": (n.data or {}).get("match_id"),
+                        "chat_id": (n.data or {}).get("chat_id"),
+                    },
+                },
+                redis_client,
+            )
+        except Exception as e:
+            logger.warning("ws_announcement_publish_failed", user_id=str(n.user_id), error=str(e))
+    
     await log_admin_action(str(admin.id), "announcement_send", "system", None, request, session)
 
     return AdminAnnouncementResponse(
@@ -120,6 +147,30 @@ async def admin_send_test_announcement(
     )
     session.add(notification)
     await session.commit()
+    
+    # Publish WS event for real-time delivery
+    try:
+        await websocket_manager.send_personal_message(
+            str(notification.user_id),
+            {
+                "type": "new_notification",
+                "data": {
+                    "id": str(notification.id),
+                    "type": notification.type,
+                    "title": notification.title,
+                    "body": notification.body,
+                    "is_read": notification.is_read,
+                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                    "user_id": (notification.data or {}).get("user_id"),
+                    "match_id": (notification.data or {}).get("match_id"),
+                    "chat_id": (notification.data or {}).get("chat_id"),
+                },
+            },
+            redis_client,
+        )
+    except Exception as e:
+        logger.warning("ws_test_announcement_publish_failed", user_id=str(target.id), error=str(e))
+    
     await log_admin_action(str(admin.id), "announcement_test", "system", target.id, request, session)
 
     return AdminMessageResponse(

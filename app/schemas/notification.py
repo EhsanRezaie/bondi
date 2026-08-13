@@ -1,6 +1,6 @@
 from uuid import UUID
 from datetime import datetime
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict
 from pydantic import BaseModel
 
 
@@ -25,6 +25,11 @@ class NotificationListResponse(BaseModel):
     notifications: List[NotificationResponse]
     total: int
     next_offset: Optional[int] = None
+
+
+class NotificationCountsResponse(BaseModel):
+    total: int
+    by_type: Dict[str, int]
 
 
 class DeviceTokenRequest(BaseModel):
