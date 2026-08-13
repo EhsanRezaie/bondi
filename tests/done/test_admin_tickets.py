@@ -281,3 +281,40 @@ class TestAdminTicketConversation:
         body = res.json()
         assert len(body["messages"]) == 2
         assert body["messages"][1]["sender_type"] == "admin"
+
+    async def test_admin_ticket_includes_user_uid(self, client: AsyncClient, mock_verification_code):
+        """Ticket responses should expose the user uid (the user UUID)"""
+        user_data = await register_user(client, "uid@example.com", mock_verification_code)
+        user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
+
+        create_res = await client.post(
+            "/api/v1/tickets",
+            json={"subject": "UID Test", "message": "Check uid field"},
+            headers=user_headers
+        )
+        ticket_id = create_res.json()["id"]
+
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+        res = await client.get(f"{ADMIN_TICKETS_URL}/{ticket_id}", headers=admin_headers)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["user_uid"] == body["user_id"]
+        assert body["user_name"] == "Test User"
+
+    async def test_admin_list_last_message(self, client: AsyncClient, mock_verification_code):
+        """Admin list should surface the LAST conversation message as last_message"""
+        ticket_id, _ = await self._create_ticket(client, mock_verification_code)
+        admin_headers = {"X-Admin-Key": ADMIN_KEY}
+
+        await client.post(
+            f"{ADMIN_TICKETS_URL}/{ticket_id}/messages",
+            json={"content": "Latest support reply."},
+            headers=admin_headers
+        )
+
+        res = await client.get(ADMIN_TICKETS_URL, headers=admin_headers)
+        assert res.status_code == 200
+        body = res.json()
+        ticket = next(t for t in body["tickets"] if t["id"] == ticket_id)
+        assert ticket["message"] == "Initial conversation message"
+        assert ticket["last_message"] == "Latest support reply."

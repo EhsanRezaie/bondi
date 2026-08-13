@@ -135,10 +135,12 @@ class AdminReportUpdate(BaseModel):
 class AdminTicketResponse(BaseModel):
     id: UUID
     user_id: UUID
+    user_uid: str
     user_name: str
     user_email: str
     subject: str
     message: str
+    last_message: Optional[str] = None
     status: str
     admin_response: Optional[str] = None
     created_at: datetime
@@ -152,6 +154,12 @@ class AdminTicketResponse(BaseModel):
 class AdminTicketUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern="^(open|in_progress|closed)$")
     admin_response: Optional[str] = Field(None, max_length=2000)
+
+
+class AdminTicketListResponse(BaseModel):
+    tickets: list[AdminTicketResponse]
+    total: int
+    next_offset: Optional[int] = None
 
 
 # Photo Management Schemas

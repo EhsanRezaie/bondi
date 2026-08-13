@@ -10,8 +10,8 @@ from sqlalchemy.orm import selectinload
 from app.models.user import User
 from app.models.ticket import Ticket
 from app.models.ticket_message import TicketMessage
-from app.schemas.admin import AdminTicketResponse, AdminTicketUpdate
-from app.schemas.ticket import TicketListResponse, TicketMessageCreate, TicketMessageResponse
+from app.schemas.admin import AdminTicketResponse, AdminTicketUpdate, AdminTicketListResponse
+from app.schemas.ticket import TicketMessageCreate, TicketMessageResponse
 
 from app.core.logging import get_logger
 from app.core.timezone import utcnow
@@ -22,7 +22,7 @@ logger = get_logger("admin_tickets")
 router = APIRouter(prefix="/admin/tickets", tags=["admin"])
 
 
-@router.get("", response_model=TicketListResponse)
+@router.get("", response_model=AdminTicketListResponse)
 @limiter.limit("60/minute")
 async def admin_list_tickets(
     request: Request,
@@ -46,6 +46,18 @@ async def admin_list_tickets(
     result = await session.execute(query)
     tickets = result.scalars().all()
 
+    # Latest message per ticket for the list preview (one query, no N+1)
+    last_msg_map = {}
+    if tickets:
+        msg_result = await session.execute(
+            select(TicketMessage)
+            .distinct(TicketMessage.ticket_id)
+            .where(TicketMessage.ticket_id.in_([t.id for t in tickets]))
+            .order_by(TicketMessage.ticket_id, TicketMessage.created_at.desc(), TicketMessage.id.desc())
+        )
+        for msg in msg_result.scalars().all():
+            last_msg_map[msg.ticket_id] = msg.content
+
     # Get user info for each ticket
     response_tickets = []
     for ticket in tickets:
@@ -57,10 +69,12 @@ async def admin_list_tickets(
         response_tickets.append(AdminTicketResponse(
             id=ticket.id,
             user_id=ticket.user_id,
+            user_uid=str(ticket.user_id),
             user_name=user.profile.name if user else "Deleted User",
             user_email=user.email if user else "deleted@example.com",
             subject=ticket.subject,
             message=ticket.message,
+            last_message=last_msg_map.get(ticket.id),
             status=ticket.status,
             admin_response=ticket.admin_response,
             created_at=ticket.created_at,
@@ -68,7 +82,7 @@ async def admin_list_tickets(
             messages=[]
         ))
 
-    return TicketListResponse(
+    return AdminTicketListResponse(
         tickets=response_tickets,
         total=total or 0,
         next_offset=offset + limit if offset + limit < (total or 0) else None
@@ -211,6 +225,7 @@ async def _build_admin_response(session: AsyncSession, ticket: Ticket) -> AdminT
     return AdminTicketResponse(
         id=ticket.id,
         user_id=ticket.user_id,
+        user_uid=str(ticket.user_id),
         user_name=user.profile.name if user else "Deleted User",
         user_email=user.email if user else "deleted@example.com",
         subject=ticket.subject,
