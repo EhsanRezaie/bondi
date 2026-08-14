@@ -410,3 +410,147 @@ class TestNoPushToSelf:
         push_user_ids = [str(c.kwargs["user_id"]) for c in mock_send.call_args_list]
         assert str(liker["user"]["id"]) not in push_user_ids
         assert str(target_id) in push_user_ids
+
+
+class TestNotificationWSEvents:
+    """Real-time `new_notification` events on the personal WS channel (/ws/stream).
+
+    The event shape is the shared `_notification_ws_payload`:
+      {"type": "new_notification", "data": {id, type, title, body, is_read,
+       created_at, user_id, match_id, chat_id}}
+    """
+
+    WS_MANAGER_PATH = (
+        "app.services.websocket_manager.websocket_manager.send_personal_message"
+    )
+
+    @patch(
+        "app.services.websocket_manager.websocket_manager.send_personal_message",
+        new_callable=AsyncMock,
+    )
+    async def test_ws_new_notification_on_like(
+        self, mock_send, client, mock_verification_code
+    ):
+        """Liking publishes new_notification: `like` to the target + `liked` to the liker."""
+        liker = await register_user(client, "ws_liker@example.com", mock_verification_code)
+        target = await register_user(client, "ws_target@example.com", mock_verification_code)
+
+        liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
+        liker_id = str(liker["user"]["id"])
+        target_id = str(target["user"]["id"])
+
+        res = await client.post(
+            SWIPE_URL,
+            json={"user_id": target_id, "direction": "like"},
+            headers=liker_headers,
+        )
+        assert res.status_code == 200, res.text
+
+        events = [c.args[1] for c in mock_send.call_args_list]
+        assert len(events) == 2, [c.args for c in mock_send.call_args_list]
+        for event in events:
+            assert event["type"] == "new_notification"
+            data = event["data"]
+            assert data["id"]
+            assert data["is_read"] is False
+            assert data["created_at"]
+            assert "user_id" in data and "match_id" in data and "chat_id" in data
+
+        like_event = next(e for e in events if e["data"]["type"] == "like")
+        assert like_event["data"]["user_id"] == liker_id
+        like_call = next(c for c in mock_send.call_args_list if c.args[1]["data"]["type"] == "like")
+        assert like_call.args[0] == target_id
+
+        liked_event = next(e for e in events if e["data"]["type"] == "liked")
+        assert liked_event["data"]["user_id"] == target_id
+        liked_call = next(c for c in mock_send.call_args_list if c.args[1]["data"]["type"] == "liked")
+        assert liked_call.args[0] == liker_id
+
+    @patch(
+        "app.services.websocket_manager.websocket_manager.send_personal_message",
+        new_callable=AsyncMock,
+    )
+    async def test_ws_new_notification_on_match(
+        self, mock_send, client, mock_verification_code
+    ):
+        """Mutual like publishes new_notification (match) to BOTH users."""
+        user1 = await register_user(client, "ws_match1@example.com", mock_verification_code)
+        user2 = await register_user(client, "ws_match2@example.com", mock_verification_code)
+
+        headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
+        headers2 = {"Authorization": f"Bearer {user2['access_token']}"}
+        user1_id = str(user1["user"]["id"])
+        user2_id = str(user2["user"]["id"])
+
+        await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
+        mock_send.reset_mock()
+
+        res = await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
+        assert res.status_code == 200, res.text
+
+        match_calls = [
+            c for c in mock_send.call_args_list
+            if c.args[1]["type"] == "new_notification" and c.args[1]["data"]["type"] == "match"
+        ]
+        assert len(match_calls) == 2, [c.args for c in mock_send.call_args_list]
+        assert {c.args[0] for c in match_calls} == {user1_id, user2_id}
+        for call in match_calls:
+            data = call.args[1]["data"]
+            assert data["match_id"]
+            assert data["title"] == "It's a match!"
+            assert data["is_read"] is False
+
+    @patch(
+        "app.services.websocket_manager.websocket_manager.send_personal_message",
+        new_callable=AsyncMock,
+    )
+    async def test_ws_new_notification_on_announcement(
+        self, mock_send, client, mock_verification_code
+    ):
+        """Admin announcement publishes new_notification (system) to the recipient."""
+        from app.core.config import settings
+
+        user = await register_user(client, "ws_announce@example.com", mock_verification_code)
+        user_id = str(user["user"]["id"])
+
+        res = await client.post(
+            "/api/v1/admin/announcements/test",
+            json={
+                "title": "Maintenance",
+                "message": "System will be down tonight",
+                "target_user_id": user_id,
+            },
+            headers={"X-Admin-Key": settings.ADMIN_SECRET_KEY},
+        )
+        assert res.status_code == 200, res.text
+
+        assert mock_send.call_count == 1, [c.args for c in mock_send.call_args_list]
+        assert mock_send.call_args.args[0] == user_id
+        payload = mock_send.call_args.args[1]
+        assert payload["type"] == "new_notification"
+        data = payload["data"]
+        assert data["type"] == "system"
+        assert data["title"] == "[TEST] Maintenance"
+        assert data["body"] == "System will be down tonight"
+        assert data["is_read"] is False
+        assert data["created_at"]
+
+    @patch(
+        "app.services.notification_service._publish_ws",
+        new_callable=AsyncMock,
+    )
+    async def test_ws_not_published_for_message(
+        self, mock_publish, client, db_session, mock_verification_code
+    ):
+        """Message notifications are push-only — never published as WS events."""
+        from app.services.notification_service import NotificationService
+
+        user = await register_user(client, "ws_msg@example.com", mock_verification_code)
+        nsvc = NotificationService(db_session)
+        await nsvc.notify_message(
+            receiver_id=user["user"]["id"],
+            sender_id=user["user"]["id"],
+            sender_name="Tester",
+            chat_id="00000000-0000-0000-0000-000000000001",
+        )
+        mock_publish.assert_not_awaited()
