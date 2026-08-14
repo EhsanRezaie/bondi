@@ -85,10 +85,16 @@ if [ ! -f firebase-service-account.json ]; then
     log "Place the file in $DEPLOY_DIR/ or set FCM_SERVICE_ACCOUNT_PATH in .env"
 fi
 
-# 4. Login to Docker Hub (if credentials provided)
+# 4. Login to Docker Hub (if credentials provided). Best-effort only: this
+#    deployment builds images locally and never pushes to Docker Hub, so an
+#    unreachable registry (e.g. blocked/timeout on some hosts) must not abort.
 if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
-    log "Logging in to Docker Hub..."
-    echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+    log "Logging in to Docker Hub (best-effort)..."
+    if echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin >/dev/null 2>&1; then
+        ok "Docker Hub login OK"
+    else
+        log "Docker Hub unreachable — continuing (local build, no push)"
+    fi
 fi
 
 # 4. Build/refresh base image (deps) — no-op unless requirements.txt changed
