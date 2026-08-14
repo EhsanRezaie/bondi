@@ -66,6 +66,8 @@ services:
       CELERY_ENABLED: "true"
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+    volumes:
+      - ./firebase-service-account.json:/app/firebase-service-account.json
     command: >
       /bin/sh -c
       'CONC=${CELERY_CONCURRENCY:-auto};
@@ -97,6 +99,8 @@ services:
       CELERY_ENABLED: "true"
       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+    volumes:
+      - ./firebase-service-account.json:/app/firebase-service-account.json
     command: celery -A app.tasks.celery_app beat --loglevel=info
     depends_on:
       redis:
