@@ -297,6 +297,52 @@ class TestPushOnMessage:
         assert call_kwargs["user_id"].__str__() == user2_id
 
 
+class TestPushDataOnlyPayload:
+    """Unit tests for the data-only FCM payload builder (compact notifications).
+
+    The push must carry title/body/image_url inside `data` (not a `notification`
+    block) so the app's native FirebaseMessagingService can render a compact,
+    non-expandable notification with a small circular avatar.
+    """
+
+    def test_build_data_includes_title_body_image(self):
+        from app.services.push_service import PushService
+
+        payload = PushService._build_data(
+            title="It's a match!",
+            body="You matched with Test User",
+            data={"type": "match", "match_id": "abc", "user_id": "123"},
+            image_url="https://cdn.example.com/p1.jpg",
+        )
+        assert payload["type"] == "match"
+        assert payload["match_id"] == "abc"
+        assert payload["user_id"] == "123"
+        assert payload["title"] == "It's a match!"
+        assert payload["body"] == "You matched with Test User"
+        assert payload["image_url"] == "https://cdn.example.com/p1.jpg"
+
+    def test_build_data_without_image_url(self):
+        from app.services.push_service import PushService
+
+        payload = PushService._build_data(
+            title="Announcement",
+            body="Maintenance tonight",
+            data={"type": "system", "is_announcement": True},
+            image_url=None,
+        )
+        assert payload["type"] == "system"
+        assert payload["is_announcement"] == "True"
+        assert payload["image_url"] == ""
+
+    def test_build_data_with_none_data(self):
+        from app.services.push_service import PushService
+
+        payload = PushService._build_data(title="Hi", body="Test", data=None, image_url=None)
+        assert payload["title"] == "Hi"
+        assert payload["body"] == "Test"
+        assert payload["image_url"] == ""
+
+
 class TestPushRunsOffEventLoop:
     """Unit tests for the threading path of send_to_user (P1-1).
 

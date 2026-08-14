@@ -21,10 +21,37 @@ from app.core.redis import redis_client
 
 from app.core.logging import get_logger
 from app.services.admin_log_service import log_admin_action
+from app.tasks.notifications import dispatch_push_to_celery
 
 logger = get_logger("admin_announcements")
 
 router = APIRouter(prefix="/admin/announcements", tags=["admin"])
+
+
+async def _dispatch_announcement_push(
+    session: AsyncSession,
+    user_id,
+    title: str,
+    body: str,
+):
+    """Send an FCM push for an announcement (celery worker when enabled,
+    otherwise inline). Announcements use `type=system` so the app renders them
+    in the Announcements section with a compact notification (no avatar)."""
+    if not dispatch_push_to_celery(
+        user_id=user_id,
+        title=title,
+        body=body,
+        data={"type": "system", "is_announcement": True},
+    ):
+        from app.services.push_service import PushService
+        await PushService.send_to_user(
+            user_id=user_id,
+            title=title,
+            body=body,
+            data={"type": "system", "is_announcement": True},
+            db=session,
+            image_url=None,
+        )
 
 
 @router.post("", response_model=AdminAnnouncementResponse)
@@ -91,6 +118,13 @@ async def admin_send_announcement(
             )
         except Exception as e:
             logger.warning("ws_announcement_publish_failed", user_id=str(n.user_id), error=str(e))
+
+    # FCM push for background delivery (the only channel when the app is killed)
+    for n in notifications:
+        try:
+            await _dispatch_announcement_push(session, n.user_id, body.title, body.message)
+        except Exception as e:
+            logger.warning("push_announcement_failed", user_id=str(n.user_id), error=str(e))
     
     await log_admin_action(str(admin.id), "announcement_send", "system", None, request, session)
 
@@ -170,6 +204,12 @@ async def admin_send_test_announcement(
         )
     except Exception as e:
         logger.warning("ws_test_announcement_publish_failed", user_id=str(target.id), error=str(e))
+
+    # FCM push for background delivery
+    try:
+        await _dispatch_announcement_push(session, target.id, f"[TEST] {body.title}", body.message)
+    except Exception as e:
+        logger.warning("push_test_announcement_failed", user_id=str(target.id), error=str(e))
     
     await log_admin_action(str(admin.id), "announcement_test", "system", target.id, request, session)
 

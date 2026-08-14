@@ -59,14 +59,12 @@ class PushService:
         if not tokens:
             return
 
-        notification = messaging.Notification(title=title, body=body)
-        if image_url:
-            notification.image = image_url
-
+        # Data-only message: the app's native FirebaseMessagingService renders a
+        # compact notification (small circular avatar) from `data`. Sending a
+        # `notification` block makes Android draw a big expandable card instead.
         message = messaging.MulticastMessage(
             tokens=tokens,
-            notification=notification,
-            data={k: str(v) for k, v in (data or {}).items()},
+            data=PushService._build_data(title, body, data, image_url),
             android=messaging.AndroidConfig(priority="high"),
         )
 
@@ -85,6 +83,19 @@ class PushService:
             await PushService._cleanup_invalid_tokens(tokens, response, db)
         except Exception:
             logger.exception("push_send_failed", user_id=str(user_id))
+
+    @staticmethod
+    def _build_data(
+        title: str,
+        body: str,
+        data: Optional[dict],
+        image_url: Optional[str],
+    ) -> dict:
+        payload = {k: v for k, v in (data or {}).items()}
+        payload.setdefault("title", title)
+        payload.setdefault("body", body)
+        payload.setdefault("image_url", image_url or "")
+        return {k: str(v) for k, v in payload.items()}
 
     @staticmethod
     async def _get_user_tokens(user_id: UUID, db: AsyncSession) -> list[str]:

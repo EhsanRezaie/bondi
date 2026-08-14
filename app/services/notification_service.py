@@ -225,17 +225,17 @@ class NotificationService:
         from app.tasks.notifications import dispatch_push_to_celery
         if not dispatch_push_to_celery(
             user_id=receiver_id,
-            title="New message",
+            title=sender_name,
             body=f"{sender_name} sent you a message",
-            data={"type": "message", "chat_id": str(chat_id)},
+            data={"type": "message", "chat_id": str(chat_id), "sender_name": sender_name},
             image_url=sender_photo_url,
         ):
             from app.services.push_service import PushService
             await PushService.send_to_user(
                 user_id=receiver_id,
-                title="New message",
+                title=sender_name,
                 body=f"{sender_name} sent you a message",
-                data={"type": "message", "chat_id": str(chat_id)},
+                data={"type": "message", "chat_id": str(chat_id), "sender_name": sender_name},
                 db=self.db,
                 image_url=sender_photo_url,
             )
