@@ -27,6 +27,16 @@ def dispatch_push_to_celery(*, user_id, title: str, body: str, data: dict, image
     return True
 
 
+def dispatch_announcement_push_to_celery(*, user_ids: list, title: str, body: str) -> bool:
+    """Enqueue a single batched FCM push for many users (e.g. an announcement).
+    Returns True if dispatched, False if Celery is disabled (caller must send
+    inline via PushService.send_to_users)."""
+    if not settings.CELERY_ENABLED:
+        return False
+    send_announcement_push.delay([str(u) for u in user_ids], title, body)
+    return True
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.notifications.send_push",
@@ -49,6 +59,34 @@ def send_push(self, user_id: str, title: str, body: str, data: dict | None = Non
                 db=session,
                 image_url=image_url,
             )
+            # Persist dead-token cleanup performed by send_to_user.
+            await session.commit()
+
+    return asyncio.run(_run())
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.notifications.send_announcement_push",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def send_announcement_push(self, user_ids: list, title: str, body: str):
+    """Send an FCM push to many users in one batched task. Batching matters:
+    a per-user broadcast (e.g. an announcement to every user) that enqueues one
+    task per recipient saturates the pgbouncer pool because each task holds a
+    pooled DB connection in an open transaction across the slow synchronous FCM
+    round-trip. This single task releases the connection before any FCM work."""
+    async def _run():
+        from app.services.push_service import PushService
+
+        await PushService.send_to_users(
+            user_ids=user_ids,
+            title=title,
+            body=body,
+            data={"type": "system", "is_announcement": True},
+        )
 
     return asyncio.run(_run())
 
@@ -71,8 +109,15 @@ def send_match(self, user1_id: str, user2_id: str, match_id: str):
             await nsvc.notify_match(
                 UUID(user1_id), UUID(user2_id), UUID(match_id)
             )
+            await session.commit()
 
     return asyncio.run(_match())
 
 
-__all__ = ["send_push", "send_match", "dispatch_push_to_celery"]
+__all__ = [
+    "send_push",
+    "send_match",
+    "send_announcement_push",
+    "dispatch_push_to_celery",
+    "dispatch_announcement_push_to_celery",
+]

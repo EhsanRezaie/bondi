@@ -343,6 +343,114 @@ class TestPushDataOnlyPayload:
         assert payload["image_url"] == ""
 
 
+class TestPushBatch:
+    """Unit tests for PushService.send_to_users (P: announcement batching).
+
+    A per-user broadcast (announcement to every user) must NOT enqueue one
+    celery task per recipient — that saturates the pgbouncer pool by holding a
+    pooled DB connection in an open transaction across each slow synchronous FCM
+    round-trip. Instead a single batch task queries tokens once, releases the
+    connection, then fans out FCM in <=500-token multicast chunks.
+    """
+
+    @patch("app.services.push_service.messaging.send_each_for_multicast")
+    @patch("app.db.session.AsyncSessionLocal")
+    async def test_send_to_users_chunks_and_releases_connection(self, mock_session_local, mock_send):
+        from app.services import push_service as ps
+
+        # Fake AsyncSessionLocal context manager returning one session whose
+        # execute returns our tokens, then exits (releasing the connection).
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(f"token-{i}",) for i in range(1001)]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_local.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        fake_response = MagicMock(success_count=1, failure_count=0)
+        fake_response.responses = [MagicMock(success=True)] * 500
+        mock_send.return_value = fake_response
+
+        ps._initialized = True
+        try:
+            await ps.PushService.send_to_users(
+                user_ids=[str(uuid4()) for _ in range(1001)],
+                title="Announcement",
+                body="Maintenance tonight",
+                data={"type": "system", "is_announcement": True},
+            )
+
+            # 1001 tokens -> 3 multicast calls (500/500/1).
+            assert mock_send.call_count == 3
+            sizes = [len(call.args[0].tokens) for call in mock_send.call_args_list]
+            assert sizes == [500, 500, 1]
+            # Each message carries the announcement payload.
+            for call in mock_send.call_args_list:
+                assert call.args[0].data["type"] == "system"
+                assert call.args[0].data["title"] == "Announcement"
+        finally:
+            ps._initialized = False
+
+    @patch("app.services.push_service.messaging.send_each_for_multicast")
+    @patch("app.db.session.AsyncSessionLocal")
+    async def test_send_to_users_no_tokens_no_fcm(self, mock_session_local, mock_send):
+        from app.services import push_service as ps
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_local.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        ps._initialized = True
+        try:
+            await ps.PushService.send_to_users(
+                user_ids=[str(uuid4())],
+                title="Hi",
+                body="Test",
+            )
+            mock_send.assert_not_called()
+        finally:
+            ps._initialized = False
+
+    @patch("app.services.push_service.messaging.send_each_for_multicast")
+    @patch("app.db.session.AsyncSessionLocal")
+    async def test_send_to_users_cleans_invalid_tokens_and_commits(self, mock_session_local, mock_send):
+        from app.services import push_service as ps
+        from sqlalchemy import delete
+
+        # First context manager: token query. Second: invalid-token cleanup.
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [("dead-token",), ("good-token",)]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_local.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        fake_response = MagicMock(success_count=1, failure_count=1)
+        dead = MagicMock(success=False)
+        dead.exception.code = "registration-token-not-registered"
+        good = MagicMock(success=True)
+        fake_response.responses = [dead, good]
+        mock_send.return_value = fake_response
+
+        ps._initialized = True
+        try:
+            await ps.PushService.send_to_users(
+                user_ids=[str(uuid4())],
+                title="Hi",
+                body="Test",
+            )
+
+            assert mock_send.call_count == 1
+            # Cleanup opened a second short-lived session and committed.
+            assert mock_session_local.call_count == 2
+            assert mock_session.commit.awaited
+        finally:
+            ps._initialized = False
+
+
 class TestPushRunsOffEventLoop:
     """Unit tests for the threading path of send_to_user (P1-1).
 

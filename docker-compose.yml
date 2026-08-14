@@ -158,9 +158,11 @@ services:
       AUTH_TYPE: scram-sha-256
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
-      DEFAULT_POOL_SIZE: 20
+      # Sized well above app (5) + celery worker (concurrency x 5, bounded at 4)
+      # so a burst of concurrent FCM/query work never starves the pool.
+      DEFAULT_POOL_SIZE: 50
       MIN_POOL_SIZE: 5
-      RESERVE_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 10
       SERVER_RESET_QUERY: DISCARD ALL
     depends_on:
       db:

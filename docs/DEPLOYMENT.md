@@ -120,7 +120,7 @@ docker --version && docker compose version    # verify both
 
 ```bash
 mkdir -p /opt && cd /opt
-git clone git@github.com:EhsanRezaie/project_d.git demo-bondi && cd demo-bondi
+git clone git@github.com:EhsanRezaie/bondi.git demo-bondi && cd demo-bondi
 ```
 
 ### 3.2 Generate all secrets

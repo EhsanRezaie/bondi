@@ -21,7 +21,7 @@ from app.core.redis import redis_client
 
 from app.core.logging import get_logger
 from app.services.admin_log_service import log_admin_action
-from app.tasks.notifications import dispatch_push_to_celery
+from app.tasks.notifications import dispatch_announcement_push_to_celery
 
 logger = get_logger("admin_announcements")
 
@@ -37,6 +37,7 @@ async def _dispatch_announcement_push(
     """Send an FCM push for an announcement (celery worker when enabled,
     otherwise inline). Announcements use `type=system` so the app renders them
     in the Announcements section with a compact notification (no avatar)."""
+    from app.tasks.notifications import dispatch_push_to_celery
     if not dispatch_push_to_celery(
         user_id=user_id,
         title=title,
@@ -119,12 +120,21 @@ async def admin_send_announcement(
         except Exception as e:
             logger.warning("ws_announcement_publish_failed", user_id=str(n.user_id), error=str(e))
 
-    # FCM push for background delivery (the only channel when the app is killed)
-    for n in notifications:
-        try:
-            await _dispatch_announcement_push(session, n.user_id, body.title, body.message)
-        except Exception as e:
-            logger.warning("push_announcement_failed", user_id=str(n.user_id), error=str(e))
+    # FCM push for background delivery (the only channel when the app is killed).
+    # Batched into a single celery task: per-user tasks would enqueue N tasks
+    # that each hold a pooled DB connection across a slow FCM round-trip and
+    # exhaust the pgbouncer pool.
+    user_ids = [u.id for u in users]
+    if not dispatch_announcement_push_to_celery(
+        user_ids=user_ids, title=body.title, body=body.message
+    ):
+        from app.services.push_service import PushService
+        await PushService.send_to_users(
+            user_ids=user_ids,
+            title=body.title,
+            body=body.message,
+            data={"type": "system", "is_announcement": True},
+        )
     
     await log_admin_action(str(admin.id), "announcement_send", "system", None, request, session)
 

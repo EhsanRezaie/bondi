@@ -210,6 +210,10 @@ async def stream_websocket(
                         redis=redis,
                     )
 
+            # Close the read transaction opened by this message so the pooled
+            # DB connection is released back to pgbouncer between messages.
+            await db.commit()
+
     except asyncio.CancelledError:
         # Graceful shutdown (SIGTERM): tell the client we're draining, then
         # re-raise so uvicorn's CancelledError propagates normally.
