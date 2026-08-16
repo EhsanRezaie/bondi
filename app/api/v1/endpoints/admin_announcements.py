@@ -113,6 +113,8 @@ async def admin_send_announcement(
                         "user_id": (n.data or {}).get("user_id"),
                         "match_id": (n.data or {}).get("match_id"),
                         "chat_id": (n.data or {}).get("chat_id"),
+                        "name": (n.data or {}).get("name"),
+                        "avatar_url": (n.data or {}).get("avatar_url"),
                     },
                 },
                 redis_client,

@@ -44,6 +44,8 @@ def _notification_ws_payload(notification: Notification) -> dict:
             "user_id": (notification.data or {}).get("user_id"),
             "match_id": (notification.data or {}).get("match_id"),
             "chat_id": (notification.data or {}).get("chat_id"),
+            "name": (notification.data or {}).get("name"),
+            "avatar_url": (notification.data or {}).get("avatar_url"),
         },
     }
 
@@ -107,7 +109,11 @@ class NotificationService:
             type="like",
             title="Someone liked you!",
             body=f"{liker_name} (age {liker_age}) liked your profile",
-            data={"user_id": str(liker_id)}
+            data={
+                "user_id": str(liker_id),
+                "name": liker_name,
+                "avatar_url": liker_photo_url,
+            },
         )
 
         # Push notification
@@ -133,12 +139,17 @@ class NotificationService:
         """Send a 'liked' notification to the liker themselves, so the app can
         show an 'I liked' section alongside incoming likes. WS-only: no push to
         self for your own action."""
+        avatar = await _get_main_photo_url(self.db, target_user_id)
         await self.create(
             user_id=user_id,
             type="liked",
             title="You liked someone!",
             body=f"You liked {target_name}'s profile",
-            data={"user_id": str(target_user_id)},
+            data={
+                "user_id": str(target_user_id),
+                "name": target_name,
+                "avatar_url": avatar,
+            },
             publish=True,
         )
 
@@ -162,7 +173,12 @@ class NotificationService:
                 type="match",
                 title="It's a match!",
                 body=f"You matched with {user2.profile.name}! Start chatting now.",
-                data={"match_id": str(match_id), "user_id": str(user2_id)}
+                data={
+                    "match_id": str(match_id),
+                    "user_id": str(user2_id),
+                    "name": user2.profile.name,
+                    "avatar_url": avatar,
+                },
             )
             from app.tasks.notifications import dispatch_push_to_celery
             if not dispatch_push_to_celery(
@@ -188,7 +204,12 @@ class NotificationService:
                 type="match",
                 title="It's a match!",
                 body=f"You matched with {user1.profile.name}! Start chatting now.",
-                data={"match_id": str(match_id), "user_id": str(user1_id)}
+                data={
+                    "match_id": str(match_id),
+                    "user_id": str(user1_id),
+                    "name": user1.profile.name,
+                    "avatar_url": avatar,
+                },
             )
             if not dispatch_push_to_celery(
                 user_id=user2_id,
