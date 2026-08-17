@@ -77,6 +77,61 @@ class TestNotifications:
         assert body["total"] >= 3
         assert body["next_offset"] == 2
 
+    async def test_get_notifications_type_filter(self, client: AsyncClient, mock_verification_code):
+        receiver_data = await register_user(client, "typefilter@example.com", mock_verification_code)
+        receiver_headers = {"Authorization": f"Bearer {receiver_data['access_token']}"}
+
+        liker_data = await register_user(
+            client, "typefilter_liker@example.com", mock_verification_code
+        )
+        liker_headers = {"Authorization": f"Bearer {liker_data['access_token']}"}
+
+        # A like from liker -> receiver produces a 'like' notification for receiver
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": receiver_data["user"]["id"], "direction": "like"},
+            headers=liker_headers
+        )
+
+        res = await client.get(
+            NOTIFICATIONS_URL,
+            params={"type": "like"},
+            headers=receiver_headers,
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["total"] >= 1
+        assert all(n["type"] == "like" for n in body["notifications"])
+
+        res = await client.get(
+            NOTIFICATIONS_URL,
+            params={"type": "match"},
+            headers=receiver_headers,
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["total"] == 0
+        assert body["notifications"] == []
+        assert body["next_offset"] is None
+
+    async def test_get_notifications_type_filter_does_not_leak(self, client: AsyncClient, mock_verification_code):
+        user_a = await register_user(client, "typeleak_a@example.com", mock_verification_code)
+        user_b = await register_user(client, "typeleak_b@example.com", mock_verification_code)
+        headers_a = {"Authorization": f"Bearer {user_a['access_token']}"}
+        headers_b = {"Authorization": f"Bearer {user_b['access_token']}"}
+
+        # B likes A -> A gets a 'like' notification, B gets a 'liked' notification
+        await client.post(
+            SWIPE_URL,
+            json={"user_id": user_a["user"]["id"], "direction": "like"},
+            headers=headers_b,
+        )
+
+        # B's own 'like' feed must stay empty — only 'liked' entries exist for B
+        res = await client.get(NOTIFICATIONS_URL, params={"type": "like"}, headers=headers_b)
+        assert res.status_code == 200
+        assert res.json()["total"] == 0
+
     async def test_get_notifications_requires_auth(self, client: AsyncClient):
         res = await client.get(NOTIFICATIONS_URL)
         assert res.status_code == 401

@@ -30,6 +30,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 @limiter.limit("60/minute")
 async def get_notifications(
     request: Request,
+    notif_type: str | None = Query(None, alias="type", description="Filter by notification type"),
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -39,6 +40,8 @@ async def get_notifications(
     
     # Query notifications
     filter_stmt = Notification.user_id == current_user.id
+    if notif_type:
+        filter_stmt = filter_stmt & (Notification.type == notif_type)
 
     # Count total — plain count, no ORDER BY or pagination
     total = await session.scalar(
