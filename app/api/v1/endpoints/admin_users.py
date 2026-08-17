@@ -333,7 +333,7 @@ async def admin_list_users(
         photo_count = (
             select(func.count(Photo.id))
             .where(Photo.user_id == User.id, Photo.status == "approved")
-            .as_scalar()
+            .scalar_subquery()
         )
         if has_photos:
             query = query.where(photo_count > 0)
