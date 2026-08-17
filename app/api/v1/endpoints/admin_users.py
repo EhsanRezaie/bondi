@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import selectinload
 from uuid import UUID
 from datetime import datetime, timedelta, timezone, date
@@ -14,12 +15,14 @@ from app.core.cache import invalidate_auth_user
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_interest import UserInterest
+from app.models.interest import Interest
+from app.models.photo import Photo
 from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.message import Message
 from app.models.report import Report
 from app.models.subscription import Subscription
-from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminMessageRequest, AdminMessageResponse, UserActivityEntry, AdminUserPhotoResponse
+from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminUserListItem, AdminMessageRequest, AdminMessageResponse, UserActivityEntry, AdminUserPhotoResponse
 from app.services.photo_service import PhotoService
 
 from app.core.logging import get_logger
@@ -119,6 +122,66 @@ def _years_ago(years: int, today: date) -> date:
         return today.replace(year=today.year - years, month=2, day=28)
 
 
+SORT_COLUMNS = {
+    "id": User.id,
+    "created_at": User.created_at,
+    "last_seen_at": User.last_seen_at,
+    "email": User.email,
+    "name": UserProfile.name,
+    "age": UserProfile.birth_date,
+    "gender": UserProfile.gender,
+    "city": UserProfile.city,
+    "country": UserProfile.country,
+    "province": UserProfile.province,
+    "is_active": User.is_active,
+    "is_premium": UserProfile.premium_until,
+    "is_verified": UserProfile.is_verified,
+    "phone_verified": User.phone_verified,
+    "height": UserProfile.height,
+    "weight": UserProfile.weight,
+    "body_type": UserProfile.body_type,
+    "relationship_status": UserProfile.relationship_status,
+    "education": UserProfile.education,
+    "religion": UserProfile.religion,
+    "ethnicity": UserProfile.ethnicity,
+    "political_orientation": UserProfile.political_orientation,
+    "smoking": UserProfile.smoking,
+    "drinking": UserProfile.drinking,
+    "languages": UserProfile.languages,
+}
+
+SORT_COLUMNS_PROFILE = {
+    k for k, v in SORT_COLUMNS.items() if k in (
+        "name", "age", "gender", "city", "country", "province",
+        "is_premium", "is_verified", "height", "weight", "body_type",
+        "relationship_status", "education", "religion", "ethnicity",
+        "political_orientation", "smoking", "drinking", "languages",
+    )
+}
+
+
+def _build_admin_user_list_item(user: User) -> AdminUserListItem:
+    profile = user.profile
+    return AdminUserListItem(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        phone_verified=bool(user.phone_verified),
+        is_active=user.is_active,
+        created_at=user.created_at,
+        last_seen_at=user.last_seen_at,
+        name=profile.name if profile else "",
+        age=profile.age if profile else 0,
+        gender=profile.gender if profile else None,
+        city=profile.city if profile else None,
+        country=profile.country if profile else None,
+        province=profile.province if profile else None,
+        is_verified=profile.is_verified if profile else None,
+        is_premium=profile.is_premium if profile else False,
+        premium_until=profile.premium_until if profile else None,
+    )
+
+
 @router.get("", response_model=AdminUserListResponse)
 @limiter.limit("120/minute")
 async def admin_list_users(
@@ -130,27 +193,45 @@ async def admin_list_users(
     is_verified: bool = Query(None),
     gender: str = Query(None, description="Filter by gender (male/female)"),
     city: str = Query(None, description="Filter by city (case-insensitive)"),
+    country: str = Query(None, description="Filter by country (case-insensitive)"),
+    province: str = Query(None, description="Filter by province (case-insensitive)"),
     age_min: int = Query(None, ge=18, le=120, description="Minimum age"),
     age_max: int = Query(None, ge=18, le=120, description="Maximum age"),
-    limit: int = 50,
-    offset: int = 0,
+    height_min: int = Query(None, ge=50, le=250, description="Minimum height (cm)"),
+    height_max: int = Query(None, ge=50, le=250, description="Maximum height (cm)"),
+    weight_min: int = Query(None, ge=30, le=300, description="Minimum weight (kg)"),
+    weight_max: int = Query(None, ge=30, le=300, description="Maximum weight (kg)"),
+    body_type: str = Query(None, max_length=50),
+    relationship_status: str = Query(None, max_length=50),
+    education: str = Query(None, max_length=50),
+    religion: str = Query(None, max_length=50),
+    ethnicity: str = Query(None, max_length=50),
+    political_orientation: str = Query(None, max_length=50),
+    smoking: str = Query(None, max_length=50),
+    drinking: str = Query(None, max_length=50),
+    languages: str = Query(None, max_length=200, description="Comma-separated languages"),
+    interests: str = Query(None, max_length=500, description="Comma-separated interests"),
+    has_photos: bool = Query(None, description="Users with approved photos"),
+    sort_by: str = Query("created_at", description="Sort column"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort order"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(get_admin_user),
 ):
-    """Admin: List all users with full-profile fields and filters"""
+    """Admin: Search users with server-side filters, sorting and pagination."""
 
-    query = select(User).options(*USER_LOAD_OPTIONS)
+    query = select(User).options(selectinload(User.profile))
     joined_profile = False
 
     def join_profile():
-        nonlocal joined_profile
+        nonlocal joined_profile, query
         if not joined_profile:
-            return query.join(User.profile)
-        return query
+            query = query.join(User.profile)
+            joined_profile = True
 
     if search:
-        query = query.join(User.profile)
-        joined_profile = True
+        join_profile()
         like = f"%{search}%"
         query = query.where(or_(
             UserProfile.name.ilike(like),
@@ -167,42 +248,113 @@ async def admin_list_users(
 
     now = datetime.now(timezone.utc)
     if is_premium is not None:
-        query = join_profile()
+        join_profile()
         if is_premium:
             query = query.where(UserProfile.premium_until > now)
         else:
             query = query.where(or_(UserProfile.premium_until.is_(None), UserProfile.premium_until <= now))
 
     if is_verified is not None:
-        query = join_profile()
+        join_profile()
         query = query.where(UserProfile.is_verified == is_verified)
 
     if gender:
-        query = join_profile()
+        join_profile()
         query = query.where(UserProfile.gender == gender)
 
     if city:
-        query = join_profile()
+        join_profile()
         query = query.where(UserProfile.city.ilike(f"%{city}%"))
 
+    if country:
+        join_profile()
+        query = query.where(UserProfile.country.ilike(f"%{country}%"))
+
+    if province:
+        join_profile()
+        query = query.where(UserProfile.province.ilike(f"%{province}%"))
+
     if age_min is not None or age_max is not None:
-        query = join_profile()
+        join_profile()
         today = date.today()
         if age_min is not None:
             query = query.where(UserProfile.birth_date <= _years_ago(age_min, today))
         if age_max is not None:
             query = query.where(UserProfile.birth_date >= _years_ago(age_max + 1, today))
 
+    if height_min is not None:
+        join_profile()
+        query = query.where(UserProfile.height >= height_min)
+    if height_max is not None:
+        join_profile()
+        query = query.where(UserProfile.height <= height_max)
+
+    if weight_min is not None:
+        join_profile()
+        query = query.where(UserProfile.weight >= weight_min)
+    if weight_max is not None:
+        join_profile()
+        query = query.where(UserProfile.weight <= weight_max)
+
+    for field, value in (
+        ("body_type", body_type),
+        ("relationship_status", relationship_status),
+        ("education", education),
+        ("religion", religion),
+        ("ethnicity", ethnicity),
+        ("political_orientation", political_orientation),
+        ("smoking", smoking),
+        ("drinking", drinking),
+    ):
+        if value:
+            join_profile()
+            query = query.where(getattr(UserProfile, field) == value)
+
+    if languages:
+        join_profile()
+        lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
+        if lang_list:
+            query = query.where(UserProfile.languages.cast(JSONB).contains(lang_list))
+
+    if interests:
+        interest_list = [i.strip() for i in interests.split(",") if i.strip()]
+        if interest_list:
+            interest_subq = (
+                select(UserInterest.user_id)
+                .join(Interest, UserInterest.interest_id == Interest.id)
+                .where(Interest.name.in_(interest_list))
+                .group_by(UserInterest.user_id)
+                .having(func.count(UserInterest.interest_id) == len(interest_list))
+                .subquery()
+            )
+            query = query.where(User.id.in_(select(interest_subq.c.user_id)))
+
+    if has_photos is not None:
+        photo_count = (
+            select(func.count(Photo.id))
+            .where(Photo.user_id == User.id, Photo.status == "approved")
+            .as_scalar()
+        )
+        if has_photos:
+            query = query.where(photo_count > 0)
+        else:
+            query = query.where(photo_count == 0)
+
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)
 
-    query = query.order_by(User.created_at.desc()).offset(offset).limit(limit)
-    result = await session.execute(query)
-    users = result.scalars().unique().all()
+    if sort_by not in SORT_COLUMNS:
+        sort_by = "created_at"
+    if sort_by in SORT_COLUMNS_PROFILE:
+        join_profile()
+    sort_col = SORT_COLUMNS[sort_by]
+    order_col = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+    query = query.order_by(order_col.nullslast(), User.id.asc()).offset(offset).limit(limit)
 
-    response_users = []
-    for user in users:
-        response_users.append(await _build_admin_user_response(user))
+    result = await session.execute(query)
+    users = result.scalars().all()
+
+    response_users = [_build_admin_user_list_item(u) for u in users]
 
     return AdminUserListResponse(
         users=response_users,

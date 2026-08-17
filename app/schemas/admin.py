@@ -103,8 +103,34 @@ class AdminPremiumGrant(BaseModel):
     days: int = Field(..., ge=1, le=365)
 
 
+class AdminUserListItem(BaseModel):
+    """Minimal user row for the paginated admin search list."""
+    id: UUID
+    email: str
+    phone: Optional[str] = None
+    phone_verified: bool
+    is_active: bool
+    created_at: datetime
+    last_seen_at: Optional[datetime] = None
+
+    # Profile / identity
+    name: str
+    age: int
+    gender: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    province: Optional[str] = None
+
+    # Verification / premium
+    is_verified: Optional[bool] = None
+    is_premium: bool
+    premium_until: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AdminUserListResponse(BaseModel):
-    users: list[AdminUserResponse]
+    users: list[AdminUserListItem]
     total: int
     next_offset: Optional[int] = None
 
