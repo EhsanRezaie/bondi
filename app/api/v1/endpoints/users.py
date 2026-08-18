@@ -52,6 +52,7 @@ async def get_me(
             selectinload(User.settings),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == current_user.id)
     )
@@ -96,6 +97,7 @@ async def update_me(
             selectinload(User.settings),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == current_user.id)
         .with_for_update()
@@ -147,6 +149,7 @@ async def update_me(
             selectinload(User.settings),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == current_user.id)
     )
@@ -381,6 +384,7 @@ async def update_interests(
             selectinload(User.settings),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == current_user.id)
     )
@@ -438,6 +442,7 @@ async def update_prompts(
             selectinload(User.settings),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == current_user.id)
     )
@@ -523,6 +528,7 @@ async def get_public_profile(
             selectinload(User.photos),
             selectinload(User.user_interests).selectinload(UserInterest.interest),
             selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
         )
         .where(User.id == user_id)
     )

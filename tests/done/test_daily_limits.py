@@ -174,6 +174,7 @@ class TestDailyLimits:
         expected_fields = [
             "daily_likes_remaining", "is_unlimited",
             "total_likes_sent", "total_passes_sent", "total_matches",
+            "total_messages",
             "ads_watched_today", "max_ads_per_day"
         ]
         for field in expected_fields:

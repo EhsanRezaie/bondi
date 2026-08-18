@@ -1,6 +1,7 @@
 # app/schemas/card.py
 from uuid import UUID
 from typing import Optional
+from datetime import datetime
 from pydantic import BaseModel
 
 
@@ -19,6 +20,7 @@ class CardProfileResponse(BaseModel):
     is_premium: bool
     is_verified: bool = False
     is_online: Optional[bool] = None
+    created_at: Optional[datetime] = None
     current_user_action: Optional[str] = None  # search only ("like"/"pass"); discover always null
 
     class Config:

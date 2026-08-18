@@ -11,6 +11,7 @@ class SwipeStatsResponse(BaseModel):
     total_likes_sent: int
     total_passes_sent: int
     total_matches: int
+    total_messages: int
     ads_watched_today: int
     max_ads_per_day: int
 

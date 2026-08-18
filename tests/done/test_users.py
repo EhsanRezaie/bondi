@@ -165,6 +165,7 @@ class TestGetMe:
         assert data["email"] == VALID_EMAIL
         assert data["is_active"] is True
         assert data["is_profile_complete"] is True
+        assert data["profile_completion"] == 100
         assert data["created_at"] is not None
 
         assert_profile_fields(data, COMPLETE_PROFILE_PAYLOAD)

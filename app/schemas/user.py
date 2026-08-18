@@ -185,6 +185,7 @@ class UserProfileResponse(BaseModel):
     is_verified: bool = False
     is_active: bool
     is_profile_complete: bool
+    profile_completion: int = 0
     created_at: datetime
     last_seen_at: Optional[datetime] = None
     settings: Optional[UserSettingsResponse] = None
@@ -235,6 +236,7 @@ class UserProfileResponse(BaseModel):
                 values.premium_until = profile.premium_until
                 values.is_verified = profile.is_verified
                 values.is_profile_complete = profile.is_profile_complete
+                values.profile_completion = cls._compute_profile_completion(profile, values)
                 values.birth_date = profile.birth_date.isoformat() if profile.birth_date else None
 
                 # interests: safe to assign directly because `interests` is NOT
@@ -255,6 +257,34 @@ class UserProfileResponse(BaseModel):
                 ]
 
         return values
+
+    @classmethod
+    def _compute_profile_completion(cls, profile, user) -> int:
+        """Weighted profile completion percent (0-100)."""
+        checks = [
+            profile.name,
+            profile.birth_date,
+            profile.gender,
+            profile.sexual_orientation,
+            profile.bio,
+            profile.height,
+            profile.weight,
+            profile.languages,
+            profile.education,
+            profile.workplace,
+            profile.city,
+        ]
+        photo_count = len([p for p in (user.photos or []) if p.status == "approved"])
+        if photo_count > 0:
+            checks.append(True)
+        interests = getattr(user, "user_interests", None)
+        if interests:
+            checks.append(True)
+        prompts = getattr(user, "prompts", None)
+        if prompts:
+            checks.append(True)
+        filled = sum(1 for c in checks if c not in (None, "", []))
+        return round((filled / len(checks)) * 100)
 
 
 class PublicUserResponse(BaseModel):

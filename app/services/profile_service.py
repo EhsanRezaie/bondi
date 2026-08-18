@@ -171,5 +171,6 @@ async def serialize_card(
         is_premium=profile.is_premium,
         is_verified=bool(is_verified) if is_verified is not None else False,
         is_online=resolved_online,
+        created_at=user.created_at,
         current_user_action=current_user_action,
     )

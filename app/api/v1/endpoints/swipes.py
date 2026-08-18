@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.swipe import Swipe
 from app.models.match import Match
+from app.models.message import Message
 from app.models.block import Block
 from app.services.photo_service import PhotoService
 from app.models.photo import Photo
@@ -359,12 +360,19 @@ async def get_swipe_stats(
     )
     total_matches = matches_result.scalar()
     
+    # Count total messages sent
+    total_messages_result = await session.execute(
+        select(func.count()).where(Message.sender_id == current_user.id)
+    )
+    total_messages = total_messages_result.scalar()
+    
     return {
         "daily_likes_remaining": stats["likes_remaining_today"],
         "is_unlimited": stats["is_premium"],
         "total_likes_sent": total_likes,
         "total_passes_sent": total_passes,
         "total_matches": total_matches,
+        "total_messages": total_messages,
         "ads_watched_today": stats["ads_watched_today"],
         "max_ads_per_day": stats["max_ads_per_day"],
     }
