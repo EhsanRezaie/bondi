@@ -123,7 +123,8 @@ async def update_me(
                   'body_type', 'relationship_status', 'living_situation',
                   'children_status', 'smoking', 'drinking', 'education',
                   'workplace', 'religion', 'ethnicity', 'political_orientation',
-                  'sexual_orientation', 'languages']
+                  'sexual_orientation', 'languages', 'here_for', 'pets',
+                  'workout_frequency', 'zodiac_sign']
     
     for field, value in update_dict.items():
         if field in profile_fields:

@@ -27,6 +27,10 @@ class SearchProfileResponse(BaseModel):
     children_status: Optional[str] = None
     smoking: Optional[str] = None
     drinking: Optional[str] = None
+    here_for: Optional[str] = None
+    pets: Optional[str] = None
+    workout_frequency: Optional[str] = None
+    zodiac_sign: Optional[str] = None
 
     # Background
     education: Optional[str] = None
@@ -92,6 +96,11 @@ class SearchFilters(BaseModel):
     smoking: Optional[str] = Field(None, max_length=50)
     drinking: Optional[str] = Field(None, max_length=50)
     political_orientation: Optional[str] = Field(None, max_length=50)
+    here_for: Optional[str] = Field(None, max_length=50)
+    pets: Optional[str] = Field(None, max_length=50)
+    workout_frequency: Optional[str] = Field(None, max_length=50)
+    zodiac_sign: Optional[str] = Field(None, max_length=50)
+    children_status: Optional[str] = Field(None, max_length=50)
     languages: Optional[str] = Field(None, max_length=200, description="Comma-separated language codes")
     interests: Optional[str] = Field(None, max_length=500, description="Comma-separated interest names")
     sort_by: str = Field("recent", pattern="^(recent|distance|age|name|last_seen)$")

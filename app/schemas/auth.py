@@ -44,10 +44,49 @@ class LivingSituation(str, Enum):
 
 
 class ChildrenStatus(str, Enum):
-    have = "have"
-    dont_have = "dont_have"
-    want = "want"
-    dont_want = "dont_want"
+    have_children = "have_children"
+    want_children = "want_children"
+    dont_want_children = "dont_want_children"
+    open_to_children = "open_to_children"
+
+
+class HereFor(str, Enum):
+    long_term_relationship = "long_term_relationship"
+    casual_dating = "casual_dating"
+    marriage = "marriage"
+    new_friends = "new_friends"
+    not_sure_yet = "not_sure_yet"
+
+
+class Pets(str, Enum):
+    dog = "dog"
+    cat = "cat"
+    both = "both"
+    other_pet = "other_pet"
+    no_pets = "no_pets"
+    loves_pets = "loves_pets"
+
+
+class WorkoutFrequency(str, Enum):
+    never = "never"
+    occasionally = "occasionally"
+    regularly = "regularly"
+    daily = "daily"
+
+
+class ZodiacSign(str, Enum):
+    aries = "aries"
+    taurus = "taurus"
+    gemini = "gemini"
+    cancer = "cancer"
+    leo = "leo"
+    virgo = "virgo"
+    libra = "libra"
+    scorpio = "scorpio"
+    sagittarius = "sagittarius"
+    capricorn = "capricorn"
+    aquarius = "aquarius"
+    pisces = "pisces"
 
 
 class SmokingStatus(str, Enum):
@@ -157,6 +196,10 @@ class OnboardingCompleteRequest(BaseModel):
     children_status: Optional[ChildrenStatus] = None
     smoking: Optional[SmokingStatus] = None
     drinking: Optional[DrinkingStatus] = None
+    here_for: Optional[HereFor] = None
+    pets: Optional[Pets] = None
+    workout_frequency: Optional[WorkoutFrequency] = None
+    zodiac_sign: Optional[ZodiacSign] = None
     
     # Background
     education: Optional[EducationLevel] = None

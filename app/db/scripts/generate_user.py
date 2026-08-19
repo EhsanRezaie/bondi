@@ -38,7 +38,12 @@ BIOS = [
 BODY_TYPES = ["athletic", "average", "curvy", "muscular", "overweight", "slim"]
 RELATIONSHIP_STATUS = ["divorced", "separated", "single", "widowed"]
 LIVING_SITUATION = ["alone", "with_family", "with_partner", "with_roommate"]
-CHILDREN_STATUS = ["dont_have", "dont_want", "have", "want"]
+CHILDREN_STATUS = ["have_children", "want_children", "dont_want_children", "open_to_children"]
+HERE_FOR = ["long_term_relationship", "casual_dating", "marriage", "new_friends", "not_sure_yet"]
+PETS = ["dog", "cat", "both", "other_pet", "no_pets", "loves_pets"]
+WORKOUT_FREQUENCY = ["never", "occasionally", "regularly", "daily"]
+ZODIAC_SIGNS = ["aries", "taurus", "gemini", "cancer", "leo", "virgo",
+                "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"]
 SMOKING = ["never", "occasionally", "regularly"]
 DRINKING = ["never", "regularly", "socially"]
 EDUCATION = ["bachelor", "high_school", "master", "phd"]
@@ -97,6 +102,10 @@ def build_user(i: int):
         "relationship_status": random.choice(RELATIONSHIP_STATUS),
         "living_situation": random.choice(LIVING_SITUATION),
         "children_status": random.choice(CHILDREN_STATUS),
+        "here_for": random.choice(HERE_FOR),
+        "pets": random.choice(PETS),
+        "workout_frequency": random.choice(WORKOUT_FREQUENCY),
+        "zodiac_sign": random.choice(ZODIAC_SIGNS),
         "smoking": random.choice(SMOKING),
         "drinking": random.choice(DRINKING),
         "languages": ["Persian", "English"],

@@ -30,9 +30,13 @@ COMPLETE_PROFILE_PAYLOAD = {
     "body_type": "athletic",
     "relationship_status": "single",
     "living_situation": "alone",
-    "children_status": "dont_have",
+    "children_status": "open_to_children",
     "smoking": "never",
     "drinking": "socially",
+    "here_for": "long_term_relationship",
+    "pets": "cat",
+    "workout_frequency": "regularly",
+    "zodiac_sign": "leo",
     "education": "bachelor",
     "workplace": "Tech Corp",
     "religion": "islam",
@@ -117,7 +121,8 @@ def assert_profile_fields(data: dict, expected: dict):
     profile_fields = [
         "name", "gender", "sexual_orientation", "bio", "height", "weight",
         "body_type", "relationship_status", "living_situation", "children_status",
-        "smoking", "drinking", "education", "workplace", "religion", "ethnicity",
+        "smoking", "drinking", "here_for", "pets", "workout_frequency", "zodiac_sign",
+        "education", "workplace", "religion", "ethnicity",
         "political_orientation", "languages", "country", "province", "city",
         "lat", "lng", "location_manual",
     ]
@@ -326,12 +331,12 @@ class TestUpdateMe:
 
         res = await client.put(
             USERS_ME_URL,
-            json={"children_status": "want"},
+            json={"children_status": "want_children"},
             headers=headers,
         )
         assert res.status_code == 200
         data = res.json()
-        assert data["children_status"] == "want"
+        assert data["children_status"] == "want_children"
 
     async def test_update_smoking_success(self, client: AsyncClient, mock_verification_code):
         """Should update smoking status."""
@@ -475,7 +480,7 @@ class TestUpdateMe:
             "body_type": "slim",
             "relationship_status": "divorced",
             "living_situation": "with_roommate",
-            "children_status": "dont_want",
+            "children_status": "dont_want_children",
             "smoking": "occasionally",
             "drinking": "never",
             "education": "phd",
@@ -637,6 +642,64 @@ class TestUpdateMe:
         )
         assert res.status_code == 400
         assert "No fields to update" in res.json()["detail"]
+
+    async def test_update_new_profile_fields(self, client: AsyncClient, mock_verification_code):
+        """Should update here_for, pets, workout_frequency and zodiac_sign."""
+        result = await register_user_full(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        res = await client.put(
+            USERS_ME_URL,
+            json={
+                "here_for": "long_term_relationship",
+                "pets": "cat",
+                "workout_frequency": "regularly",
+                "zodiac_sign": "leo",
+            },
+            headers=headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["here_for"] == "long_term_relationship"
+        assert data["pets"] == "cat"
+        assert data["workout_frequency"] == "regularly"
+        assert data["zodiac_sign"] == "leo"
+
+    async def test_update_invalid_here_for(self, client: AsyncClient, mock_verification_code):
+        """Should reject invalid here_for value."""
+        result = await register_user_full(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        res = await client.put(
+            USERS_ME_URL,
+            json={"here_for": "invalid_value"},
+            headers=headers,
+        )
+        assert res.status_code == 422
+
+    async def test_update_invalid_pets(self, client: AsyncClient, mock_verification_code):
+        """Should reject invalid pets value."""
+        result = await register_user_full(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        res = await client.put(
+            USERS_ME_URL,
+            json={"pets": "dragon"},
+            headers=headers,
+        )
+        assert res.status_code == 422
+
+    async def test_update_invalid_zodiac_sign(self, client: AsyncClient, mock_verification_code):
+        """Should reject invalid zodiac sign."""
+        result = await register_user_full(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        res = await client.put(
+            USERS_ME_URL,
+            json={"zodiac_sign": "ophiuchus"},
+            headers=headers,
+        )
+        assert res.status_code == 422
 
     async def test_update_requires_auth(self, client: AsyncClient):
         """Should return 401 without token."""

@@ -344,6 +344,10 @@ async def register_complete(
     profile.children_status = body.children_status
     profile.smoking = body.smoking
     profile.drinking = body.drinking
+    profile.here_for = body.here_for
+    profile.pets = body.pets
+    profile.workout_frequency = body.workout_frequency
+    profile.zodiac_sign = body.zodiac_sign
     profile.education = body.education
     profile.workplace = body.workplace
     profile.religion = body.religion

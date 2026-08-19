@@ -27,6 +27,10 @@ class ProfileResponse(BaseModel):
     children_status: Optional[str] = None
     smoking: Optional[str] = None
     drinking: Optional[str] = None
+    here_for: Optional[str] = None
+    pets: Optional[str] = None
+    workout_frequency: Optional[str] = None
+    zodiac_sign: Optional[str] = None
 
     # Background
     education: Optional[str] = None

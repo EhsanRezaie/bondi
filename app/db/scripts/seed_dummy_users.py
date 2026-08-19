@@ -42,6 +42,19 @@ SAMPLE_ANSWERS = [
     "More than anything", "It makes me happy", "We'll see",
 ]
 
+HERE_FOR_VALUES = ["long_term_relationship", "casual_dating", "marriage", "new_friends", "not_sure_yet"]
+PETS_VALUES = ["dog", "cat", "both", "other_pet", "no_pets", "loves_pets"]
+WORKOUT_FREQUENCY_VALUES = ["never", "occasionally", "regularly", "daily"]
+ZODIAC_SIGNS = ["aries", "taurus", "gemini", "cancer", "leo", "virgo",
+                "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"]
+
+CHILDREN_STATUS_MAP = {
+    "have": "have_children",
+    "want": "want_children",
+    "dont_want": "dont_want_children",
+    "dont_have": "open_to_children",
+}
+
 logger = logging.getLogger(__name__)
 
 SEED_FILE = Path(__file__).parent.parent / "seed_data" / "dummy_users.json"
@@ -168,9 +181,13 @@ async def seed_dummy_users() -> None:
                 body_type=p["body_type"],
                 relationship_status=p["relationship_status"],
                 living_situation=p["living_situation"],
-                children_status=p["children_status"],
+                children_status=CHILDREN_STATUS_MAP.get(p["children_status"], p["children_status"]),
                 smoking=p["smoking"],
                 drinking=p["drinking"],
+                here_for=random.choice(HERE_FOR_VALUES),
+                pets=random.choice(PETS_VALUES),
+                workout_frequency=random.choice(WORKOUT_FREQUENCY_VALUES),
+                zodiac_sign=random.choice(ZODIAC_SIGNS),
                 languages=p["languages"],
                 education=p["education"],
                 workplace=p["workplace"],

@@ -24,6 +24,10 @@ class UserProfile(Base):
         Index('idx_profiles_drinking', 'drinking'),
         Index('idx_profiles_relationship_status', 'relationship_status'),
         Index('idx_profiles_height', 'height'),
+        Index('idx_profiles_here_for', 'here_for'),
+        Index('idx_profiles_pets', 'pets'),
+        Index('idx_profiles_workout_frequency', 'workout_frequency'),
+        Index('idx_profiles_zodiac_sign', 'zodiac_sign'),
         Index('idx_profiles_is_verified', 'is_verified', postgresql_where=text("is_verified = true")),
         Index('idx_profiles_premium_until', 'premium_until'),
     )
@@ -46,9 +50,13 @@ class UserProfile(Base):
     # Lifestyle
     relationship_status = Column(String(20), nullable=True)
     living_situation = Column(String(30), nullable=True)
-    children_status = Column(String(20), nullable=True)
+    children_status = Column(String(30), nullable=True)
     smoking = Column(String(20), nullable=True)
     drinking = Column(String(20), nullable=True)
+    here_for = Column(String(30), nullable=True)
+    pets = Column(String(30), nullable=True)
+    workout_frequency = Column(String(20), nullable=True)
+    zodiac_sign = Column(String(20), nullable=True)
 
     # Background
     languages = Column(JSON, nullable=True)

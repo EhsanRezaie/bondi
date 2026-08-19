@@ -32,7 +32,7 @@ COMPLETE_PROFILE_PAYLOAD = {
     "body_type": "athletic",
     "relationship_status": "single",
     "living_situation": "alone",
-    "children_status": "dont_have",
+    "children_status": "open_to_children",
     "smoking": "never",
     "drinking": "socially",
     "education": "bachelor",

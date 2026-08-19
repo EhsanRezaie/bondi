@@ -21,6 +21,10 @@ class UserUpdateRequest(BaseModel):
     children_status: Optional[str] = None
     smoking: Optional[str] = None
     drinking: Optional[str] = None
+    here_for: Optional[str] = None
+    pets: Optional[str] = None
+    workout_frequency: Optional[str] = None
+    zodiac_sign: Optional[str] = None
     education: Optional[str] = None
     workplace: Optional[str] = None
     religion: Optional[str] = None
@@ -66,8 +70,37 @@ class UserUpdateRequest(BaseModel):
     @field_validator("children_status")
     @classmethod
     def validate_children_status(cls, v: str) -> str:
-        if v is not None and v not in ["have", "dont_have", "want", "dont_want"]:
+        if v is not None and v not in ["have_children", "want_children", "dont_want_children", "open_to_children"]:
             raise ValueError("Invalid children status")
+        return v
+
+    @field_validator("here_for")
+    @classmethod
+    def validate_here_for(cls, v: str) -> str:
+        if v is not None and v not in ["long_term_relationship", "casual_dating", "marriage", "new_friends", "not_sure_yet"]:
+            raise ValueError("Invalid here_for value")
+        return v
+
+    @field_validator("pets")
+    @classmethod
+    def validate_pets(cls, v: str) -> str:
+        if v is not None and v not in ["dog", "cat", "both", "other_pet", "no_pets", "loves_pets"]:
+            raise ValueError("Invalid pets value")
+        return v
+
+    @field_validator("workout_frequency")
+    @classmethod
+    def validate_workout_frequency(cls, v: str) -> str:
+        if v is not None and v not in ["never", "occasionally", "regularly", "daily"]:
+            raise ValueError("Invalid workout frequency")
+        return v
+
+    @field_validator("zodiac_sign")
+    @classmethod
+    def validate_zodiac_sign(cls, v: str) -> str:
+        if v is not None and v not in ["aries", "taurus", "gemini", "cancer", "leo", "virgo",
+                                       "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"]:
+            raise ValueError("Invalid zodiac sign")
         return v
 
     @field_validator("smoking")
@@ -169,6 +202,10 @@ class UserProfileResponse(BaseModel):
     children_status: Optional[str] = None
     smoking: Optional[str] = None
     drinking: Optional[str] = None
+    here_for: Optional[str] = None
+    pets: Optional[str] = None
+    workout_frequency: Optional[str] = None
+    zodiac_sign: Optional[str] = None
     education: Optional[str] = None
     workplace: Optional[str] = None
     religion: Optional[str] = None
@@ -221,6 +258,10 @@ class UserProfileResponse(BaseModel):
                 values.children_status = profile.children_status
                 values.smoking = profile.smoking
                 values.drinking = profile.drinking
+                values.here_for = profile.here_for
+                values.pets = profile.pets
+                values.workout_frequency = profile.workout_frequency
+                values.zodiac_sign = profile.zodiac_sign
                 values.education = profile.education
                 values.workplace = profile.workplace
                 values.religion = profile.religion
@@ -274,6 +315,10 @@ class UserProfileResponse(BaseModel):
             profile.education,
             profile.workplace,
             profile.city,
+            profile.here_for,
+            profile.pets,
+            profile.workout_frequency,
+            profile.zodiac_sign,
         ]
         photo_count = len([p for p in (user.photos or []) if p.status == "approved"])
         if photo_count > 0:

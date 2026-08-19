@@ -101,6 +101,11 @@ async def search_users(
     smoking: str = Query(None, max_length=50),
     drinking: str = Query(None, max_length=50),
     political_orientation: str = Query(None, max_length=50),
+    here_for: str = Query(None, max_length=50),
+    pets: str = Query(None, max_length=50),
+    workout_frequency: str = Query(None, max_length=50),
+    zodiac_sign: str = Query(None, max_length=50),
+    children_status: str = Query(None, max_length=50),
     languages: str = Query(None, max_length=200),
     interests: str = Query(None, max_length=500),
     sort_by: str = Query("recent", pattern="^(recent|distance|age|name|last_seen)$"),
@@ -177,6 +182,16 @@ async def search_users(
         query = query.where(UserProfile.drinking == drinking)
     if political_orientation:
         query = query.where(UserProfile.political_orientation == political_orientation)
+    if here_for:
+        query = query.where(UserProfile.here_for == here_for)
+    if pets:
+        query = query.where(UserProfile.pets == pets)
+    if workout_frequency:
+        query = query.where(UserProfile.workout_frequency == workout_frequency)
+    if zodiac_sign:
+        query = query.where(UserProfile.zodiac_sign == zodiac_sign)
+    if children_status:
+        query = query.where(UserProfile.children_status == children_status)
 
     if languages:
         lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
