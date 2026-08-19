@@ -1,7 +1,9 @@
 
 # tests/done/test_nsfw.py
 import io
+import numpy as np
 import pytest
+import pytest_asyncio
 from PIL import Image
 from unittest.mock import patch, AsyncMock, MagicMock
 def _phone(key: str) -> str:
@@ -12,6 +14,17 @@ def _phone(key: str) -> str:
 
 from app.services.nsfw_service import NSFWService, nsfw_service
 from app.schemas.nsfw import NSFWCheckResult, NSFWMetricsResponse, NSFWConfigResponse
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _mock_face_check():
+    """Mock face embedding extraction so photo uploads never load InsightFace."""
+    with patch(
+        "app.api.v1.endpoints.photos.face_verification_service.extract_single_photo_embedding",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = (np.random.randn(512).astype(np.float32), "")
+        yield m
 
 
 # ---------------------------------------------------------------------------

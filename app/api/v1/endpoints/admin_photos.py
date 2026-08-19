@@ -6,7 +6,7 @@ from uuid import UUID
 from app.db.session import get_session
 from app.core.deps import get_admin_user
 from app.core.limiter import limiter
-from app.core.redis import redis_client
+from app.core.redis import redis_client, delete_face_reference
 from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -123,6 +123,8 @@ async def admin_approve_photo(
     await log_admin_action(str(admin.id), "photo_approve", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    # Face reference may change now that a new photo is approved
+    await delete_face_reference(str(photo.user_id))
 
     return {"message": "Photo approved successfully", "photo_id": str(photo_id)}
 
@@ -156,6 +158,7 @@ async def admin_reject_photo(
     await log_admin_action(str(admin.id), "photo_reject", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    await delete_face_reference(str(photo.user_id))
 
     return {"message": "Photo rejected successfully", "photo_id": str(photo_id), "reason": reason}
 

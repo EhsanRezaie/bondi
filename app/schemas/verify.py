@@ -1,21 +1,7 @@
-"""Face Verification schemas."""
+"""Face Verification schemas (image-based selfie flow)."""
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
-
-
-class ChallengeResponse(BaseModel):
-    """Response when generating a liveness challenge."""
-    challenge_type: str
-    instructions: str
-    challenge_id: str
-    expires_in_seconds: int = 600
-
-
-class VerifyRequest(BaseModel):
-    """Request to submit verification video."""
-    challenge_id: str
-    challenge_type: str
 
 
 class VerifyResponse(BaseModel):

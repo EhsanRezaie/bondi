@@ -19,11 +19,13 @@ import io
 import uuid
 
 import httpx
+import numpy as np
 import pytest
 import pytest_asyncio
 from PIL import Image
 from sqlalchemy import select
 from httpx import AsyncClient
+from unittest.mock import AsyncMock, patch
 
 from app.core.security import create_access_token
 from app.core.config import settings
@@ -123,6 +125,17 @@ async def upload_and_get_id(client: AsyncClient, auth_headers: dict, **img_kwarg
     return resp.json()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _mock_face_check():
+    """Mock face embedding extraction so uploads never load the real InsightFace model."""
+    with patch(
+        "app.api.v1.endpoints.photos.face_verification_service.extract_single_photo_embedding",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = (np.random.randn(512).astype(np.float32), "")
+        yield m
+
+
 # ===========================================================================
 # UPLOAD
 # ===========================================================================
@@ -137,6 +150,29 @@ class TestUploadPhoto:
         assert body["status"] == "pending"
         assert "url" in body and body["url"]
         assert body["message"] == "Photo uploaded. Under review by admin."
+
+    async def test_upload_rejects_no_face(self, client, auth_headers, _mock_face_check):
+        """Photos without a detectable face (nature/objects) are auto-rejected."""
+        _mock_face_check.return_value = (None, "No face detected in the photo")
+        files = make_upload_file()
+        resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
+        assert resp.status_code == 400
+        assert "no face" in resp.json()["detail"].lower()
+
+    async def test_upload_rejects_face_mismatch(self, client, auth_headers, test_user, patch_redis):
+        """A photo showing a different person is auto-rejected."""
+        import json as _json
+        fake_ref = [float(x) for x in np.random.randn(512).astype(np.float32)]
+        await patch_redis.set(f"face_ref:{test_user.id}", _json.dumps(fake_ref))
+
+        with patch(
+            "app.api.v1.endpoints.photos.face_verification_service.compare_embeddings",
+            return_value=(False, 0.2),
+        ):
+            files = make_upload_file()
+            resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
+            assert resp.status_code == 400
+            assert "doesn't match" in resp.json()["detail"].lower()
 
     async def test_upload_requires_auth(self, client):
         files = make_upload_file()

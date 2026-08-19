@@ -149,24 +149,15 @@ class Settings(BaseSettings):
     NSFW_THRESHOLD: float = 0.8
 
     # ============================================
-    # Face Verification
+    # Face Verification (image-based selfie)
     # ============================================
     FACE_VERIFICATION_MODEL: str = "buffalo_l"
     FACE_MATCH_THRESHOLD: float = 0.45
-    FACE_VERIFICATION_FRAME_RATE: int = 2
-    FACE_VERIFICATION_MIN_FRAMES: int = 3
-    FACE_VERIFICATION_MAX_FRAMES: int = 20
-    FACE_VERIFICATION_VIDEO_MIN_SECONDS: int = 4
-    FACE_VERIFICATION_VIDEO_MAX_SECONDS: int = 15
-    FACE_VERIFICATION_MAX_SIZE_MB: int = 20
-    FACE_VERIFICATION_CHALLENGE_TTL: int = 600
+    FACE_VERIFICATION_MAX_SIZE_MB: int = 10
     FACE_VERIFICATION_COOLDOWN_TTL: int = 86400
     FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 3
     FACE_VERIFICATION_MIN_PHOTOS: int = 1
-    FACE_VERIFICATION_BLINK_THRESHOLD: float = 0.22
-    FACE_VERIFICATION_TURN_THRESHOLD: float = 25.0
-    FACE_VERIFICATION_SMILE_THRESHOLD: float = 0.30
-    FACE_VERIFICATION_NOD_THRESHOLD: float = 15.0
+    FACE_REFERENCE_CACHE_TTL: int = 604800  # 7 days
 
     # ============================================
     # CORS

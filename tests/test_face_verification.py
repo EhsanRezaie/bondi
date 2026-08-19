@@ -1,12 +1,11 @@
 """
-Tests for face verification feature.
+Tests for face verification (image-based selfie flow).
 
 Uses mocked InsightFace model (no real model download needed).
-Tests endpoint logic, challenge flow, Redis state, and verification pipeline.
+Tests endpoint logic, Redis state, and the verification pipeline.
 """
 
 import io
-import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +15,6 @@ import numpy as np
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import create_access_token
@@ -30,25 +28,18 @@ from app.models.user_settings import UserSettings
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_video_bytes(duration_sec: int = 5, fps: int = 30) -> bytes:
-    """Create a synthetic MP4 video."""
-    import tempfile, os
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp.close()
-    try:
-        out = cv2.VideoWriter(tmp.name, fourcc, fps, (640, 480))
-        for i in range(fps * duration_sec):
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            frame[:] = (100, 150, 200)
-            cx = 320 + int(30 * np.sin(i / fps))
-            cv2.circle(frame, (cx, 240), 80, (200, 180, 160), -1)
-            out.write(frame)
-        out.release()
-        with open(tmp.name, "rb") as f:
-            return f.read()
-    finally:
-        os.unlink(tmp.name)
+def make_image_bytes() -> bytes:
+    """Create a small synthetic JPEG image."""
+    frame = np.zeros((640, 640, 3), dtype=np.uint8)
+    frame[:] = (100, 150, 200)
+    cv2.circle(frame, (320, 240), 120, (200, 180, 160), -1)
+    ok, encoded = cv2.imencode(".jpg", frame)
+    return encoded.tobytes()
+
+
+def make_fake_embedding() -> np.ndarray:
+    emb = np.random.randn(512).astype(np.float32)
+    return emb / np.linalg.norm(emb)
 
 
 # ---------------------------------------------------------------------------
@@ -110,63 +101,16 @@ async def verified_auth_headers(verified_user: User) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-# ---------------------------------------------------------------------------
-# Tests: Challenge Generation
-# ---------------------------------------------------------------------------
-
-class TestChallengeGeneration:
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_success(self, client, auth_headers):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["challenge_type"] in ("blink", "turn_left", "turn_right", "smile", "nod")
-        assert "instructions" in data
-        assert "challenge_id" in data
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_stores_in_redis(self, client, auth_headers, test_user, patch_redis):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        assert resp.status_code == 200
-        data = resp.json()
-
-        key = f"verify_challenge:{test_user.id}"
-        stored = await patch_redis.get(key)
-        assert stored is not None
-        challenge = json.loads(stored)
-        assert challenge["challenge_id"] == data["challenge_id"]
-        assert challenge["challenge_type"] == data["challenge_type"]
-        assert challenge["status"] == "pending"
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_already_verified(self, client, verified_auth_headers):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=verified_auth_headers)
-        assert resp.status_code == 400
-        assert "already verified" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_no_auth(self, client):
-        resp = await client.post("/api/v1/users/me/verify/challenge")
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_cooldown(self, client, auth_headers, test_user, patch_redis):
-        await patch_redis.setex(f"verify_cooldown:{test_user.id}", 3600, "1")
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        assert resp.status_code == 429
-        assert "wait" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_generate_challenge_daily_limit(self, client, auth_headers, test_user, patch_redis):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        await patch_redis.set(
-            f"verify_attempts:{test_user.id}:{today}",
-            str(settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY),
-        )
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        assert resp.status_code == 429
-        assert "maximum" in resp.json()["detail"].lower()
+def _add_approved_photo(db_session, user_id):
+    photo = Photo(
+        user_id=user_id,
+        url=f"users/{user_id}/{uuid.uuid4()}.jpg",
+        status="approved",
+        face_verified=False,
+        is_main=True,
+    )
+    db_session.add(photo)
+    return photo
 
 
 # ---------------------------------------------------------------------------
@@ -205,232 +149,107 @@ class TestVerificationStatus:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Video Submission (with mocked face service)
+# Tests: Selfie Submission (with mocked face service)
 # ---------------------------------------------------------------------------
 
-class TestVideoSubmission:
-
-    @pytest.mark.asyncio
-    async def test_verify_no_challenge_id(self, client, auth_headers):
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=auth_headers,
-            files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-            params={"challenge_id": "", "challenge_type": "blink"},
-        )
-        assert resp.status_code == 400
-        assert "challenge_id" in resp.json()["detail"]
-
-    @pytest.mark.asyncio
-    async def test_verify_challenge_expired(self, client, auth_headers):
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=auth_headers,
-            files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-            params={"challenge_id": str(uuid.uuid4()), "challenge_type": "blink"},
-        )
-        assert resp.status_code == 400
-        assert "expired" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_verify_challenge_type_mismatch(self, client, auth_headers, test_user, patch_redis):
-        challenge_id = str(uuid.uuid4())
-        challenge_data = json.dumps({
-            "challenge_id": challenge_id,
-            "challenge_type": "blink",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "status": "pending",
-        })
-        await patch_redis.set(
-            f"verify_challenge:{test_user.id}",
-            challenge_data,
-            ex=300,
-        )
-
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=auth_headers,
-            files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-            params={
-                "challenge_id": challenge_id,
-                "challenge_type": "turn_left",
-            },
-        )
-        assert resp.status_code == 400
-        assert "mismatch" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_verify_video_too_short(self, client, auth_headers, test_user, patch_redis):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
-
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=auth_headers,
-            files={"file": ("video.mp4", make_video_bytes(duration_sec=2), "video/mp4")},
-            params={
-                "challenge_id": challenge["challenge_id"],
-                "challenge_type": challenge["challenge_type"],
-            },
-        )
-        assert resp.status_code == 400
-        assert "too short" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_verify_video_too_large(self, client, auth_headers, test_user, patch_redis):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
-
-        fake_large = b"\x00" * (100 * 1024 * 1024)
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=auth_headers,
-            files={"file": ("video.mp4", fake_large, "video/mp4")},
-            params={
-                "challenge_id": challenge["challenge_id"],
-                "challenge_type": challenge["challenge_type"],
-            },
-        )
-        assert resp.status_code == 400
-        assert "too large" in resp.json()["detail"].lower()
+class TestSelfieSubmission:
 
     @pytest.mark.asyncio
     async def test_verify_already_verified(self, client, verified_auth_headers):
         resp = await client.post(
             "/api/v1/users/me/verify",
             headers=verified_auth_headers,
-            files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-            params={"challenge_id": "x", "challenge_type": "blink"},
+            files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
         )
         assert resp.status_code == 400
         assert "already verified" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_verify_no_approved_photos(self, client, auth_headers, test_user, patch_redis):
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
+    async def test_verify_image_too_large(self, client, auth_headers, test_user, patch_redis):
+        fake_large = b"\x00" * ((settings.FACE_VERIFICATION_MAX_SIZE_MB + 1) * 1024 * 1024)
+        resp = await client.post(
+            "/api/v1/users/me/verify",
+            headers=auth_headers,
+            files={"file": ("selfie.jpg", fake_large, "image/jpeg")},
+        )
+        assert resp.status_code == 400
+        assert "too large" in resp.json()["detail"].lower()
 
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs:
-            mock_fvs.process_video = AsyncMock(return_value=([np.zeros((640, 640, 3), dtype=np.uint8)] * 5, ""))
-            mock_fvs.validate_challenge = AsyncMock(return_value=(True, "OK"))
-            mock_fvs.extract_video_embeddings = AsyncMock(
-                return_value=(np.random.randn(512).astype(np.float32), "")
-            )
+    @pytest.mark.asyncio
+    async def test_verify_no_approved_photos(self, client, auth_headers, test_user, patch_redis):
+        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
                 "/api/v1/users/me/verify",
                 headers=auth_headers,
-                files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-                params={
-                    "challenge_id": challenge["challenge_id"],
-                    "challenge_type": challenge["challenge_type"],
-                },
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
             assert resp.status_code == 400
             assert "photo" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_verify_liveness_failed(self, client, auth_headers, db_session, test_user, patch_redis):
-        photo = Photo(
-            user_id=test_user.id, url=f"users/{test_user.id}/{uuid.uuid4()}.jpg",
-            status="approved", face_verified=True, is_main=True,
-        )
-        db_session.add(photo)
+    async def test_verify_selfie_checks_failed(self, client, auth_headers, db_session, test_user, patch_redis):
+        _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
-
         with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps:
-            mock_fvs.process_video = AsyncMock(return_value=([np.zeros((640, 640, 3), dtype=np.uint8)] * 5, ""))
-            mock_fvs.validate_challenge = AsyncMock(return_value=(False, "No blink detected"))
-            mock_fvs.extract_video_embeddings = AsyncMock(
-                return_value=(np.random.randn(512).astype(np.float32), "")
-            )
-            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(None, "No face detected in the image"))
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
                 "/api/v1/users/me/verify",
                 headers=auth_headers,
-                files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-                params={
-                    "challenge_id": challenge["challenge_id"],
-                    "challenge_type": challenge["challenge_type"],
-                },
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
             assert resp.status_code == 400
-            assert "liveness" in resp.json()["detail"].lower()
+            assert "no face" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_verify_low_similarity(self, client, auth_headers, db_session, test_user, patch_redis):
-        photo = Photo(
-            user_id=test_user.id, url=f"users/{test_user.id}/{uuid.uuid4()}.jpg",
-            status="approved", face_verified=True, is_main=True,
-        )
-        db_session.add(photo)
+        _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
-
         with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps:
-            mock_fvs.process_video = AsyncMock(return_value=([np.zeros((640, 640, 3), dtype=np.uint8)] * 5, ""))
-            mock_fvs.validate_challenge = AsyncMock(return_value=(True, "OK"))
-            mock_fvs.extract_video_embeddings = AsyncMock(
-                return_value=(np.random.randn(512).astype(np.float32), "")
-            )
-            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
-            mock_fvs.extract_photo_embeddings = AsyncMock(
-                return_value=(np.random.randn(512).astype(np.float32), "")
-            )
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(False, 0.2))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
                 "/api/v1/users/me/verify",
                 headers=auth_headers,
-                files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-                params={
-                    "challenge_id": challenge["challenge_id"],
-                    "challenge_type": challenge["challenge_type"],
-                },
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
             assert resp.status_code == 400
             assert "failed" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_verify_success(self, client, auth_headers, db_session, test_user, patch_redis):
-        photo = Photo(
-            user_id=test_user.id, url=f"users/{test_user.id}/{uuid.uuid4()}.jpg",
-            status="approved", face_verified=False, is_main=True,
-        )
-        db_session.add(photo)
+        photo = _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
+        fake_emb = make_fake_embedding()
 
         with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps:
-            fake_emb = np.random.randn(512).astype(np.float32)
-            fake_emb = fake_emb / np.linalg.norm(fake_emb)
-
-            mock_fvs.process_video = AsyncMock(return_value=([np.zeros((640, 640, 3), dtype=np.uint8)] * 5, ""))
-            mock_fvs.validate_challenge = AsyncMock(return_value=(True, "OK"))
-            mock_fvs.extract_video_embeddings = AsyncMock(return_value=(fake_emb, ""))
-            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
-            mock_fvs.extract_photo_embeddings = AsyncMock(return_value=(fake_emb, ""))
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
                 "/api/v1/users/me/verify",
                 headers=auth_headers,
-                files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-                params={
-                    "challenge_id": challenge["challenge_id"],
-                    "challenge_type": challenge["challenge_type"],
-                },
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -444,37 +263,29 @@ class TestVideoSubmission:
         await db_session.refresh(photo)
         assert photo.face_verified is True
 
+        # Face reference cached in Redis
+        stored = await patch_redis.get(f"face_ref:{test_user.id}")
+        assert stored is not None
+
     @pytest.mark.asyncio
     async def test_verify_success_sets_cooldown(self, client, auth_headers, db_session, test_user, patch_redis):
-        photo = Photo(
-            user_id=test_user.id, url=f"users/{test_user.id}/{uuid.uuid4()}.jpg",
-            status="approved", face_verified=False, is_main=True,
-        )
-        db_session.add(photo)
+        _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        resp = await client.post("/api/v1/users/me/verify/challenge", headers=auth_headers)
-        challenge = resp.json()
-
+        fake_emb = make_fake_embedding()
         with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps:
-            fake_emb = np.random.randn(512).astype(np.float32)
-            fake_emb = fake_emb / np.linalg.norm(fake_emb)
-            mock_fvs.process_video = AsyncMock(return_value=([np.zeros((640, 640, 3), dtype=np.uint8)] * 5, ""))
-            mock_fvs.validate_challenge = AsyncMock(return_value=(True, "OK"))
-            mock_fvs.extract_video_embeddings = AsyncMock(return_value=(fake_emb, ""))
-            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
-            mock_fvs.extract_photo_embeddings = AsyncMock(return_value=(fake_emb, ""))
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
                 "/api/v1/users/me/verify",
                 headers=auth_headers,
-                files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-                params={
-                    "challenge_id": challenge["challenge_id"],
-                    "challenge_type": challenge["challenge_type"],
-                },
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
             assert resp.status_code == 200
 
@@ -485,10 +296,24 @@ class TestVideoSubmission:
     async def test_verify_no_auth(self, client):
         resp = await client.post(
             "/api/v1/users/me/verify",
-            files={"file": ("video.mp4", make_video_bytes(), "video/mp4")},
-            params={"challenge_id": "x", "challenge_type": "blink"},
+            files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
         )
         assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_verify_nsfw_selfie(self, client, auth_headers, db_session, test_user, patch_redis):
+        _add_approved_photo(db_session, test_user.id)
+        await db_session.commit()
+
+        with patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_nsfw.check_image = AsyncMock(return_value=(False, 0.9))
+            resp = await client.post(
+                "/api/v1/users/me/verify",
+                headers=auth_headers,
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
+            )
+            assert resp.status_code == 400
+            assert "content policy" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -535,19 +360,29 @@ class TestFaceVerificationService:
         ear = svc._compute_ear(landmarks)
         assert 0.0 <= ear <= 1.0
 
-    def test_challenge_types_defined(self):
-        from app.services.face_verification_service import CHALLENGE_TYPES
-        assert len(CHALLENGE_TYPES) == 5
-        for ct in ("blink", "turn_left", "turn_right", "smile", "nod"):
-            assert ct in CHALLENGE_TYPES
+    def test_validate_selfie_no_face(self):
+        from app.services.face_verification_service import FaceVerificationService
+        svc = FaceVerificationService.__new__(FaceVerificationService)
+        with patch.object(svc, "_face_analyzer") as mock_analyzer:
+            mock_analyzer.get = MagicMock(return_value=[])
+            ok, reason = svc.validate_selfie_image(np.zeros((640, 640, 3), dtype=np.uint8))
+            assert ok is False
+            assert "no face" in reason.lower()
+
+    def test_validate_selfie_multiple_faces(self):
+        from app.services.face_verification_service import FaceVerificationService
+        svc = FaceVerificationService.__new__(FaceVerificationService)
+        with patch.object(svc, "_face_analyzer") as mock_analyzer:
+            mock_analyzer.get = MagicMock(return_value=[MagicMock(), MagicMock()])
+            ok, reason = svc.validate_selfie_image(np.zeros((640, 640, 3), dtype=np.uint8))
+            assert ok is False
+            assert "multiple" in reason.lower()
 
     def test_config_settings_exist(self):
         for attr in (
             "FACE_MATCH_THRESHOLD", "FACE_VERIFICATION_MODEL",
-            "FACE_VERIFICATION_FRAME_RATE", "FACE_VERIFICATION_VIDEO_MIN_SECONDS",
-            "FACE_VERIFICATION_VIDEO_MAX_SECONDS", "FACE_VERIFICATION_CHALLENGE_TTL",
-            "FACE_VERIFICATION_COOLDOWN_TTL", "FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY",
-            "FACE_VERIFICATION_BLINK_THRESHOLD", "FACE_VERIFICATION_TURN_THRESHOLD",
-            "FACE_VERIFICATION_SMILE_THRESHOLD", "FACE_VERIFICATION_NOD_THRESHOLD",
+            "FACE_VERIFICATION_MAX_SIZE_MB", "FACE_VERIFICATION_COOLDOWN_TTL",
+            "FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY",
+            "FACE_VERIFICATION_MIN_PHOTOS", "FACE_REFERENCE_CACHE_TTL",
         ):
-            assert hasattr(settings, attr)
+            assert hasattr(settings, attr), attr

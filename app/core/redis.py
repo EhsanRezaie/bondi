@@ -211,6 +211,47 @@ OTP_COOLDOWN_PREFIX = "otp_cooldown:"
 OTP_COOLDOWN_TTL = 60  # seconds between resend requests
 
 
+# ============ Face Reference (identity anchor) ============
+
+FACE_REFERENCE_PREFIX = "face_ref:"
+FACE_REFERENCE_TTL = 60 * 60 * 24 * 7  # 7 days
+
+
+async def store_face_reference(user_id: str, embedding: list, ttl: int = FACE_REFERENCE_TTL) -> bool:
+    """Cache the canonical face embedding for a user (selfie anchor)."""
+    key = f"{FACE_REFERENCE_PREFIX}{user_id}"
+    try:
+        await redis_client.set(key, json.dumps(embedding), ex=ttl)
+        return True
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to store face reference", error=str(e))
+        return False
+
+
+async def get_face_reference(user_id: str) -> Optional[list]:
+    """Return the cached face embedding (list of floats) or None."""
+    key = f"{FACE_REFERENCE_PREFIX}{user_id}"
+    try:
+        raw = await redis_client.get(key)
+        if not raw:
+            return None
+        return json.loads(raw)
+    except (RedisError, RedisTimeoutError, json.JSONDecodeError) as e:
+        logger.error("Failed to get face reference", error=str(e))
+        return None
+
+
+async def delete_face_reference(user_id: str) -> bool:
+    """Remove the cached face reference for a user."""
+    key = f"{FACE_REFERENCE_PREFIX}{user_id}"
+    try:
+        await redis_client.delete(key)
+        return True
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to delete face reference", error=str(e))
+        return False
+
+
 async def store_verification_code(identifier: str, code: str, ttl: int = VERIFICATION_CODE_TTL) -> bool:
     """
     Store verification code in Redis with attempt counter.

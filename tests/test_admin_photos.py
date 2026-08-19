@@ -1,13 +1,27 @@
 
 import pytest
+import numpy as np
+import pytest_asyncio
 from httpx import AsyncClient
 from PIL import Image
 import io
+from unittest.mock import patch, AsyncMock
 from app.core.config import settings
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _mock_face_check():
+    """Mock face embedding extraction so photo uploads never load InsightFace."""
+    with patch(
+        "app.api.v1.endpoints.photos.face_verification_service.extract_single_photo_embedding",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = (np.random.randn(512).astype(np.float32), "")
+        yield m
 
 
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
