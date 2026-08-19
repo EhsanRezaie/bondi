@@ -1,13 +1,17 @@
+
 import pytest
 from httpx import AsyncClient
 from app.core.config import settings
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 ADMIN_TICKETS_URL = "/api/v1/admin/tickets"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 COMPLETE_PROFILE = {
     "name": "Test User",
@@ -18,16 +22,15 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client: AsyncClient, phone: str, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+        await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
+
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE, headers=headers)
     assert res.status_code == 200, res.text
@@ -40,7 +43,7 @@ class TestAdminTickets:
     async def test_admin_list_tickets_success(self, client: AsyncClient, mock_verification_code):
         """Admin should list all tickets"""
         # Create a regular user with a ticket
-        user_data = await register_user(client, "ticket@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("ticket@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         await client.post(
@@ -71,7 +74,7 @@ class TestAdminTickets:
     async def test_admin_get_ticket_detail(self, client: AsyncClient, mock_verification_code):
         """Admin should view ticket details"""
         # Create a ticket
-        user_data = await register_user(client, "ticketdetail@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("ticketdetail@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         create_res = await client.post(
@@ -94,7 +97,7 @@ class TestAdminTickets:
     async def test_admin_respond_to_ticket(self, client: AsyncClient, mock_verification_code):
         """Admin should respond to ticket and close it"""
         # Create a ticket
-        user_data = await register_user(client, "ticketrespond@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("ticketrespond@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         create_res = await client.post(
@@ -119,7 +122,7 @@ class TestAdminTickets:
     async def test_admin_update_ticket_status_only(self, client: AsyncClient, mock_verification_code):
         """Admin should update ticket status without response"""
         # Create a ticket
-        user_data = await register_user(client, "ticketstatus@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("ticketstatus@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         create_res = await client.post(
@@ -141,7 +144,7 @@ class TestAdminTickets:
     async def test_admin_delete_ticket(self, client: AsyncClient, mock_verification_code):
         """Admin should delete a ticket"""
         # Create a ticket
-        user_data = await register_user(client, "ticketdelete@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("ticketdelete@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         create_res = await client.post(
@@ -185,7 +188,7 @@ class TestAdminTicketConversation:
     """Test the ticket conversation (admin replies via messages endpoint)"""
 
     async def _create_ticket(self, client: AsyncClient, mock_verification_code, subject="Conv Test") -> tuple:
-        user_data = await register_user(client, "conv@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("conv@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         create_res = await client.post(
             "/api/v1/tickets",
@@ -284,7 +287,7 @@ class TestAdminTicketConversation:
 
     async def test_admin_ticket_includes_user_uid(self, client: AsyncClient, mock_verification_code):
         """Ticket responses should expose the user uid (the user UUID)"""
-        user_data = await register_user(client, "uid@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("uid@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         create_res = await client.post(

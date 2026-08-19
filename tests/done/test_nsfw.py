@@ -1,8 +1,14 @@
+
 # tests/done/test_nsfw.py
 import io
 import pytest
 from PIL import Image
 from unittest.mock import patch, AsyncMock, MagicMock
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from app.services.nsfw_service import NSFWService, nsfw_service
 from app.schemas.nsfw import NSFWCheckResult, NSFWMetricsResponse, NSFWConfigResponse
@@ -35,23 +41,20 @@ def _make_skin_image(ratio=0.5, size=(300, 300)) -> bytes:
     return buf.getvalue()
 
 
-async def _register_user(client, email):
-    """Register a user via 3-step flow and return access_token."""
-    # Step 1: init (generates code in Redis)
-    res = await client.post("/api/v1/auth/register/init", json={"email": email})
-    assert res.status_code == 200, res.text
-
-    # Step 2: verify — store code AFTER init overwrites it
+async def _register_user(client, phone):
+    """Register a user via phone OTP flow and return access_token."""
+    # Store the code in Redis (mirrors the mock_verification_code fixture)
+    import json as _json
     from app.core.redis import redis_client
-    await redis_client.set(f"verification:{email}", "123456")
+    await redis_client.setex(f"verification:{phone}", 300, _json.dumps({"code": "123456", "attempts": 0}))
 
-    res = await client.post("/api/v1/auth/register/verify", json={
-        "email": email, "code": "123456", "password": "testpass123",
+    res = await client.post("/api/v1/auth/verify-code", json={
+        "phone": phone, "code": "123456",
     })
     assert res.status_code == 200, res.text
     token = res.json()["access_token"]
 
-    # Step 3: complete profile
+    # Complete profile
     res = await client.post("/api/v1/auth/register/complete", json={
         "name": "NSFW Test User",
         "birth_date": "2000-01-01",
@@ -208,7 +211,7 @@ class TestNSFWEndpoint:
 
     async def test_upload_safe_photo(self, client, mock_verification_code):
         """Should accept safe photo."""
-        token = await _register_user(client, "nsfw_safe@test.com")
+        token = await _register_user(client, _phone("nsfw_safe@test.com"))
         headers = {"Authorization": f"Bearer {token}"}
 
         img_bytes = _make_image(color=(50, 100, 150))
@@ -223,7 +226,7 @@ class TestNSFWEndpoint:
 
     async def test_upload_rejects_nsfw_content(self, client, mock_verification_code):
         """Should reject NSFW content when nsfw_service says not safe."""
-        token = await _register_user(client, "nsfw_reject@test.com")
+        token = await _register_user(client, _phone("nsfw_reject@test.com"))
         headers = {"Authorization": f"Bearer {token}"}
 
         with patch("app.api.v1.endpoints.photos.nsfw_service") as mock_nsfw:
@@ -242,7 +245,7 @@ class TestNSFWEndpoint:
 
     async def test_upload_invalid_format(self, client, mock_verification_code):
         """Should reject invalid image format."""
-        token = await _register_user(client, "nsfw_invalid@test.com")
+        token = await _register_user(client, _phone("nsfw_invalid@test.com"))
         headers = {"Authorization": f"Bearer {token}"}
 
         res = await client.post(
@@ -254,7 +257,7 @@ class TestNSFWEndpoint:
 
     async def test_nsfw_score_saved_to_photo(self, client, mock_verification_code):
         """NSFW score should be stored on the photo record."""
-        token = await _register_user(client, "nsfw_score@test.com")
+        token = await _register_user(client, _phone("nsfw_score@test.com"))
         headers = {"Authorization": f"Bearer {token}"}
 
         with patch("app.api.v1.endpoints.photos.nsfw_service") as mock_nsfw:
@@ -276,7 +279,7 @@ class TestNSFWEndpoint:
 
     async def test_nsfw_disabled_bypasses_check(self, client, mock_verification_code):
         """When NSFW is disabled, all images should pass."""
-        token = await _register_user(client, "nsfw_disabled@test.com")
+        token = await _register_user(client, _phone("nsfw_disabled@test.com"))
         headers = {"Authorization": f"Bearer {token}"}
 
         with patch("app.api.v1.endpoints.photos.nsfw_service") as mock_nsfw:

@@ -1,3 +1,4 @@
+
 # tests/test_discover.py - Complete updated file
 
 import pytest
@@ -5,22 +6,25 @@ from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from datetime import date, datetime, timedelta, timezone
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from app.models.user import User
 from app.models.user_profile import UserProfile
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 DISCOVER_URL = "/api/v1/discover"
 SWIPE_URL = "/api/v1/swipes"
 BLOCKS_URL = "/api/v1/blocks"
 
-VALID_EMAIL_MALE = "discover_male@example.com"
-VALID_EMAIL_FEMALE = "discover_female@example.com"
-VALID_EMAIL_FEMALE2 = "discover_female2@example.com"
-VALID_EMAIL_MALE2 = "discover_male2@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_EMAIL_MALE = _phone("discover_male@example.com")
+VALID_EMAIL_FEMALE = _phone("discover_female@example.com")
+VALID_EMAIL_FEMALE2 = _phone("discover_female2@example.com")
+VALID_EMAIL_MALE2 = _phone("discover_male2@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE_PAYLOAD_MALE = {
@@ -134,24 +138,17 @@ COMPLETE_PROFILE_PAYLOAD_MALE2 = {
 
 async def register_user_full(
     client: AsyncClient,
-    email: str,
+    phone: str,
     complete_payload: dict,
     mock_verification_code
 ) -> dict:
-    """Complete full registration flow - returns user data with tokens."""
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    
-    await mock_verification_code(email, VALID_CODE)
-    
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+    """Complete full registration via phone OTP - returns user data with tokens."""
+    await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
-    
+
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,
@@ -159,18 +156,18 @@ async def register_user_full(
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    
+
     return res.json()
 
 
 async def register_and_get_headers(
     client: AsyncClient,
-    email: str,
+    phone: str,
     complete_payload: dict,
     mock_verification_code
 ) -> tuple[dict, str]:
-    """Register a user and return headers with user_id."""
-    result = await register_user_full(client, email, complete_payload, mock_verification_code)
+    """Register a user via phone OTP and return headers with user_id."""
+    result = await register_user_full(client, phone, complete_payload, mock_verification_code)
     headers = {"Authorization": f"Bearer {result['access_token']}"}
     user_id = result["user"]["id"]
     return headers, user_id
@@ -887,12 +884,12 @@ class TestDiscoverCursorPagination:
     churns, equal keys) between page loads."""
 
     CURSOR_EMAILS = [
-        "cursor_d1@example.com",
-        "cursor_d2@example.com",
-        "cursor_d3@example.com",
-        "cursor_d4@example.com",
-        "cursor_d5@example.com",
-        "cursor_d6@example.com",
+        _phone("cursor_d1@example.com"),
+        _phone("cursor_d2@example.com"),
+        _phone("cursor_d3@example.com"),
+        _phone("cursor_d4@example.com"),
+        _phone("cursor_d5@example.com"),
+        _phone("cursor_d6@example.com"),
     ]
 
     async def _register_searcher(self, client, mock_verification_code) -> dict:

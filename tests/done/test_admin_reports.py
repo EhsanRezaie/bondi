@@ -1,13 +1,17 @@
+
 import pytest
 from httpx import AsyncClient
 from app.core.config import settings
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 ADMIN_REPORTS_URL = "/api/v1/admin/reports"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 COMPLETE_PROFILE = {
     "name": "Test User",
@@ -18,16 +22,15 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client: AsyncClient, phone: str, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+        await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
+
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE, headers=headers)
     assert res.status_code == 200, res.text
@@ -40,10 +43,10 @@ class TestAdminReports:
     async def test_admin_list_reports_success(self, client: AsyncClient, mock_verification_code):
         """Admin should list all reports"""
         # Create a report first
-        reporter_data = await register_user(client, "report_reporter@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("report_reporter@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "report_target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("report_target@example.com"), mock_verification_code)
 
         await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
@@ -71,10 +74,10 @@ class TestAdminReports:
     async def test_admin_get_report_detail(self, client: AsyncClient, mock_verification_code):
         """Admin should view report details"""
         # Create a report
-        reporter_data = await register_user(client, "detail_reporter@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("detail_reporter@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "detail_target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("detail_target@example.com"), mock_verification_code)
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
@@ -95,10 +98,10 @@ class TestAdminReports:
     async def test_admin_review_report(self, client: AsyncClient, mock_verification_code):
         """Admin should review and take action on report"""
         # Create a report
-        reporter_data = await register_user(client, "review_reporter@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("review_reporter@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "review_target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("review_target@example.com"), mock_verification_code)
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
@@ -121,10 +124,10 @@ class TestAdminReports:
     async def test_admin_delete_report(self, client: AsyncClient, mock_verification_code):
         """Admin should delete a report"""
         # Create a report
-        reporter_data = await register_user(client, "delete_reporter@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("delete_reporter@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "delete_target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("delete_target@example.com"), mock_verification_code)
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",

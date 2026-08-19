@@ -13,7 +13,7 @@ from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 from app.models.chat import Chat
 from app.models.message import Message
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 
 
 pytestmark = pytest.mark.asyncio
@@ -28,8 +28,9 @@ async def _make_user(db_session: AsyncSession, email: str, name: str, gender: st
     user_id = uuid.uuid4()
     user = User(
         id=user_id,
+        phone=f"+9891{uuid.uuid4().hex[:10]}",
         email=email,
-        password_hash=hash_password("testpass123"),
+        phone_verified=True,
         is_active=True,
         registration_status="onboarding_complete",
         referral_code=referral,

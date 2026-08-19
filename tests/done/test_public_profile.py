@@ -1,16 +1,20 @@
+
 # tests/test_public_profile.py - tests for GET /users/{user_id}
 
 import uuid
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from httpx import AsyncClient
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 USERS_URL = "/api/v1/users"
 BLOCKS_URL = "/api/v1/blocks"
 
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 
 PROFILE_MALE = {
@@ -50,16 +54,10 @@ PROFILE_FEMALE = {
 }
 
 
-async def register_full(client, email, payload, mock_verification_code):
-    """Register a user fully; returns headers dict + user id."""
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+async def register_full(client, phone, payload, mock_verification_code):
+    """Register a user fully via phone OTP; returns headers dict + user id."""
+    await mock_verification_code(phone, VALID_CODE)
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -75,10 +73,10 @@ class TestPublicProfile:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, _ = await register_full(
-            client, "pub_male@example.com", PROFILE_MALE, mock_verification_code
+            client, _phone("pub_male@example.com"), PROFILE_MALE, mock_verification_code
         )
         _, female_id = await register_full(
-            client, "pub_female@example.com", PROFILE_FEMALE, mock_verification_code
+            client, _phone("pub_female@example.com"), PROFILE_FEMALE, mock_verification_code
         )
 
         res = await client.get(f"{USERS_URL}/{female_id}", headers=male_headers)
@@ -99,7 +97,7 @@ class TestPublicProfile:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, _ = await register_full(
-            client, "pub_male2@example.com", PROFILE_MALE, mock_verification_code
+            client, _phone("pub_male2@example.com"), PROFILE_MALE, mock_verification_code
         )
         res = await client.get(f"{USERS_URL}/{uuid.uuid4()}", headers=male_headers)
         assert res.status_code == 404, res.text
@@ -108,10 +106,10 @@ class TestPublicProfile:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, _ = await register_full(
-            client, "pub_male3@example.com", PROFILE_MALE, mock_verification_code
+            client, _phone("pub_male3@example.com"), PROFILE_MALE, mock_verification_code
         )
         _, female_id = await register_full(
-            client, "pub_female3@example.com", PROFILE_FEMALE, mock_verification_code
+            client, _phone("pub_female3@example.com"), PROFILE_FEMALE, mock_verification_code
         )
 
         block_res = await client.post(

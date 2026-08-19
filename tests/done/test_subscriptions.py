@@ -1,8 +1,13 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SUBSCRIPTION_PLANS_URL = "/api/v1/subscriptions/plans"
 SUBSCRIPTION_PURCHASE_URL = "/api/v1/subscriptions/purchase"
@@ -10,8 +15,7 @@ SUBSCRIPTION_MY_URL = "/api/v1/subscriptions/my"
 SUBSCRIPTION_CANCEL_URL = "/api/v1/subscriptions/cancel"
 SUBSCRIPTION_VERIFY_URL = "/api/v1/subscriptions/verify"
 
-VALID_EMAIL = "sub_user@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_PHONE = _phone("sub_user@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE = {
@@ -23,25 +27,15 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, mock_verification_code=None) -> dict:
-    # Step 1: Init
-    res = await client.post(REGISTER_INIT_URL, json={"email": VALID_EMAIL})
-    assert res.status_code == 200, res.text
-
-    # Step 2: Store verification code
+async def register_user(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(VALID_EMAIL, VALID_CODE)
+        await mock_verification_code(phone, VALID_CODE)
 
-    # Step 3: Verify
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": VALID_EMAIL,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
-    # Step 4: Complete profile
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,

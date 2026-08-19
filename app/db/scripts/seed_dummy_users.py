@@ -5,7 +5,7 @@ Usage:
     python -m app.db.scripts.seed_dummy_users
 
 Re-run safe — existing test%@test.com users are deleted first.
-Password for all dummies is ``12345678`` (hashed at runtime).
+Phone numbers are generated deterministically (+9891...) for each user.
 """
 
 import asyncio
@@ -22,7 +22,6 @@ from datetime import date
 from sqlalchemy import delete, select
 
 from app.core.config import settings
-from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.models.interest import Interest
 from app.models.photo import Photo
@@ -46,8 +45,6 @@ SAMPLE_ANSWERS = [
 logger = logging.getLogger(__name__)
 
 SEED_FILE = Path(__file__).parent.parent / "seed_data" / "dummy_users.json"
-
-PASSWORD = "12345678"
 
 
 async def _upload_placeholder_images(photos_data: list) -> None:
@@ -124,8 +121,6 @@ async def seed_dummy_users() -> None:
 
     print(f"📦  Loaded {len(users_data)} dummy users from seed file\n")
 
-    password_hash = hash_password(PASSWORD)
-
     async with AsyncSessionLocal() as session:
         existing_ids = (
             await session.execute(
@@ -144,13 +139,13 @@ async def seed_dummy_users() -> None:
 
         batch_size = 100
 
-        for i, u in enumerate(users_data):
+        for i, u in enumerate(users_data, start=1):
             user = User(
                 id=uuid_lib.UUID(u["id"]),
                 email=u["email"],
-                password_hash=password_hash,
+                phone=f"+9891{i:08d}",
+                phone_verified=True,
                 is_active=True,
-                phone_verified=False,
                 registration_status="onboarding_complete",
             )
             session.add(user)
@@ -266,7 +261,7 @@ async def seed_dummy_users() -> None:
 
     print(f"\n🎉  Done! {len(users_data)} dummy users in the database.")
     print(f"    Email range:  test1@test.com … test{len(users_data)}@test.com")
-    print(f"    Password:     {PASSWORD}")
+    print(f"    Phone range:  +989100000001 … +9891{len(users_data):08d}")
     print(f"    Photos:       {PHOTOS_PER_USER} per user")
 
 

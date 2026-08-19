@@ -1,14 +1,18 @@
+
 import pytest
 from httpx import AsyncClient
 from app.core.config import settings
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 ADMIN_USERS_URL = "/api/v1/admin/users"
 ADMIN_ANNOUNCEMENTS_URL = "/api/v1/admin/announcements"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 COMPLETE_PROFILE = {
     "name": "Test User",
@@ -19,14 +23,12 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client: AsyncClient, phone: str, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+        await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -41,7 +43,7 @@ class TestAdminMessageUser:
     async def test_admin_message_user_success(self, client: AsyncClient, mock_verification_code):
         """Admin should send message to a specific user"""
         # Create a user
-        user_data = await register_user(client, "msguser@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("msguser@example.com"), mock_verification_code)
 
         # Admin sends message
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
@@ -75,7 +77,7 @@ class TestAdminMessageUser:
 
     async def test_admin_message_requires_message(self, client: AsyncClient, mock_verification_code):
         """Should return 400 when message is missing"""
-        user_data = await register_user(client, "msgreq@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("msgreq@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
@@ -86,7 +88,7 @@ class TestAdminMessageUser:
 
     async def test_admin_message_requires_title(self, client: AsyncClient, mock_verification_code):
         """Should return 400 when title is missing"""
-        user_data = await register_user(client, "titlereq@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("titlereq@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
@@ -97,7 +99,7 @@ class TestAdminMessageUser:
 
     async def test_admin_message_requires_auth(self, client: AsyncClient, mock_verification_code):
         """Should return 403 without admin key"""
-        user_data = await register_user(client, "msgauth@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("msgauth@example.com"), mock_verification_code)
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
             json={"title": "Test", "message": "Hello"}
@@ -113,7 +115,7 @@ class TestAdminAnnouncements:
         # Create multiple users
         user_ids = []
         for i in range(3):
-            data = await register_user(client, f"announce_{i}@example.com", mock_verification_code)
+            data = await register_user(client, _phone(f"announce_{i}@example.com"), mock_verification_code)
             user_ids.append(data["user"]["id"])
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
@@ -130,10 +132,11 @@ class TestAdminAnnouncements:
 
         # Check each user received notification
         for i, user_id in enumerate(user_ids):
-            # Login as each user
+            # Obtain a fresh token via phone OTP verify (login)
+            await mock_verification_code(_phone(f"announce_{i}@example.com"), VALID_CODE)
             login_res = await client.post(
-                "/api/v1/auth/login",
-                json={"email": f"announce_{i}@example.com", "password": "strongpass123"}
+                VERIFY_CODE_URL,
+                json={"phone": _phone(f"announce_{i}@example.com"), "code": VALID_CODE}
             )
             assert login_res.status_code == 200
             user_token = login_res.json()["access_token"]
@@ -148,10 +151,10 @@ class TestAdminAnnouncements:
     async def test_admin_announcement_to_premium_only(self, client: AsyncClient, mock_verification_code):
         """Admin should send announcement to premium users only"""
         # Create free user
-        free_data = await register_user(client, "free_announce@example.com", mock_verification_code)
+        free_data = await register_user(client, _phone("free_announce@example.com"), mock_verification_code)
 
         # Create premium user (gets welcome bonus)
-        premium_data = await register_user(client, "premium_announce@example.com", mock_verification_code)
+        premium_data = await register_user(client, _phone("premium_announce@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(

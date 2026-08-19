@@ -154,7 +154,8 @@ class UserSettingsResponse(BaseModel):
 class UserProfileResponse(BaseModel):
     """Response schema for user profile (excludes sensitive data)."""
     id: UUID
-    email: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
     name: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -405,12 +406,6 @@ class LocationTextUpdateResponse(BaseModel):
 class DeleteAccountResponse(BaseModel):
     """Response for account deletion."""
     message: str = "Account deleted successfully"
-
-
-class ChangePasswordRequest(BaseModel):
-    """Request schema for password change."""
-    current_password: str
-    new_password: str = Field(..., min_length=8)
 
 
 class UserInterestResponse(BaseModel):

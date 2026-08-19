@@ -1,20 +1,24 @@
+
 # tests/test_push_notifications.py
 
 import pytest
 from httpx import AsyncClient
 from unittest.mock import AsyncMock, patch, MagicMock
 from uuid import uuid4
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 DEVICE_TOKEN_URL = "/api/v1/notifications/device-token"
 SWIPE_URL = "/api/v1/swipes"
 MESSAGES_URL = "/api/v1/messages"
 
-VALID_EMAIL = "push_test@example.com"
-VALID_EMAIL_2 = "push_test2@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_EMAIL = _phone("push_test@example.com")
+VALID_EMAIL_2 = _phone("push_test2@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE_PAYLOAD = {
@@ -72,18 +76,11 @@ COMPLETE_PROFILE_PAYLOAD_2 = {
 }
 
 
-async def register_user(client, email, payload, mock_verification_code):
-    """Register a user and return tokens."""
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client, phone, payload, mock_verification_code):
+    """Register a user via phone OTP and return tokens."""
+    await mock_verification_code(phone, VALID_CODE)
 
-    await mock_verification_code(email, VALID_CODE)
-
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 

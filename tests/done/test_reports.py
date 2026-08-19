@@ -1,12 +1,16 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 REPORTS_URL = "/api/v1/reports"
 
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE = {
@@ -18,16 +22,12 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-
+async def register_user(client: AsyncClient, phone: str, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
+        await mock_verification_code(phone, VALID_CODE)
 
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
@@ -42,10 +42,10 @@ class TestReports:
     """Test user reporting system"""
 
     async def test_report_user_success(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target@example.com"), mock_verification_code)
 
         res = await client.post(
             f"{REPORTS_URL}/{target_data['user']['id']}",
@@ -60,10 +60,10 @@ class TestReports:
         assert "created_at" in body
 
     async def test_report_user_minimal_reason(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter2@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter2@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target2@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target2@example.com"), mock_verification_code)
 
         res = await client.post(
             f"{REPORTS_URL}/{target_data['user']['id']}",
@@ -73,10 +73,10 @@ class TestReports:
         assert res.status_code == 201
 
     async def test_report_user_reason_too_short(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter3@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter3@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target3@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target3@example.com"), mock_verification_code)
 
         res = await client.post(
             f"{REPORTS_URL}/{target_data['user']['id']}",
@@ -86,10 +86,10 @@ class TestReports:
         assert res.status_code == 422
 
     async def test_report_user_reason_too_long(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter4@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter4@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target4@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target4@example.com"), mock_verification_code)
 
         long_reason = "a" * 501
         res = await client.post(
@@ -100,7 +100,7 @@ class TestReports:
         assert res.status_code == 422
 
     async def test_cannot_report_self(self, client: AsyncClient, mock_verification_code):
-        data = await register_user(client, "self@example.com", mock_verification_code)
+        data = await register_user(client, _phone("self@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
@@ -112,7 +112,7 @@ class TestReports:
         assert "Cannot report yourself" in res.json()["detail"]
 
     async def test_cannot_report_nonexistent_user(self, client: AsyncClient, mock_verification_code):
-        data = await register_user(client, "nonexist@example.com", mock_verification_code)
+        data = await register_user(client, _phone("nonexist@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
@@ -124,10 +124,10 @@ class TestReports:
         assert "User not found" in res.json()["detail"]
 
     async def test_cannot_report_same_user_twice_in_24h(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter5@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter5@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target5@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target5@example.com"), mock_verification_code)
 
         res1 = await client.post(
             f"{REPORTS_URL}/{target_data['user']['id']}",
@@ -145,12 +145,12 @@ class TestReports:
         assert "already reported this user recently" in res2.json()["detail"]
 
     async def test_report_multiple_different_users_allowed(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter_multi@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter_multi@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
         for i in range(3):
             target_data = await register_user(
-                client, f"target_multi_{i}@example.com", mock_verification_code
+                client, _phone(f"target_multi_{i}@example.com"), mock_verification_code
             )
 
             res = await client.post(
@@ -168,7 +168,7 @@ class TestReports:
         assert res.status_code == 401
 
     async def test_get_my_reports_empty(self, client: AsyncClient, mock_verification_code):
-        data = await register_user(client, "empty@example.com", mock_verification_code)
+        data = await register_user(client, _phone("empty@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.get(f"{REPORTS_URL}/my", headers=headers)
@@ -176,13 +176,13 @@ class TestReports:
         assert res.json() == []
 
     async def test_get_my_reports_with_data(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "myreports@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("myreports@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
         reported_ids = []
         for i in range(3):
             target_data = await register_user(
-                client, f"target_my_{i}@example.com", mock_verification_code
+                client, _phone(f"target_my_{i}@example.com"), mock_verification_code
             )
             reported_ids.append(target_data["user"]["id"])
 
@@ -206,10 +206,10 @@ class TestReports:
         assert res.status_code == 401
 
     async def test_report_user_who_deleted_account(self, client: AsyncClient, mock_verification_code):
-        reporter_data = await register_user(client, "reporter_del@example.com", mock_verification_code)
+        reporter_data = await register_user(client, _phone("reporter_del@example.com"), mock_verification_code)
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, "target_delete@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("target_delete@example.com"), mock_verification_code)
         target_headers = {"Authorization": f"Bearer {target_data['access_token']}"}
 
         await client.delete("/api/v1/users/me", headers=target_headers)

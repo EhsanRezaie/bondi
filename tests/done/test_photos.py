@@ -25,7 +25,7 @@ from PIL import Image
 from sqlalchemy import select
 from httpx import AsyncClient
 
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 from app.core.config import settings
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -63,8 +63,9 @@ async def test_user(db_session) -> User:
     plausibly upload photos in the real app flow)."""
     user = User(
         id=uuid.uuid4(),
+        phone=f"+9891{uuid.uuid4().hex[:10]}",
         email=f"user_{uuid.uuid4().hex[:8]}@test.com",
-        password_hash=hash_password("testpass123"),
+        phone_verified=True,
         is_active=True,
         token_version=1,
         registration_status="onboarding_complete",
@@ -92,8 +93,9 @@ async def second_user(db_session) -> User:
     """A second user, used to test that users can't touch each other's photos."""
     user = User(
         id=uuid.uuid4(),
+        phone=f"+9891{uuid.uuid4().hex[:10]}",
         email=f"user2_{uuid.uuid4().hex[:8]}@test.com",
-        password_hash=hash_password("testpass123"),
+        phone_verified=True,
         is_active=True,
         token_version=1,
         registration_status="onboarding_complete",

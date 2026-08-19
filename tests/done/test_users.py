@@ -1,19 +1,22 @@
+
 import pytest
 from httpx import AsyncClient
 from datetime import datetime, date
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 # ============ URL Constants ============
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
-LOGIN_URL = "/api/v1/auth/login"
 USERS_ME_URL = "/api/v1/users/me"
 USERS_ME_LOCATION_URL = "/api/v1/users/me/location"
 USERS_ME_LOCATION_TEXT_URL = "/api/v1/users/me/location-text"
 
 # ============ Test Data ============
-VALID_EMAIL = "test@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_PHONE = _phone("test@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE_PAYLOAD = {
@@ -62,26 +65,15 @@ def calculate_age(birth_date: str) -> int:
 
 
 # ============ EXACTLY LIKE test_auth.py ============
-async def register_user_full(client: AsyncClient, mock_verification_code=None) -> dict:
-    """Helper: complete full registration flow."""
-    # Step 1: Init
-    res = await client.post(REGISTER_INIT_URL, json={"email": VALID_EMAIL})
-    assert res.status_code == 200, res.text
-    
-    # Step 2: Store verification code in Redis if mock provided
+async def register_user_full(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(VALID_EMAIL, VALID_CODE)
-    
-    # Step 3: Verify
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": VALID_EMAIL,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+        await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
-    
-    # Step 4: Complete profile
+
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,
@@ -89,34 +81,26 @@ async def register_user_full(client: AsyncClient, mock_verification_code=None) -
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    
+
     return res.json()
 
 
-# ============ Helper for custom email ============
+# ============ Helper for custom phone ============
 async def register_user_full_custom(
-    client: AsyncClient, 
-    mock_verification_code, 
-    email: str, 
-    password: str = VALID_PASSWORD,
+    client: AsyncClient,
+    mock_verification_code,
+    phone: str,
     complete_payload: dict = None,
 ) -> dict:
-    """Helper: complete full registration with custom email."""
+    """Helper: complete full registration via phone OTP with a custom phone."""
     complete_payload = complete_payload or COMPLETE_PROFILE_PAYLOAD
-    
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    
-    await mock_verification_code(email, VALID_CODE)
-    
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": password,
-    })
+
+    await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
-    
+
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,
@@ -124,7 +108,7 @@ async def register_user_full_custom(
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    
+
     return res.json()
 
 
@@ -162,7 +146,7 @@ class TestGetMe:
         data = res.json()
 
         assert data["id"] is not None
-        assert data["email"] == VALID_EMAIL
+        assert data["email"] is None  # phone-based auth; email is optional
         assert data["is_active"] is True
         assert data["is_profile_complete"] is True
         assert data["profile_completion"] == 100
@@ -193,7 +177,7 @@ class TestGetMe:
         result = await register_user_full_custom(
             client,
             mock_verification_code,
-            email="minimal@example.com",
+            phone=_phone("minimal@example.com"),
             complete_payload=MINIMAL_PROFILE_PAYLOAD,
         )
         token = result["access_token"]
@@ -671,21 +655,20 @@ class TestDeleteMe:
         result = await register_user_full_custom(
             client,
             mock_verification_code,
-            email="delete_test@example.com",
+            phone=_phone("delete_test@example.com"),
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         res = await client.delete(USERS_ME_URL, headers=headers)
         assert res.status_code == 204
 
+        # A deactivated account cannot log in again via phone OTP.
+        await mock_verification_code(_phone("delete_test@example.com"), VALID_CODE)
         login_res = await client.post(
-            LOGIN_URL,
-            json={
-                "email": "delete_test@example.com",
-                "password": VALID_PASSWORD,
-            },
+            VERIFY_CODE_URL,
+            json={"phone": _phone("delete_test@example.com"), "code": VALID_CODE},
         )
-        assert login_res.status_code in [401, 403]
+        assert login_res.status_code == 403
 
     async def test_delete_me_requires_auth(self, client: AsyncClient):
         """Should return 401 without token."""
@@ -905,7 +888,7 @@ class TestProfileCompleteness:
         result = await register_user_full_custom(
             client,
             mock_verification_code,
-            email="minimal2@example.com",
+            phone=_phone("minimal2@example.com"),
             complete_payload=MINIMAL_PROFILE_PAYLOAD,
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -958,43 +941,45 @@ class TestEdgeCases:
         data = res.json()
         assert data["settings"] is not None
 
-    async def test_duplicate_email_cannot_register(self, client: AsyncClient, mock_verification_code):
-        """Should return same response for duplicate email (anti-enumeration)."""
+    async def test_duplicate_phone_cannot_register(self, client: AsyncClient, mock_verification_code):
+        """Re-verifying an existing phone logs in instead of creating a new user."""
+        phone = _phone("duplicate@example.com")
         await register_user_full_custom(
             client,
             mock_verification_code,
-            email="duplicate@example.com",
+            phone=phone,
         )
 
+        # Verify-code on the same phone → it's a login, not a new registration.
+        await mock_verification_code(phone, VALID_CODE)
         res = await client.post(
-            REGISTER_INIT_URL,
-            json={"email": "duplicate@example.com"},
+            VERIFY_CODE_URL,
+            json={"phone": phone, "code": VALID_CODE},
         )
-        # Anti-enumeration: always returns 200 with same message
         assert res.status_code == 200
-        assert "verification code" in res.json()["message"].lower()
+        data = res.json()
+        assert data["is_new_user"] is False
 
 
 class TestAccountReactivation:
 
     async def test_deleted_account_cannot_login(self, client: AsyncClient, mock_verification_code):
-        """Should prevent login of deleted account."""
-        email = "delete_test2@example.com"
-        password = "testpass123"
+        """Should prevent login of a deactivated account."""
+        phone = _phone("delete_test2@example.com")
 
         result = await register_user_full_custom(
             client,
             mock_verification_code,
-            email=email,
-            password=password,
+            phone=phone,
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         res = await client.delete(USERS_ME_URL, headers=headers)
         assert res.status_code == 204
 
+        await mock_verification_code(phone, VALID_CODE)
         login_res = await client.post(
-            LOGIN_URL,
-            json={"email": email, "password": password},
+            VERIFY_CODE_URL,
+            json={"phone": phone, "code": VALID_CODE},
         )
-        assert login_res.status_code == 401
+        assert login_res.status_code == 403

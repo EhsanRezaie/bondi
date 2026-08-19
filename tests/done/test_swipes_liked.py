@@ -1,18 +1,22 @@
+
 import pytest
 from httpx import AsyncClient
 from uuid import UUID
 from datetime import datetime
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from app.core.config import settings
 
 # ============ URL Constants ============
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 LIKED_URL = "/api/v1/swipes/liked"
 LIKERS_URL = "/api/v1/swipes/likers"
-LOGIN_URL = "/api/v1/auth/login"
 
 VALID_CODE = "123456"
 
@@ -52,21 +56,13 @@ FEMALE_PROFILE_3 = {
 async def register_user(
     client: AsyncClient,
     mock_verification_code,
-    email: str,
+    phone: str,
     profile: dict,
-    password: str = "strongpass123",
 ) -> dict:
-    """Register a user via 3-step flow and return tokens."""
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200
+    """Register a user via phone OTP flow and return tokens."""
+    await mock_verification_code(phone, VALID_CODE)
 
-    await mock_verification_code(email, VALID_CODE)
-
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": password,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200
     tokens = res.json()
 
@@ -81,25 +77,25 @@ async def register_user(
 
 async def register_male(client, mock_verification_code) -> dict:
     return await register_user(
-        client, mock_verification_code, "liked_male@example.com", MALE_PROFILE
+        client, mock_verification_code, _phone("liked_male@example.com"), MALE_PROFILE
     )
 
 
 async def register_female(client, mock_verification_code) -> dict:
     return await register_user(
-        client, mock_verification_code, "liked_female@example.com", FEMALE_PROFILE
+        client, mock_verification_code, _phone("liked_female@example.com"), FEMALE_PROFILE
     )
 
 
 async def register_female_2(client, mock_verification_code) -> dict:
     return await register_user(
-        client, mock_verification_code, "liked_female2@example.com", FEMALE_PROFILE_2
+        client, mock_verification_code, _phone("liked_female2@example.com"), FEMALE_PROFILE_2
     )
 
 
 async def register_female_3(client, mock_verification_code) -> dict:
     return await register_user(
-        client, mock_verification_code, "liked_female3@example.com", FEMALE_PROFILE_3
+        client, mock_verification_code, _phone("liked_female3@example.com"), FEMALE_PROFILE_3
     )
 
 

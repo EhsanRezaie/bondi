@@ -207,20 +207,23 @@ async def revoke_refresh_family(family_id: str) -> int:
 
 MAX_OTP_ATTEMPTS = 5
 
+OTP_COOLDOWN_PREFIX = "otp_cooldown:"
+OTP_COOLDOWN_TTL = 60  # seconds between resend requests
 
-async def store_verification_code(email: str, code: str, ttl: int = VERIFICATION_CODE_TTL) -> bool:
+
+async def store_verification_code(identifier: str, code: str, ttl: int = VERIFICATION_CODE_TTL) -> bool:
     """
     Store verification code in Redis with attempt counter.
 
     Args:
-        email: User's email (used as key)
+        identifier: User's phone (or email) used as key
         code: 6-digit verification code
         ttl: Time to live in seconds (default: 300 = 5 minutes)
 
     Returns:
         bool: True if stored successfully
     """
-    key = f"{VERIFICATION_CODE_PREFIX}{email}"
+    key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     data = json.dumps({"code": code, "attempts": 0})
     try:
         await redis_client.set(key, data, ex=ttl)
@@ -230,11 +233,11 @@ async def store_verification_code(email: str, code: str, ttl: int = VERIFICATION
         return False
 
 
-async def get_verification_code(email: str) -> Optional[str]:
+async def get_verification_code(identifier: str) -> Optional[str]:
     """
     Get raw verification code data from Redis (legacy — prefer verify_code_with_attempts).
     """
-    key = f"{VERIFICATION_CODE_PREFIX}{email}"
+    key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     try:
         return await redis_client.get(key)
     except (RedisError, RedisTimeoutError) as e:
@@ -242,13 +245,13 @@ async def get_verification_code(email: str) -> Optional[str]:
         return None
 
 
-async def verify_code_with_attempts(email: str, submitted_code: str) -> bool:
+async def verify_code_with_attempts(identifier: str, submitted_code: str) -> bool:
     """
     Verify a code with brute-force protection. Max 5 attempts.
 
     Raises HTTPException on failure. Returns True on success.
     """
-    key = f"{VERIFICATION_CODE_PREFIX}{email}"
+    key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     try:
         raw = await redis_client.get(key)
     except (RedisError, RedisTimeoutError) as e:
@@ -300,17 +303,53 @@ async def verify_code_with_attempts(email: str, submitted_code: str) -> bool:
     return True
 
 
-async def delete_verification_code(email: str) -> bool:
+async def delete_verification_code(identifier: str) -> bool:
     """
     Delete verification code from Redis.
     """
-    key = f"{VERIFICATION_CODE_PREFIX}{email}"
+    key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     try:
         await redis_client.delete(key)
         return True
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to delete verification code", error=str(e))
         return False
+
+
+# ============ OTP Resend Cooldown Functions ============
+
+
+async def store_otp_cooldown(identifier: str, ttl: int = OTP_COOLDOWN_TTL) -> bool:
+    """Set a resend cooldown marker for the identifier (e.g. phone)."""
+    key = f"{OTP_COOLDOWN_PREFIX}{identifier}"
+    try:
+        await redis_client.set(key, "1", ex=ttl)
+        return True
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to store OTP cooldown", error=str(e))
+        return False
+
+
+async def is_in_otp_cooldown(identifier: str) -> bool:
+    """True if the identifier is still in resend cooldown."""
+    key = f"{OTP_COOLDOWN_PREFIX}{identifier}"
+    try:
+        return bool(await redis_client.exists(key))
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to check OTP cooldown", error=str(e))
+        return False
+
+
+async def get_otp_cooldown(identifier: str) -> int:
+    """Return remaining cooldown seconds (0 if not in cooldown)."""
+    key = f"{OTP_COOLDOWN_PREFIX}{identifier}"
+    try:
+        ttl = await redis_client.ttl(key)
+        return max(ttl, 0)
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to get OTP cooldown", error=str(e))
+        return 0
+
 
 async def get_redis():
     """FastAPI dependency that yields the Redis client."""

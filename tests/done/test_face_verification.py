@@ -19,7 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -59,8 +59,9 @@ def make_video_bytes(duration_sec: int = 5, fps: int = 30) -> bytes:
 async def test_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
+        phone=f"+9891{uuid.uuid4().hex[:10]}",
         email=f"verify_{uuid.uuid4().hex[:8]}@test.com",
-        password_hash=hash_password("testpass123"),
+        phone_verified=True,
         is_active=True,
         token_version=1,
         registration_status="onboarding_complete",
@@ -84,8 +85,9 @@ async def auth_headers(test_user: User) -> dict:
 async def verified_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
+        phone=f"+9891{uuid.uuid4().hex[:10]}",
         email=f"verified_{uuid.uuid4().hex[:8]}@test.com",
-        password_hash=hash_password("testpass123"),
+        phone_verified=True,
         is_active=True,
         token_version=1,
         registration_status="onboarding_complete",

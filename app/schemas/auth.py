@@ -76,32 +76,58 @@ class PoliticalOrientation(str, Enum):
     apolitical = "apolitical"
 
 
-# ============ Step 1: Register Init ============
+# ============ Phone validation helpers ============
 
-class RegisterInitRequest(BaseModel):
-    email: EmailStr
+def validate_e164_phone(value: str) -> str:
+    """Normalize + validate an E.164 phone number (e.g. +989379191281)."""
+    v = value.strip()
+    if not v.startswith("+"):
+        raise ValueError("Phone number must include country code, e.g. +989379191281")
+    digits = v[1:]
+    if not digits.isdigit():
+        raise ValueError("Phone number may only contain digits after the country code")
+    if not 8 <= len(digits) <= 15:
+        raise ValueError("Phone number must be between 8 and 15 digits")
+    return v
 
 
-class RegisterInitResponse(BaseModel):
-    message: str = "Verification code sent to your email"
-    email: str
+# ============ Step 1: Request Code (SMS OTP) ============
+
+class RequestCodeRequest(BaseModel):
+    phone: str = Field(..., description="E.164 phone number, e.g. +989379191281")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return validate_e164_phone(v)
+
+
+class RequestCodeResponse(BaseModel):
+    message: str = "If this phone number is registered, a verification code has been sent."
+    phone: str
     expires_in: int = 300
+    resend_in: int = 60
 
 
-# ============ Step 2: Register Verify ============
+# ============ Step 2: Verify Code ============
 
-class RegisterVerifyRequest(BaseModel):
-    email: EmailStr
+class VerifyCodeRequest(BaseModel):
+    phone: str = Field(..., description="E.164 phone number, e.g. +989379191281")
     code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
-    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
     referral_code: Optional[str] = Field(None, min_length=8, max_length=8, description="Optional referral code")
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return validate_e164_phone(v)
 
-class RegisterVerifyResponse(BaseModel):
+
+class VerifyCodeResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    user_id: UUID
+    user: "UserProfileResponse"
+    is_new_user: bool = False
 
 
 # ============ Step 3: Onboarding Complete ============
@@ -112,7 +138,7 @@ class UserPromptCreateRequest(BaseModel):
 
 
 class OnboardingCompleteRequest(BaseModel):
-    """Complete user profile after email verification."""
+    """Complete user profile after phone verification."""
     # Identity
     name: str = Field(..., min_length=2, max_length=100)
     birth_date: date
@@ -159,14 +185,9 @@ class OnboardingCompleteRequest(BaseModel):
         return v
 
 
-# ============ Login ============
+# ============ Authenticated Response ============
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class LoginResponse(BaseModel):
+class AuthResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -185,42 +206,15 @@ class RefreshTokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-# ============ Google Login ============
-
-class GoogleLoginRequest(BaseModel):
-    id_token: str
-    name: Optional[str] = None
-    email: Optional[EmailStr] = None
-    picture: Optional[str] = None
-
-
 # ============ Logout ============
 
 class LogoutRequest(BaseModel):
     refresh_token: str
 
 
-# ============ Password Reset ============
-
-class PasswordResetRequest(BaseModel):
-    email: EmailStr
-
-
-class PasswordResetVerifyRequest(BaseModel):
-    email: EmailStr
-    code: str = Field(..., min_length=6, max_length=6)
-    new_password: str = Field(..., min_length=8)
-
-
-# ============ Change Password ============
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str = Field(..., min_length=8)
-
-
 # ============ Forward References ============
 
 # Import here to avoid circular import
 from app.schemas.user import UserProfileResponse
-LoginResponse.model_rebuild()
+VerifyCodeResponse.model_rebuild()
+AuthResponse.model_rebuild()

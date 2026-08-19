@@ -26,7 +26,6 @@ from app.db.base import Base
 from app.db.session import get_session
 import app.core.redis as redis_module
 from app.core.limiter import limiter
-from app.core.security import hash_password
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
@@ -176,18 +175,19 @@ async def setup_database():
         # Insert into users table
         await conn.execute(
             text("""
-                INSERT INTO users (id, email, password_hash, is_active, token_version, registration_status, created_at)
+                INSERT INTO users (id, phone, email, phone_verified, is_active, token_version, registration_status, created_at)
                 VALUES (
                     :id,
+                    '+989100000000',
                     'admin@test.com',
-                    :password,
+                    true,
                     true,
                     1,
                     'onboarding_complete',
                     NOW()
                 )
             """),
-            {"id": admin_id, "password": hash_password("admin123")}
+            {"id": admin_id}
         )
 
         # Insert into user_profiles table
@@ -251,9 +251,9 @@ async def reset_state():
         await seed_interests(conn)
 
         # Delete non-admin users and their related data
-        await conn.execute(text("DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE email != 'admin@test.com')"))
-        await conn.execute(text("DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE email != 'admin@test.com')"))
-        await conn.execute(text("DELETE FROM users WHERE email != 'admin@test.com'"))
+        await conn.execute(text("DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
+        await conn.execute(text("DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
+        await conn.execute(text("DELETE FROM users WHERE phone != '+989100000000'"))
     await engine.dispose()
     r = make_redis()
     await r.flushdb()
@@ -327,13 +327,13 @@ def mock_websocket_manager():
 
 
 # ---------------------------------------------------------------------------
-# Mock Email Service for tests
+# Mock SMS service for tests
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture(autouse=True)
-def mock_email_service():
-    """Mock email service to avoid sending real emails in tests."""
-    with patch("app.services.email_service.send_verification_code", new_callable=AsyncMock) as mock_send:
+def mock_sms_service():
+    """Mock the SMS service to avoid real SMS calls in tests."""
+    with patch("app.api.v1.endpoints.auth.send_verification_code", new_callable=AsyncMock) as mock_send:
         yield mock_send
 
 
@@ -343,10 +343,10 @@ def mock_email_service():
 
 @pytest_asyncio.fixture
 async def mock_verification_code():
-    """Helper fixture to store verification code in Redis for testing."""
-    async def _store_code(email: str, code: str = "123456"):
+    """Helper fixture to store a verification code in Redis for testing."""
+    async def _store_code(phone: str, code: str = "123456"):
         r = redis_module.redis_client
-        await r.setex(f"verification:{email}", 300, code)
+        await r.setex(f"verification:{phone}", 300, json.dumps({"code": code, "attempts": 0}))
         return code
     return _store_code
 

@@ -1,15 +1,19 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 REFERRAL_CODE_URL = "/api/v1/referrals/my-code"
 REFERRAL_CLAIM_URL = "/api/v1/referrals/claim"
 REFERRAL_STATS_URL = "/api/v1/referrals/stats"
 
-VALID_EMAIL = "referrer@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_PHONE = _phone("referrer@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE = {
@@ -21,16 +25,12 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str = VALID_EMAIL, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-
+async def register_user(client: AsyncClient, phone: str = VALID_PHONE, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
+        await mock_verification_code(phone, VALID_CODE)
 
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
@@ -76,7 +76,7 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         referral_code = code_res.json()["referral_code"]
 
-        invited_data = await register_user(client, "invited@example.com", mock_verification_code)
+        invited_data = await register_user(client, _phone("invited@example.com"), mock_verification_code)
         invited_headers = {"Authorization": f"Bearer {invited_data['access_token']}"}
 
         claim_res = await client.post(
@@ -133,7 +133,7 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         referral_code = code_res.json()["referral_code"]
 
-        invited_data = await register_user(client, "invited2@example.com", mock_verification_code)
+        invited_data = await register_user(client, _phone("invited2@example.com"), mock_verification_code)
         invited_headers = {"Authorization": f"Bearer {invited_data['access_token']}"}
 
         claim_res = await client.post(
@@ -183,7 +183,7 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         code = code_res.json()["referral_code"]
 
-        invited = await register_user(client, "claim_shape@example.com", mock_verification_code)
+        invited = await register_user(client, _phone("claim_shape@example.com"), mock_verification_code)
         invited_headers = {"Authorization": f"Bearer {invited['access_token']}"}
 
         res = await client.post(REFERRAL_CLAIM_URL, json={"referral_code": code}, headers=invited_headers)

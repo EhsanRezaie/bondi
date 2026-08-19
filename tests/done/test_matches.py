@@ -1,15 +1,19 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 MATCHES_URL = "/api/v1/matches"
 
-VALID_EMAIL_MALE = "match_male@example.com"
-VALID_EMAIL_FEMALE = "match_female@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_EMAIL_MALE = _phone("match_male@example.com")
+VALID_EMAIL_FEMALE = _phone("match_female@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE_MALE = {
@@ -31,27 +35,17 @@ COMPLETE_PROFILE_FEMALE = {
 
 async def register_and_get_headers(
     client: AsyncClient,
-    email: str,
+    phone: str,
     complete_payload: dict,
     mock_verification_code,
 ) -> tuple[dict, str]:
-    # Step 1: Init
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+    """Register a user via phone OTP and return headers + user_id."""
+    await mock_verification_code(phone, VALID_CODE)
 
-    # Step 2: Store verification code
-    await mock_verification_code(email, VALID_CODE)
-
-    # Step 3: Verify
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
-    # Step 4: Complete profile
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,
@@ -179,7 +173,7 @@ class TestMatches:
         # Register third user
         third_headers, _ = await register_and_get_headers(
             client,
-            "third@example.com",
+            _phone("third@example.com"),
             {
                 "name": "Third User",
                 "birth_date": "2000-01-01",

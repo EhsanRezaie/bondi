@@ -1,3 +1,4 @@
+
 # tests/done/test_websocket.py
 import pytest
 import json
@@ -8,18 +9,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timezone
 from uuid import UUID
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from app.models.user import User
 from app.services.websocket_manager import WebSocketManager
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 MESSAGES_URL = "/api/v1/messages"
 CHATS_URL = "/api/v1/chats"
 VALID_CODE = "123456"
-VALID_PASSWORD = "strongpass123"
 
 MALE_PAYLOAD = {
     "name": "WS Male",
@@ -46,13 +50,10 @@ FEMALE_PAYLOAD = {
 }
 
 
-async def register_user_full(client, email, payload, mock_vcode):
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200
-    await mock_vcode(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+async def register_user_full(client, phone, payload, mock_vcode):
+    """Register a user via phone OTP flow and complete the profile."""
+    await mock_vcode(phone, VALID_CODE)
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -61,8 +62,8 @@ async def register_user_full(client, email, payload, mock_vcode):
     return res.json()
 
 
-async def register_get_headers(client, email, payload, mock_vcode):
-    result = await register_user_full(client, email, payload, mock_vcode)
+async def register_get_headers(client, phone, payload, mock_vcode):
+    result = await register_user_full(client, phone, payload, mock_vcode)
     headers = {"Authorization": f"Bearer {result['access_token']}"}
     return headers, result["user"]["id"]
 
@@ -103,10 +104,10 @@ class TestWebSocketMatchPush:
     ):
         """broadcast_match should receive correctly shaped user data dicts."""
         male_headers, male_id = await register_get_headers(
-            client, "wsmatch_m@example.com", MALE_PAYLOAD, mock_verification_code
+            client, _phone("wsmatch_m@example.com"), MALE_PAYLOAD, mock_verification_code
         )
         female_headers, female_id = await register_get_headers(
-            client, "wsmatch_f@example.com", FEMALE_PAYLOAD, mock_verification_code
+            client, _phone("wsmatch_f@example.com"), FEMALE_PAYLOAD, mock_verification_code
         )
 
         result = await db_session.execute(
@@ -158,10 +159,10 @@ class TestWebSocketMessagePush:
     ):
         """Text message send_to_match should receive correctly shaped data."""
         male_headers, male_id = await register_get_headers(
-            client, "wstext_m@example.com", MALE_PAYLOAD, mock_verification_code
+            client, _phone("wstext_m@example.com"), MALE_PAYLOAD, mock_verification_code
         )
         female_headers, female_id = await register_get_headers(
-            client, "wstext_f@example.com", FEMALE_PAYLOAD, mock_verification_code
+            client, _phone("wstext_f@example.com"), FEMALE_PAYLOAD, mock_verification_code
         )
 
         result = await db_session.execute(
@@ -214,10 +215,10 @@ class TestWebSocketMessagePush:
     ):
         """Photo message send_to_match should receive correctly shaped data."""
         male_headers, male_id = await register_get_headers(
-            client, "wsphoto_m@example.com", MALE_PAYLOAD, mock_verification_code
+            client, _phone("wsphoto_m@example.com"), MALE_PAYLOAD, mock_verification_code
         )
         female_headers, female_id = await register_get_headers(
-            client, "wsphoto_f@example.com", FEMALE_PAYLOAD, mock_verification_code
+            client, _phone("wsphoto_f@example.com"), FEMALE_PAYLOAD, mock_verification_code
         )
 
         result = await db_session.execute(
@@ -267,10 +268,10 @@ class TestWebSocketMessagePush:
     ):
         """Voice message send_to_match should receive correctly shaped data."""
         male_headers, male_id = await register_get_headers(
-            client, "wsvoice_m@example.com", MALE_PAYLOAD, mock_verification_code
+            client, _phone("wsvoice_m@example.com"), MALE_PAYLOAD, mock_verification_code
         )
         female_headers, female_id = await register_get_headers(
-            client, "wsvoice_f@example.com", FEMALE_PAYLOAD, mock_verification_code
+            client, _phone("wsvoice_f@example.com"), FEMALE_PAYLOAD, mock_verification_code
         )
 
         result = await db_session.execute(

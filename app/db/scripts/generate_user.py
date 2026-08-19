@@ -1,8 +1,8 @@
 """
 Generates app/db/seed_data/test_users_200.json — 200 test users:
   email:    test1@test.com ... test200@test.com
+  phone:    +989100000001 ... +989100000200
   name:     test1 ... test200
-  password: 12345678 (same for all, hashed once at insert time)
 
 100 male / 100 female (alternating) so they can match each other in a
 heterosexual-only app. All other profile fields are randomized from value
@@ -76,9 +76,9 @@ def build_user(i: int):
     user = {
         "id": user_id,
         "email": f"test{i}@test.com",
-        "password": "12345678",  # plain text here on purpose — hashed once at insert time
+        "phone": f"+9891{i:08d}",
         "is_active": True,
-        "phone_verified": False,
+        "phone_verified": True,
         "registration_status": "completed",
         "referral_code": None,
         "referred_by": None,

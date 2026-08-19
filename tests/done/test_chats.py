@@ -1,8 +1,14 @@
+
 # tests/test_chats.py
 import uuid
 from datetime import date, timedelta, datetime, timezone
 from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
@@ -15,14 +21,12 @@ from app.models.message import Message
 from app.core.config import settings
 import app.core.redis as redis_module
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 CHATS_URL = "/api/v1/chats"
 MESSAGES_URL = "/api/v1/messages"
 
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 
 PAYLOAD_MALE = {
@@ -48,16 +52,13 @@ PAYLOAD_FEMALE = {
 
 async def register_and_get_headers(
     client: AsyncClient,
-    email: str,
+    phone: str,
     complete_payload: dict,
     mock_verification_code,
 ) -> tuple[dict, str]:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": "strongpass123",
-    })
+    """Register a user via phone OTP and return headers + user_id."""
+    await mock_verification_code(phone, VALID_CODE)
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -75,10 +76,10 @@ class TestCreateChat:
     ):
         """One-sided like → chat created as 'pending' with first message."""
         male_headers, male_id = await register_and_get_headers(
-            client, "chats_p_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("chats_p_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "chats_p_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("chats_p_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
@@ -105,10 +106,10 @@ class TestCreateChat:
     ):
         """Mutual like (a real match) → chat created already 'accepted'."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_a_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_a_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_a_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_a_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
@@ -125,10 +126,10 @@ class TestCreateChat:
     ):
         """Starting a chat with the same user returns the existing one (is_new=false)."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_e_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_e_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_e_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_e_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         first = await client.post(
@@ -156,7 +157,7 @@ class TestCreateChat:
 
     async def test_chat_with_self_rejected(self, client: AsyncClient, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_self@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_self@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         res = await client.post(
             CHATS_URL, json={"user_id": male_id, "content": "hi"}, headers=male_headers
@@ -165,7 +166,7 @@ class TestCreateChat:
 
     async def test_chat_with_unknown_user(self, client: AsyncClient, mock_verification_code):
         male_headers, _ = await register_and_get_headers(
-            client, "ch_unknown@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_unknown@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         res = await client.post(
             CHATS_URL,
@@ -176,10 +177,10 @@ class TestCreateChat:
 
     async def test_chat_with_blocked_user(self, client: AsyncClient, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_block_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_block_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_block_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_block_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         db_session.add(Block(blocker_id=uuid.UUID(male_id), blocked_id=uuid.UUID(female_id)))
         await db_session.commit()
@@ -198,10 +199,10 @@ class TestCreateChat:
     ):
         """A non-premium user at their daily chat limit gets 429 on a NEW chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_limit_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_limit_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_limit_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_limit_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         # Make male a non-premium user.
@@ -234,10 +235,10 @@ class TestAcceptChat:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_accept_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_accept_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_accept_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_accept_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
 
@@ -267,10 +268,10 @@ class TestAcceptChat:
     ):
         """While pending, the initiator can send at most 2 messages total."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_limit_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_limit_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_limit_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_limit_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
 
@@ -294,10 +295,10 @@ class TestAcceptChat:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_ph_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_ph_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_ph_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_ph_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
 
@@ -319,7 +320,7 @@ class TestAcceptChat:
     ):
         """Accepting a chat id that doesn't exist → 404."""
         male_headers, _ = await register_and_get_headers(
-            client, "ch_accn_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_accn_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         res = await client.post(
             f"{CHATS_URL}/00000000-0000-0000-0000-000000000777/accept",
@@ -332,10 +333,10 @@ class TestAcceptChat:
     ):
         """Accepting an already-accepted chat returns 200 'already accepted'."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_aa_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_aa_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_aa_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_aa_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
         await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
@@ -367,10 +368,10 @@ class TestAcceptChat:
         from app.api.v1.endpoints import chats as chats_module
 
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_ca_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_ca_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_ca_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_ca_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
         created = await client.post(
@@ -396,7 +397,7 @@ class TestChatList:
 
     async def test_empty(self, client: AsyncClient, mock_verification_code):
         headers, _ = await register_and_get_headers(
-            client, "ch_lst_empty@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_lst_empty@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         res = await client.get(CHATS_URL, headers=headers)
         assert res.status_code == 200
@@ -410,10 +411,10 @@ class TestChatList:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_unread_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_unread_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_unread_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_unread_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         # Female starts the chat with male (initiator).
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
@@ -432,10 +433,10 @@ class TestChatList:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_b_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_b_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_b_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_b_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
         await client.post(CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers)
@@ -451,13 +452,13 @@ class TestChatList:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, _ = await register_and_get_headers(
-            client, "ch_sort_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_sort_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         f1, f1_id = await register_and_get_headers(
-            client, "ch_sort_f1@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_sort_f1@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         f2, f2_id = await register_and_get_headers(
-            client, "ch_sort_f2@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_sort_f2@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         await client.post(SWIPE_URL, json={"user_id": f1_id, "direction": "like"}, headers=male_headers)
         await client.post(SWIPE_URL, json={"user_id": f2_id, "direction": "like"}, headers=male_headers)
@@ -477,12 +478,12 @@ class TestChatList:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_page_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_page_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         for i in range(3):
             _, uid = await register_and_get_headers(
                 client,
-                f"ch_page_{i}@example.com",
+                _phone(f"ch_page_{i}@example.com"),
                 {**PAYLOAD_FEMALE, "name": f"Page {i}"},
                 mock_verification_code,
             )
@@ -507,10 +508,10 @@ class TestChatList:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_online_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_online_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_online_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_online_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         await client.post(
@@ -530,13 +531,13 @@ class TestChatList:
     ):
         """status=accepted|pending filters the list; total reflects the filtered set."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_filter_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_filter_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_filter_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_filter_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         third_headers, third_id = await register_and_get_headers(
-            client, "ch_filter_third@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_filter_third@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         # Pending chat: male → female (one-sided swipe → pending).
@@ -576,10 +577,10 @@ class TestChatList:
     ):
         """initiator_id is exposed so the client can split pending chats by direction."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_init_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_init_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_init_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_init_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
 
         # Male starts the chat (initiator).
@@ -602,12 +603,12 @@ class TestChatList:
     ):
         """Pagination (limit/offset/next_offset) works on the filtered set."""
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_fpg_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_fpg_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         for i in range(3):
             _, uid = await register_and_get_headers(
                 client,
-                f"ch_fpg_{i}@demo.com",
+                _phone(f"ch_fpg_{i}@demo.com"),
                 {**PAYLOAD_FEMALE, "name": f"FPG {i}"},
                 mock_verification_code,
             )
@@ -638,10 +639,10 @@ class TestChatDetail:
 
     async def test_get_detail(self, client: AsyncClient, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_d_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_d_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_d_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_d_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         created = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
@@ -659,13 +660,13 @@ class TestChatDetail:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, "ch_d2_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_d2_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "ch_d2_female@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_d2_female@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         third_headers, _ = await register_and_get_headers(
-            client, "ch_d2_third@demo.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("ch_d2_third@demo.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         created = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
@@ -680,7 +681,7 @@ class TestChatDetail:
     ):
         """Detail of a chat that doesn't exist → 404."""
         male_headers, _ = await register_and_get_headers(
-            client, "ch_dn_male@demo.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("ch_dn_male@demo.com"), PAYLOAD_MALE, mock_verification_code
         )
         res = await client.get(
             f"{CHATS_URL}/00000000-0000-0000-0000-000000000888", headers=male_headers
@@ -738,12 +739,12 @@ class TestChatsCursorPagination:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, _ = await register_and_get_headers(
-            client, "cursor_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("cursor_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_ids = []
         for i in range(4):
             chat_ids.append(await self._create_pending_chat(
-                client, male_headers, f"cursor_chat{i}@example.com", i, mock_verification_code
+                client, male_headers, _phone(f"cursor_chat{i}@example.com"), i, mock_verification_code
             ))
 
         data, all_ids = await self._walk_pages(client, male_headers, limit=2)
@@ -758,12 +759,12 @@ class TestChatsCursorPagination:
         """A new message bumping a chat to the top between pages must NOT make
         it appear again on a later page (the offset-pagination chat bug)."""
         male_headers, _ = await register_and_get_headers(
-            client, "cursor_shift_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("cursor_shift_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_ids = []
         for i in range(4):
             chat_ids.append(await self._create_pending_chat(
-                client, male_headers, f"cursor_shift{i}@example.com", i, mock_verification_code
+                client, male_headers, _phone(f"cursor_shift{i}@example.com"), i, mock_verification_code
             ))
 
         res1 = await client.get(CHATS_URL, params={"limit": 2}, headers=male_headers)
@@ -794,12 +795,12 @@ class TestChatsCursorPagination:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, _ = await register_and_get_headers(
-            client, "cursor_tie_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("cursor_tie_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_ids = []
         for i in range(4):
             chat_ids.append(await self._create_pending_chat(
-                client, male_headers, f"cursor_tie{i}@example.com", i, mock_verification_code
+                client, male_headers, _phone(f"cursor_tie{i}@example.com"), i, mock_verification_code
             ))
 
         fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -819,11 +820,11 @@ class TestChatsCursorPagination:
         self, client: AsyncClient, mock_verification_code
     ):
         male_headers, _ = await register_and_get_headers(
-            client, "cursor_bad_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("cursor_bad_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         for i in range(3):
             await self._create_pending_chat(
-                client, male_headers, f"cursor_bad{i}@example.com", i, mock_verification_code
+                client, male_headers, _phone(f"cursor_bad{i}@example.com"), i, mock_verification_code
             )
 
         res = await client.get(

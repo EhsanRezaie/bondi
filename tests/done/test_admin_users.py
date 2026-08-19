@@ -1,17 +1,21 @@
+
 import pytest
 from httpx import AsyncClient
 from uuid import uuid4
 from datetime import datetime, timezone
 from app.core.config import settings
 from app.schemas.admin import AdminUserResponse, AdminUserPhotoResponse
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 ADMIN_USERS_URL = "/api/v1/admin/users"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 COMPLETE_PROFILE = {
     "name": "Test User",
@@ -37,16 +41,14 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str = None, mock_verification_code=None) -> dict:
-    if email is None:
-        email = "user@example.com"
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client: AsyncClient, phone: str = None, mock_verification_code=None) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
+    if phone is None:
+        phone = _phone("user@example.com")
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+        await mock_verification_code(phone, VALID_CODE)
+
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -70,7 +72,7 @@ class TestAdminUsers:
     async def test_admin_list_users_search_by_name(self, client: AsyncClient, mock_verification_code):
         """Admin should search users by name"""
         # Create a user with unique name
-        await register_user(client, "search_test@example.com", mock_verification_code)
+        await register_user(client, _phone("search_test@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
@@ -84,12 +86,12 @@ class TestAdminUsers:
 
     async def test_admin_list_users_search_by_email(self, client: AsyncClient, mock_verification_code):
         """Admin should search users by email"""
-        await register_user(client, "search_test@example.com", mock_verification_code)
+        await register_user(client, _phone("search_test@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"search": "search_test@example.com"},
+            params={"search": _phone("search_test@example.com")},
             headers=admin_headers
         )
         assert res.status_code == 200
@@ -139,7 +141,7 @@ class TestAdminUsers:
     async def test_admin_get_user_detail(self, client: AsyncClient, mock_verification_code):
         """Admin should view user details with stats"""
         # Create a user
-        user_data = await register_user(client, "detail@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("detail@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
@@ -166,7 +168,7 @@ class TestAdminUsers:
     async def test_admin_deactivate_user(self, client: AsyncClient, mock_verification_code):
         """Admin should deactivate a user"""
         # Create a user
-        user_data = await register_user(client, "deactivate@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("deactivate@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.patch(
@@ -178,17 +180,18 @@ class TestAdminUsers:
         body = res.json()
         assert body["is_active"] is False
 
-        # User should not be able to login
+        # User should not be able to log in (verify-code on deactivated account)
+        await mock_verification_code(_phone("deactivate@example.com"), VALID_CODE)
         login_res = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "deactivate@example.com", "password": "strongpass123"}
+            VERIFY_CODE_URL,
+            json={"phone": _phone("deactivate@example.com"), "code": VALID_CODE}
         )
-        assert login_res.status_code == 401
+        assert login_res.status_code == 403
 
     async def test_admin_activate_user(self, client: AsyncClient, mock_verification_code):
         """Admin should activate a deactivated user"""
         # Create a user
-        user_data = await register_user(client, "activate@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("activate@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
 
@@ -211,7 +214,7 @@ class TestAdminUsers:
     async def test_admin_grant_premium(self, client: AsyncClient, mock_verification_code):
         """Admin should grant premium days to user"""
         # Create a user
-        user_data = await register_user(client, "premium@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("premium@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
@@ -227,7 +230,7 @@ class TestAdminUsers:
     async def test_admin_delete_user(self, client: AsyncClient, mock_verification_code):
         """Admin should hard delete a user"""
         # Create a user
-        user_data = await register_user(client, "delete_me@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("delete_me@example.com"), mock_verification_code)
         user_id = user_data["user"]["id"]
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
@@ -241,11 +244,11 @@ class TestAdminUsers:
     async def test_admin_get_user_activity(self, client: AsyncClient, mock_verification_code):
         """Admin should get user activity stats"""
         # Create a user and do some activity
-        user_data = await register_user(client, "activity@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("activity@example.com"), mock_verification_code)
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
 
         # Create another user to swipe
-        target_data = await register_user(client, "activity_target@example.com", mock_verification_code)
+        target_data = await register_user(client, _phone("activity_target@example.com"), mock_verification_code)
 
         # Perform a swipe
         await client.post(
@@ -268,7 +271,7 @@ class TestAdminUsers:
 
     async def test_admin_search_by_bio(self, client: AsyncClient, mock_verification_code):
         """Admin should search users by bio text"""
-        await register_user(client, "bio_search@example.com", mock_verification_code)
+        await register_user(client, _phone("bio_search@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
@@ -277,11 +280,11 @@ class TestAdminUsers:
         )
         assert res.status_code == 200
         body = res.json()
-        assert any(u["email"] == "bio_search@example.com" for u in body["users"])
+        assert any(u["phone"] == _phone("bio_search@example.com") for u in body["users"])
 
     async def test_admin_search_by_id(self, client: AsyncClient, mock_verification_code):
         """Admin should search users by UUID"""
-        user_data = await register_user(client, "id_search@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("id_search@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
@@ -294,7 +297,7 @@ class TestAdminUsers:
 
     async def test_admin_filter_by_gender(self, client: AsyncClient, mock_verification_code):
         """Admin should filter users by gender"""
-        await register_user(client, "gender@example.com", mock_verification_code)
+        await register_user(client, _phone("gender@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
@@ -308,7 +311,7 @@ class TestAdminUsers:
 
     async def test_admin_filter_by_city(self, client: AsyncClient, mock_verification_code):
         """Admin should filter users by city"""
-        await register_user(client, "city@example.com", mock_verification_code)
+        await register_user(client, _phone("city@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
@@ -317,11 +320,11 @@ class TestAdminUsers:
         )
         assert res.status_code == 200
         body = res.json()
-        assert any(u["email"] == "city@example.com" for u in body["users"])
+        assert any(u["phone"] == _phone("city@example.com") for u in body["users"])
 
     async def test_admin_filter_by_age_range(self, client: AsyncClient, mock_verification_code):
         """Admin should filter users by age range"""
-        await register_user(client, "age@example.com", mock_verification_code)  # born 1995 => ~31
+        await register_user(client, _phone("age@example.com"), mock_verification_code)  # born 1995 => ~31
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             ADMIN_USERS_URL,
@@ -330,11 +333,11 @@ class TestAdminUsers:
         )
         assert res.status_code == 200
         body = res.json()
-        assert any(u["email"] == "age@example.com" for u in body["users"])
+        assert any(u["phone"] == _phone("age@example.com") for u in body["users"])
 
     async def test_admin_user_detail_full_profile(self, client: AsyncClient, mock_verification_code):
         """Admin detail should include full profile, photos, interests and UID"""
-        user_data = await register_user(client, "full@example.com", mock_verification_code)
+        user_data = await register_user(client, _phone("full@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}",
@@ -375,7 +378,7 @@ def test_admin_response_accepts_photo_instances():
     )
     user = AdminUserResponse(
         id=uuid4(),
-        email="test@example.com",
+        email=_phone("test@example.com"),
         name="Test User",
         age=28,
         is_active=True,

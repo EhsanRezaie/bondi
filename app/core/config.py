@@ -26,10 +26,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
 
     # ============================================
-    # Google OAuth
+    # SMS (Kavenegar via OAuth2 gateway)
     # ============================================
-    GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
+    SMS_ENABLED: bool = False
+    SMS_TOKEN_URL: str = "https://apim.ahuryx.com/oauth2/token"
+    SMS_BASE_URL: str = "https://10.10.40.41:8243/smsapi/0.1.0"
+    SMS_CLIENT_ID: str = ""
+    SMS_CLIENT_SECRET: str = ""
+    SMS_SENDER_LINE: str = ""
 
     # ============================================
     # Admin

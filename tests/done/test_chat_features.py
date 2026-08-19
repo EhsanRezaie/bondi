@@ -1,8 +1,14 @@
+
 # tests/done/test_chat_features.py
 # Covers the phase-1 backend work end to end:
 #   1A message edit, 1B message reports, 1C block chat-not-hidden, 1D delete/end chat.
 import uuid
 from sqlalchemy import select
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 from httpx import AsyncClient
 
@@ -11,8 +17,7 @@ from app.models.message import Message
 from app.models.report import Report
 from app.models.block import Block
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 SWIPE_URL = "/api/v1/swipes"
 CHATS_URL = "/api/v1/chats"
@@ -20,7 +25,6 @@ MESSAGES_URL = "/api/v1/messages"
 REPORTS_URL = "/api/v1/reports"
 BLOCKS_URL = "/api/v1/blocks"
 
-VALID_PASSWORD = "strongpass123"
 VALID_CODE = "123456"
 
 PAYLOAD_MALE = {
@@ -48,13 +52,10 @@ PAYLOAD_FEMALE = {
 }
 
 
-async def register_and_get_headers(client, email, complete_payload, mock_verification_code):
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-    await mock_verification_code(email, VALID_CODE)
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+async def register_and_get_headers(client, phone, complete_payload, mock_verification_code):
+    """Register a user via phone OTP and return headers + user_id."""
+    await mock_verification_code(phone, VALID_CODE)
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -88,10 +89,10 @@ class TestMessageEdit:
 
     async def test_edit_own_message(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, "edit_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("edit_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "edit_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("edit_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "original")
@@ -113,10 +114,10 @@ class TestMessageEdit:
 
     async def test_non_owner_cannot_edit(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "edit2_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("edit2_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "edit2_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("edit2_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "hey")
@@ -128,10 +129,10 @@ class TestMessageEdit:
 
     async def test_edit_empty_or_whitespace_fails(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "edit3_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("edit3_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "edit3_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("edit3_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "hey")
@@ -143,13 +144,13 @@ class TestMessageEdit:
 
     async def test_non_participant_cannot_edit(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "edit4_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("edit4_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "edit4_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("edit4_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         third_headers, _ = await register_and_get_headers(
-            client, "edit4_third@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("edit4_third@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "secret")
@@ -167,10 +168,10 @@ class TestMessageReport:
 
     async def _make_msg(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "rep_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("rep_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "rep_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("rep_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "bad message content")
@@ -206,13 +207,13 @@ class TestMessageReport:
 
     async def test_report_message_not_participant(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "rep2_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("rep2_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "rep2_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("rep2_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         stranger_headers, _ = await register_and_get_headers(
-            client, "rep2_stranger@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("rep2_stranger@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         msg = await send_text(client, male_headers, chat_id, "secret")
@@ -259,10 +260,10 @@ class TestBlockChatNotHidden:
 
     async def test_send_in_blocked_chat_forbidden(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "b_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("b_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "b_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("b_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
@@ -272,10 +273,10 @@ class TestBlockChatNotHidden:
 
     async def test_detail_flags_ended_chat(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "b2_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("b2_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "b2_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("b2_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
@@ -290,10 +291,10 @@ class TestBlockChatNotHidden:
     ):
         from app.api.v1.endpoints import blocks as blocks_endpoint
         male_headers, male_id = await register_and_get_headers(
-            client, "b3_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("b3_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "b3_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("b3_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         _ = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
@@ -309,10 +310,10 @@ class TestDeleteChat:
 
     async def test_delete_chat_removes_own_list(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "d_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
@@ -324,10 +325,10 @@ class TestDeleteChat:
 
     async def test_other_side_sees_ended(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "d2_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d2_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d2_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d2_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
@@ -340,10 +341,10 @@ class TestDeleteChat:
 
     async def test_send_after_delete_forbidden(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "d3_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d3_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d3_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d3_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.delete(f"{CHATS_URL}/{chat_id}", headers=male_headers)
@@ -356,10 +357,10 @@ class TestDeleteChat:
     ):
         from app.api.v1.endpoints import chats as chats_endpoint
         male_headers, male_id = await register_and_get_headers(
-            client, "d7_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d7_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d7_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d7_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.delete(f"{CHATS_URL}/{chat_id}", headers=male_headers)
@@ -372,10 +373,10 @@ class TestDeleteChat:
     async def test_owner_can_reopen_after_delete(self, client, mock_verification_code):
         """Deleting only hides your side; you may start a fresh chat later."""
         male_headers, male_id = await register_and_get_headers(
-            client, "d4_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d4_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d4_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d4_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.delete(f"{CHATS_URL}/{chat_id}", headers=male_headers)
@@ -388,13 +389,13 @@ class TestDeleteChat:
 
     async def test_non_member_cannot_delete(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "d5_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d5_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d5_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d5_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         stranger_headers, _ = await register_and_get_headers(
-            client, "d5_stranger@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d5_stranger@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
@@ -403,10 +404,10 @@ class TestDeleteChat:
 
     async def test_delete_own_side_detail_now_403(self, client, mock_verification_code):
         male_headers, male_id = await register_and_get_headers(
-            client, "d6_male@example.com", PAYLOAD_MALE, mock_verification_code
+            client, _phone("d6_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
         female_headers, female_id = await register_and_get_headers(
-            client, "d6_female@example.com", PAYLOAD_FEMALE, mock_verification_code
+            client, _phone("d6_female@example.com"), PAYLOAD_FEMALE, mock_verification_code
         )
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.delete(f"{CHATS_URL}/{chat_id}", headers=male_headers)

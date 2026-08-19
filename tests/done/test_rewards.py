@@ -1,15 +1,19 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 
 REWARDS_LIMITS_URL = "/api/v1/rewards/my-limits"
 REWARDS_AD_URL = "/api/v1/rewards/ad-watched"
 
-VALID_EMAIL = "reward_user@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_PHONE = _phone("reward_user@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE = {
@@ -21,16 +25,12 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, mock_verification_code=None) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": VALID_EMAIL})
-    assert res.status_code == 200, res.text
-
+async def register_user(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(VALID_EMAIL, VALID_CODE)
+        await mock_verification_code(phone, VALID_CODE)
 
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": VALID_EMAIL, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 

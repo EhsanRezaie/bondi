@@ -66,7 +66,6 @@ async def _build_admin_user_response(
         email=user.email,
         phone=user.phone,
         phone_verified=bool(user.phone_verified),
-        google_id=user.google_id,
         registration_status=user.registration_status,
         token_version=user.token_version,
         referral_code=user.referral_code,

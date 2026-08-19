@@ -23,10 +23,9 @@ class AdminUserPhotoResponse(BaseModel):
 class AdminUserResponse(BaseModel):
     # Account
     id: UUID
-    email: str
     phone: Optional[str] = None
     phone_verified: bool
-    google_id: Optional[str] = None
+    email: Optional[str] = None
     registration_status: Optional[str] = None
     token_version: Optional[int] = None
     referral_code: Optional[str] = None
@@ -106,9 +105,9 @@ class AdminPremiumGrant(BaseModel):
 class AdminUserListItem(BaseModel):
     """Minimal user row for the paginated admin search list."""
     id: UUID
-    email: str
     phone: Optional[str] = None
     phone_verified: bool
+    email: Optional[str] = None
     is_active: bool
     created_at: datetime
     last_seen_at: Optional[datetime] = None
@@ -163,7 +162,7 @@ class AdminTicketResponse(BaseModel):
     user_id: UUID
     user_uid: str
     user_name: str
-    user_email: str
+    user_email: Optional[str] = None
     subject: str
     message: str
     last_message: Optional[str] = None
@@ -193,7 +192,7 @@ class AdminPhotoDetailResponse(BaseModel):
     id: UUID
     user_id: UUID
     user_name: str
-    user_email: str
+    user_email: Optional[str] = None
     url: str
     is_main: bool
     status: str
@@ -239,7 +238,7 @@ class AdminPendingPhotoResponse(BaseModel):
     id: UUID
     user_id: UUID
     user_name: Optional[str] = None
-    user_email: str
+    user_email: Optional[str] = None
     url: str
     is_main: bool
     status: str

@@ -1,15 +1,19 @@
+
 import pytest
 from httpx import AsyncClient
 from app.core.config import settings
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
+
 
 ADMIN_DASHBOARD_URL = "/api/v1/admin/dashboard"
 ADMIN_KEY = settings.ADMIN_SECRET_KEY
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 VALID_CODE = "123456"
-VALID_PASSWORD = "strongpass123"
 
 COMPLETE_PROFILE = {
     "name": "Test User",
@@ -20,15 +24,11 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, email: str, mock_verification_code) -> dict:
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
+async def register_user(client: AsyncClient, phone: str, mock_verification_code) -> dict:
+    """Helper: complete full registration via phone OTP flow."""
+    await mock_verification_code(phone, VALID_CODE)
 
-    await mock_verification_code(email, VALID_CODE)
-
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email, "code": VALID_CODE, "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
@@ -45,7 +45,7 @@ class TestAdminDashboard:
     async def test_dashboard_overview_success(self, client: AsyncClient, mock_verification_code):
         """Admin should get dashboard overview stats"""
         for i in range(3):
-            await register_user(client, f"dashboard_{i}@example.com", mock_verification_code)
+            await register_user(client, _phone(f"dashboard_{i}@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(ADMIN_DASHBOARD_URL, headers=admin_headers)

@@ -1,13 +1,17 @@
+
 import pytest
 from httpx import AsyncClient
+def _phone(key: str) -> str:
+    """Derive a deterministic, unique E.164 phone number from a string key."""
+    import hashlib
+    return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-REGISTER_INIT_URL = "/api/v1/auth/register/init"
-REGISTER_VERIFY_URL = "/api/v1/auth/register/verify"
+
+VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 TICKETS_URL = "/api/v1/tickets"
 
-VALID_EMAIL = "ticket_user@example.com"
-VALID_PASSWORD = "strongpass123"
+VALID_PHONE = _phone("ticket_user@example.com")
 VALID_CODE = "123456"
 
 COMPLETE_PROFILE = {
@@ -21,27 +25,17 @@ COMPLETE_PROFILE = {
 
 async def register_user(
     client: AsyncClient,
-    email: str = VALID_EMAIL,
+    phone: str = VALID_PHONE,
     mock_verification_code=None,
 ) -> dict:
-    # Step 1: Init
-    res = await client.post(REGISTER_INIT_URL, json={"email": email})
-    assert res.status_code == 200, res.text
-
-    # Step 2: Store verification code
+    """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
-        await mock_verification_code(email, VALID_CODE)
+        await mock_verification_code(phone, VALID_CODE)
 
-    # Step 3: Verify
-    res = await client.post(REGISTER_VERIFY_URL, json={
-        "email": email,
-        "code": VALID_CODE,
-        "password": VALID_PASSWORD,
-    })
+    res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
     assert res.status_code == 200, res.text
     data = res.json()
 
-    # Step 4: Complete profile
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     res = await client.post(
         REGISTER_COMPLETE_URL,
@@ -215,7 +209,7 @@ class TestUserTickets:
         """Should not allow viewing other user's ticket"""
         # Create user A with ticket
         userA_data = await register_user(
-            client, VALID_EMAIL, mock_verification_code=mock_verification_code
+            client, VALID_PHONE, mock_verification_code=mock_verification_code
         )
         userA_headers = {"Authorization": f"Bearer {userA_data['access_token']}"}
 
@@ -228,7 +222,7 @@ class TestUserTickets:
 
         # Create user B trying to view user A's ticket
         userB_data = await register_user(
-            client, "userb@example.com", mock_verification_code=mock_verification_code
+            client, _phone("userb@example.com"), mock_verification_code=mock_verification_code
         )
         userB_headers = {"Authorization": f"Bearer {userB_data['access_token']}"}
 
@@ -319,7 +313,7 @@ class TestUserTicketReplies:
     async def test_reply_to_other_users_ticket(self, client: AsyncClient, mock_verification_code):
         """Should not allow replying to another user's ticket (IDOR)"""
         userA_data = await register_user(
-            client, VALID_EMAIL, mock_verification_code=mock_verification_code
+            client, VALID_PHONE, mock_verification_code=mock_verification_code
         )
         userA_headers = {"Authorization": f"Bearer {userA_data['access_token']}"}
 
@@ -331,7 +325,7 @@ class TestUserTicketReplies:
         ticket_id = create_res.json()["id"]
 
         userB_data = await register_user(
-            client, "userb_reply@example.com", mock_verification_code=mock_verification_code
+            client, _phone("userb_reply@example.com"), mock_verification_code=mock_verification_code
         )
         userB_headers = {"Authorization": f"Bearer {userB_data['access_token']}"}
 
