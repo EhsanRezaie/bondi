@@ -232,7 +232,7 @@ iranian-dating-app/
 │   ├── .env
 │   ├── .env.example
 │   ├── .env.test
-│   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, glitchtip)
+│   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, bondi_glitchtip)
 │   ├── docker-compose.test.yml            # Test infrastructure (db_test, redis_test, minio-test)
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -302,7 +302,7 @@ iranian-dating-app/
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/dating_db
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/bondi
 REDIS_URL=redis://localhost:6379
 
 # Security
@@ -395,7 +395,7 @@ FCM_SERVICE_ACCOUNT_PATH=firebase-service-account.json
 ### `.env.test`
 
 ```env
-DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@localhost:5433/dating_test
+DATABASE_URL=postgresql+asyncpg://bondi_admin:CHANGE_ME@localhost:5433/bondi_test
 REDIS_URL=redis://localhost:6380
 
 SECRET_KEY=test-secret-key
@@ -1172,11 +1172,11 @@ CREATE INDEX idx_messages_match ON messages(match_id, created_at DESC);
 
 ## 12. Testing Strategy
 
-### Test Files (all in `tests/done/`)
+### Test Files (all in `tests/`)
 
 | Session | Test Files | Tests | Status |
 |---------|------------|-------|--------|
-| All | 33 test files in `tests/done/` | **627** | **✅ All passing** |
+| All | 33 test files in `tests/` | **627** | **✅ All passing** |
 | 25 | test_auth, test_users, test_photos, test_prompts, test_settings, test_encryption | 101 | ✅ |
 | 25 | test_swipes, test_matches, test_blocks, test_discover, test_search | 110 | ✅ |
 | 25 | test_rewards, test_referrals, test_subscriptions, test_daily_limits | 79 | ✅ |
@@ -1190,13 +1190,13 @@ CREATE INDEX idx_messages_match ON messages(match_id, created_at DESC);
 ### Run All Tests
 
 ```bash
-pytest tests/done/ -v
+pytest tests/ -v
 ```
 
 ### Run a Single File
 
 ```bash
-pytest tests/done/test_messages_encryption.py -v
+pytest tests/test_messages_encryption.py -v
 ```
 
 ---
@@ -1211,11 +1211,11 @@ version: '3.9'
 services:
   db:
     image: postgis/postgis:15-3.3
-    container_name: dating_db
+    container_name: bondi
     environment:
-      POSTGRES_USER: dating_user
-      POSTGRES_PASSWORD: dating_pass
-      POSTGRES_DB: dating_db
+      POSTGRES_USER: bondi_admin
+      POSTGRES_PASSWORD: CHANGE_ME
+      POSTGRES_DB: bondi
     ports:
       - "5432:5432"
     volumes:
@@ -1223,13 +1223,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: dating_redis
+    container_name: bondi_redis
     ports:
       - "6379:6379"
 
   minio:
     image: minio/minio:latest
-    container_name: dating_minio
+    container_name: bondi_minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -1247,7 +1247,7 @@ services:
 
   minio-init:
     image: minio/mc:latest
-    container_name: dating_minio_init
+    container_name: bondi_minio_init
     depends_on:
       minio:
         condition: service_healthy
@@ -1273,11 +1273,11 @@ version: '3.9'
 services:
   db_test:
     image: postgis/postgis:15-3.3
-    container_name: dating_db_test
+    container_name: bondi_test
     environment:
-      POSTGRES_USER: dating_user
-      POSTGRES_PASSWORD: dating_pass
-      POSTGRES_DB: dating_test
+      POSTGRES_USER: bondi_admin
+      POSTGRES_PASSWORD: CHANGE_ME
+      POSTGRES_DB: bondi_test
     ports:
       - "5433:5432"
     volumes:
@@ -1285,13 +1285,13 @@ services:
 
   redis_test:
     image: redis:7-alpine
-    container_name: dating_redis_test
+    container_name: bondi_redis_test
     ports:
       - "6380:6379"
 
   minio-test:
     image: minio/minio:latest
-    container_name: dating_minio_test
+    container_name: bondi_minio_test
     command: server /data --console-address ":9091"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -1309,7 +1309,7 @@ services:
 
   minio-test-init:
     image: minio/mc:latest
-    container_name: dating_minio_test_init
+    container_name: bondi_minio_test_init
     depends_on:
       minio-test:
         condition: service_healthy
@@ -1411,7 +1411,7 @@ alembic downgrade -1
 
 | Feature | Status |
 |---------|--------|
-| Migrate all 29 test files to `tests/done/` | ✅ |
+| Migrate all 29 test files to `tests/` | ✅ |
 | Fix `User.profile` access across 10+ endpoints (add `selectinload`) | ✅ |
 | Convert all tests to 3-step registration flow | ✅ |
 | Fix `user.premium_until` → `user.profile.premium_until` in subscriptions | ✅ |
@@ -1574,7 +1574,7 @@ Every endpoint in the app now declares a proper `response_model`, so Redoc shows
 
 ### ✅ Session 32 Complete — WebSocket Tests (Push Shape Validation + Manager Unit Tests)
 
-**9 new tests in `tests/done/test_websocket.py`:**
+**9 new tests in `tests/test_websocket.py`:**
 
 | Test | What it validates |
 |------|-------------------|
@@ -1606,8 +1606,8 @@ Every endpoint in the app now declares a proper `response_model`, so Redoc shows
 | `get_logger(name)` interface kept identical — all callers unchanged | ✅ |
 | `GLITCHTIP_DSN=` added to `.env.example` (empty, fill in production) | ✅ |
 | `sentry-sdk[fastapi]` added to `requirements.txt` | ✅ |
-| `glitchtip` service + init added to `docker-compose.yml` (reuses existing Postgres + Redis) | ✅ |
-| `glitchtip-test` service + init added to `docker-compose.test.yml` (port 8081, separate DB) | ✅ |
+| `bondi_glitchtip` service + init added to `docker-compose.yml` (reuses existing Postgres + Redis) | ✅ |
+| `bondi_glitchtip-test` service + init added to `docker-compose.test.yml` (port 8081, separate DB) | ✅ |
 | `logger.exception()` added to `app/db/session.py` before rollback + `raise` | ✅ |
 | Logger declarations added to **35 files**: 25 endpoints, 3 services, 6 core, 1 db | ✅ |
 | **42 existing log calls** converted to structured key=value format across 9 files | ✅ |
@@ -1616,13 +1616,13 @@ Every endpoint in the app now declares a proper `response_model`, so Redoc shows
 
 **Running GlitchTip (dev):**
 ```bash
-docker compose up -d glitchtip
+docker compose up -d bondi_glitchtip
 ```
 Opens at `http://localhost:8080` — create account → create project → get DSN.
 
 **Running GlitchTip (test):**
 ```bash
-docker compose -f docker-compose.test.yml up -d glitchtip-test
+docker compose -f docker-compose.test.yml up -d bondi_glitchtip-test
 ```
 Opens at `http://localhost:8081` — separate database and Redis namespace.
 
@@ -1656,7 +1656,7 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 | `User.device_tokens` relationship | ✅ |
 | `FCM_SERVICE_ACCOUNT_PATH` in config + .env | ✅ |
 | `firebase-admin==6.8.0` dependency | ✅ |
-| `tests/done/test_push_notifications.py` — 9 tests (6 device token + 3 push) | ✅ |
+| `tests/test_push_notifications.py` — 9 tests (6 device token + 3 push) | ✅ |
 | **Total: 556 tests passing** | **✅** |
 
 ### ✅ Session 35 Complete — Auth Hardening
@@ -1934,7 +1934,7 @@ Search endpoint now returns the same response shape as discover.
 |------|--------|
 | `app/db/session.py` | `except HTTPException: raise` → `except StarletteHTTPException: raise` (catches both fastapi.HTTPException + slowapi RateLimitExceeded) |
 | `app/services/reward_service.py` | `.scalar_one()` → `.scalar_one_or_none()` + fallback SELECT when row exists |
-| `tests/done/test_face_verification.py` | Hardcoded `"turn_left"` → dynamic `wrong_type` based on generated challenge |
+| `tests/test_face_verification.py` | Hardcoded `"turn_left"` → dynamic `wrong_type` based on generated challenge |
 
 ### ✅ Session 49 Complete — Live Likes/Chats Remaining in API Responses
 
@@ -1976,7 +1976,7 @@ Full WebSocket architecture upgrade: replaced local dict storage with Redis Pub/
 | `app/api/v1/endpoints/swipes.py` | `_background_match_notification` passes `redis_client` to `broadcast_match()` |
 | `app/api/v1/endpoints/messages.py` | `_background_websocket_send` passes `redis_client` to `send_to_match()`; updated all 3 `background_tasks.add_task` calls |
 | `tests/conftest.py` | Updated `mock_websocket_manager` fixture to also mock `send_to_match` |
-| `tests/done/test_websocket.py` | Updated 5 existing unit tests for new signatures; added 10 new unit tests for typing, presence, heartbeat |
+| `tests/test_websocket.py` | Updated 5 existing unit tests for new signatures; added 10 new unit tests for typing, presence, heartbeat |
 
 **Redis keys introduced:**
 | Key | Type | TTL | Purpose |
@@ -2002,7 +2002,7 @@ Full WebSocket architecture upgrade: replaced local dict storage with Redis Pub/
 | `app/api/v1/endpoints/swipes.py` | Added `redis_client` to `broadcast_match` call |
 | `app/api/v1/endpoints/messages.py` | Added `redis_client` to `send_to_match` call |
 | `tests/conftest.py` | Updated mock fixture |
-| `tests/done/test_websocket.py` | 15 tests passing (5 updated + 10 new) |
+| `tests/test_websocket.py` | 15 tests passing (5 updated + 10 new) |
 
 ---
 
@@ -2032,7 +2032,7 @@ Added real-time online presence to search and discover, plus `sort_by=last_seen`
 | `app/api/v1/endpoints/search.py` | `last_seen` sort branch; Redis pipeline `EXISTS` for `online:{uid}`; privacy-aware response builder; module-level `import app.core.redis as redis_module` for test fixture swap |
 | `app/api/v1/endpoints/discover.py` | Same Redis presence + privacy logic; module-level redis import |
 | `app/schemas/search.py` | `sort_by` regex: `^(recent\|distance\|age\|name\|last_seen)$` |
-| `tests/done/test_search.py` | Added `TestSearchOnlineSort` class (3 tests) |
+| `tests/test_search.py` | Added `TestSearchOnlineSort` class (3 tests) |
 
 **Files NOT Modified:**
 - `app/schemas/discover.py` — already had `last_seen_at` + `is_online` in `ProfileResponse`

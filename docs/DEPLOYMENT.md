@@ -43,7 +43,7 @@ in order the first time; use the section headers as a checklist thereafter.
              │  │ celery-  │  │ celery-   │      │
              │  │ worker   │  │ beat      │      │
              │  └──────────┘  └───────────┘      │
-             │  glitchtip (live on :8080)        │
+             │  bondi_glitchtip (live on :8080)        │
              └───────────────────────────────────┘
 ```
 
@@ -51,8 +51,8 @@ in order the first time; use the section headers as a checklist thereafter.
 
 | Network | Name | Visibility | Attached to |
 |---------|------|-----------|-------------|
-| `frontend` | `dating_frontend` | Public bridge | `nginx`, `app`, `celery-worker`, `celery-beat` (outbound egress for FCM) |
-| `internal` | `dating_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, glitchtip*, migrate, plus nginx/app/workers (media proxy + DB/Redis) |
+| `frontend` | `bondi_frontend` | Public bridge | `nginx`, `app`, `celery-worker`, `celery-beat` (outbound egress for FCM) |
+| `internal` | `bondi_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, bondi_glitchtip*, migrate, plus nginx/app/workers (media proxy + DB/Redis) |
 
 - The `internal` network is created with `internal: true` — containers on it can
   only reach each other; nothing there is reachable from the host or internet.
@@ -60,7 +60,7 @@ in order the first time; use the section headers as a checklist thereafter.
   attaching to `internal` is what lets it proxy `/photos-*` to `minio:9000`.
 - `celery-worker`/`celery-beat` also join both: `internal` for DB (via pgbouncer)
   + Redis, `frontend` so FCM push calls can reach Google.
-- Only `nginx` (80/443) and `glitchtip` (8080) publish host ports.
+- Only `nginx` (80/443) and `bondi_glitchtip` (8080) publish host ports.
 - **db / redis / minio do NOT publish ports** — never expose them directly.
 
 ---
@@ -148,9 +148,9 @@ Set **at minimum** these values (📌 = must change):
 
 ```env
 # --- Postgres (REPLACED in-compose by pgbouncer URL; used to auth) ---
-POSTGRES_USER=dating_user
+POSTGRES_USER=bondi_admin
 POSTGRES_PASSWORD=<openssl rand -hex 16>            # 📌
-POSTGRES_DB=dating_db
+POSTGRES_DB=bondi
 
 # --- Redis (NOW PASSWORD-PROTECTED) ---
 REDIS_PASSWORD=<openssl rand -hex 24>               # 📌
@@ -190,7 +190,7 @@ FCM_SERVICE_ACCOUNT_PATH=firebase-service-account.json
 
 # --- GlitchTip ---
 GLITCHTIP_SECRET_KEY=<openssl rand -hex 32>
-GLITCHTIP_DSN=http://public-key@glitchtip:80/2      # from step 5.6
+GLITCHTIP_DSN=http://public-key@bondi_glitchtip:80/2      # from step 5.6
 
 # --- Payments (only when you get a merchant ID) ---
 ZARINPAL_MERCHANT_ID=
@@ -218,8 +218,8 @@ ssh deploy@1.2.3.4 "chmod 600 /opt/demo-bondi/firebase-service-account.json"
 
 > **Good news 🙂** `deploy.sh` now runs full `docker compose up -d` (not
 > `--no-deps app`), so it **creates** brand-new services (`pgbouncer`,
-> `celery-worker`, `celery-beat`) and the two networks (`dating_frontend`,
-> `dating_internal`) on first boot. A one-time manual hand-rolled first boot is
+> `celery-worker`, `celery-beat`) and the two networks (`bondi_frontend`,
+> `bondi_internal`) on first boot. A one-time manual hand-rolled first boot is
 > still shown below for reference:
 
 ```bash
@@ -257,9 +257,9 @@ curl http://localhost/health/ready      # {"status":"ready","db":"ok","redis":"o
 ### 5.2 Redis auth
 
 ```bash
-docker exec dating_redis redis-cli -a "$REDIS_PASSWORD" ping     # PONG
+docker exec bondi_redis redis-cli -a "$REDIS_PASSWORD" ping     # PONG
 # without password it must now fail (auth-protected):
-docker exec dating_redis redis-cli ping                            # (error)
+docker exec bondi_redis redis-cli ping                            # (error)
 ```
 
 ### 5.3 PgBouncer
@@ -268,7 +268,7 @@ docker exec dating_redis redis-cli ping                            # (error)
 # AUTH_TYPE is scram-sha-256 — pgbouncer must speak SCRAM to PG15 (the DB user
 # stores a scram verifier, not md5). Without this you'll see:
 #   "cannot do SCRAM authentication: wrong password type"
-docker exec dating_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U dating_user -d pgbouncer'
+docker exec bondi_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U bondi_admin -d pgbouncer'
 # Expect 1–N pools, e.g. line cl_chat: 20 5 5 ...
 ```
 > PgBouncer uses transaction pooling, 20 default pool / 5 reserve, up to 1000
@@ -279,7 +279,7 @@ docker exec dating_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U dating_user -d 
 
 ```bash
 docker compose exec minio-init true    # ran at startup
-docker exec dating_minio sh -c 'mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && mc ls local'
+docker exec bondi_minio sh -c 'mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && mc ls local'
 # expect: photos-public/  photos-private/
 ```
 
@@ -303,7 +303,7 @@ org, project and **DSN**. Backport the DSN value into `.env` `GLITCHTIP_DSN`, th
 curl -s -o /dev/null -w '%{http_code}\n' http://1.2.3.4/metrics     # 403
 
 # from inside the stack — must be 200:
-docker exec dating_app sh -c 'curl -s http://localhost:8000/metrics | head -1'   # # HELP http_requests_total ...
+docker exec bondi_app sh -c 'curl -s http://localhost:8000/metrics | head -1'   # # HELP http_requests_total ...
 ```
 Point your Prometheus scraper at `http://app:8000/metrics` (dns on the internal
 network) and Grafana at Prometheus. The endpoint is `include_in_schema=False`
@@ -363,8 +363,8 @@ docker compose restart celery-worker celery-beat
 ### 7.4 Seed data (idempotent)
 
 ```bash
-docker exec dating_app python -m app.db.scripts.seed_interests
-docker exec dating_app python -m app.db.scripts.seed_dummy_users   # 1000 dev users local only in prod!
+docker exec bondi_app python -m app.db.scripts.seed_interests
+docker exec bondi_app python -m app.db.scripts.seed_dummy_users   # 1000 dev users local only in prod!
 ```
 > Seeding dummy users in production is almost certainly unwanted — run only on
 > a dev/staging box.
@@ -387,7 +387,7 @@ docker compose run --rm migrate alembic current
 | Who | What |
 |-----|------|
 | You | commit + `git push origin main` |
-| CI | `migrations` job (fresh DB + `alembic check`), `test` job (`pytest tests/done/`) |
+| CI | `migrations` job (fresh DB + `alembic check`), `test` job (`pytest tests/`) |
 | CI ssh step | drift guard (abort if server ≠ origin/main) → fast-forward merge → upload FCM key |
 | `scripts/deploy.sh` | build base → `docker compose build app migrate celery-worker celery-beat` → `docker compose run --rm migrate` → `docker compose up -d` (full stack, idempotent) → nginx reload → health check → rollback on failure |
 
@@ -406,7 +406,7 @@ cd /opt/demo-bondi && bash scripts/deploy.sh
   first, then push again. Sync is a strict `git merge --ff-only origin/main` —
   no `reset --hard`, no `git clean`.
 - `docker compose up -d` is idempotent: containers whose image/config changed are
-  recreated; unchanged services (db, redis, minio, glitchtip) stay up. It also
+  recreated; unchanged services (db, redis, minio, bondi_glitchtip) stay up. It also
   creates new services/volumes/networks on first boot, so a fresh box needs no
   separate `up -d` step.
 - `firebase-service-account.json` and `.env` are gitignored → they never appear
@@ -452,7 +452,7 @@ tar czf /opt/demo-minio-volume-$(date +%F).tar.gz -C /var/lib/docker/volumes/ de
 ```bash
 ./scripts/restore.sh backups/db_2026-08-01_031500.sql.gz   # usage: <file>
 ```
-It stops `app`, drops+recreates `dating_db`, re-plays the dump, starts `app`.
+It stops `app`, drops+recreates `bondi`, re-plays the dump, starts `app`.
 
 ---
 
@@ -487,7 +487,7 @@ ufw status verbose
 
 `.github/workflows/deploy.yml` — two jobs:
 - `migrations`: fresh DB → `alembic upgrade head` + `alembic check` (drift gate)
-- `test`: full `pytest tests/done/`
+- `test`: full `pytest tests/`
 - `deploy` (needs both): ssh-action → `scripts/deploy.sh`
 
 Required GitHub secrets:

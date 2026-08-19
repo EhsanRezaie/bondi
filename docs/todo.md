@@ -88,10 +88,10 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
    ```yaml
    migrate:
      build: .
-     container_name: dating_migrate
+     container_name: bondi_migrate
      env_file: .env
      environment:
-       DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
+       DATABASE_URL: postgresql+asyncpg://bondi_admin:CHANGE_ME@db:5432/bondi
      command: alembic upgrade head
      depends_on:
        db: { condition: service_healthy }
@@ -103,8 +103,8 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. Make the `app` entrypoint NOT run migrations (it only seeds). Keep seeding in `entrypoint.sh`.
 
 **Files to touch:** `entrypoint.sh`, `.gitignore`, `docker-compose.yml`, `docker-compose.test.yml` (optional).
-**Commands:** `git add alembic/versions/ && alembic upgrade head && pytest tests/done/ -q`.
-**Verify:** `docker compose up -d` → `docker compose logs migrate` shows the upgrade ran once; `docker exec dating_db psql -U dating_user -d dating_db -c "select * from alembic_version"` shows one head.
+**Commands:** `git add alembic/versions/ && alembic upgrade head && pytest tests/ -q`.
+**Verify:** `docker compose up -d` → `docker compose logs migrate` shows the upgrade ran once; `docker exec bondi psql -U bondi_admin -d bondi -c "select * from alembic_version"` shows one head.
 **Gotchas:** The first committed migration must reflect the **current** prod schema exactly. Generate it cleanly once: `alembic revision --autogenerate -m "baseline"`, eyeball the diff against the live DB (`alembic check`), then commit. Never commit an empty/`pass` migration as the baseline.
 
 ### P0-2 — Cache `get_current_user` in Redis (DB hit on every authenticated request) · `S` · NEW
@@ -158,7 +158,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. Because the cache key includes `token_version`, a password change auto-invalidates (old version's key is never requested) — safe.
 
 **Files to touch:** `app/core/cache.py`, `app/core/deps.py`, `app/api/v1/endpoints/auth.py`, `app/api/v1/endpoints/users.py`, admin endpoints.
-**Commands:** `pytest tests/done/test_auth.py tests/done/test_users.py -v`.
+**Commands:** `pytest tests/test_auth.py tests/test_users.py -v`.
 **Verify:** Add a counter; call the same endpoint twice with the same token → DB query count should drop from 3 to 0 on the 2nd call. `EXISTS cache:auth:<id>:v1` in Redis.
 **Gotchas:**
 - Don't cache the full SQLAlchemy ORM instance (it's bound to a session). Cache a plain dict and reconstruct a lightweight object, OR cache the already-serialized `/users/me` response and have `get_current_user` return a minimal dataclass. The cleanest: cache id+token_version+is_active+profile_dict+settings_dict.
@@ -206,7 +206,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. (Optional, bigger win) The per-match key is derived from a **server secret**, not a user password — PBKDF2-100k is overkill. Switch to a single HMAC-SHA256 derivation (µs) once you've confirmed no compliance requirement forces PBKDF2. This makes decryption ~100× cheaper.
 
 **Files to touch:** `app/core/encryption.py`, `app/models/message.py` (keep property for single-message use, but bulk paths shouldn't use it), `app/api/v1/endpoints/messages.py`, `app/services/chat_service.py`.
-**Commands:** `pytest tests/done/test_messages*.py -v`.
+**Commands:** `pytest tests/test_messages*.py -v`.
 **Verify:** Benchmark `GET /messages/{id}?limit=30` — should drop from ~2s to <50ms. Watch CPU during concurrent chat loads.
 **Gotchas:**
 - The `content` property is used by admin endpoints and single-message reads — keep it working; just don't use it in bulk loops.
@@ -225,13 +225,13 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
    ```yaml
    pgbouncer:
      image: edoburu/pgbouncer:latest
-     container_name: dating_pgbouncer
+     container_name: bondi_pgbouncer
      restart: unless-stopped
      environment:
        DB_HOST: db
-       DB_USER: dating_user
-       DB_PASSWORD: dating_pass
-       DB_NAME: dating_db
+       DB_USER: bondi_admin
+       DB_PASSWORD: CHANGE_ME
+       DB_NAME: bondi
        POOL_MODE: transaction
        MAX_CLIENT_CONN: 1000
        DEFAULT_POOL_SIZE: 20
@@ -245,7 +245,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Point the app at PgBouncer. In `docker-compose.yml` app env override:
    ```yaml
    environment:
-     DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
+     DATABASE_URL: postgresql+asyncpg://bondi_admin:CHANGE_ME@pgbouncer:5432/bondi
    ```
 3. Tune the SQLAlchemy engine in `app/db/session.py` — small per-worker pool (PgBouncer does the real pooling) and disable the asyncpg prepared-statement cache (incompatible with transaction-mode PgBouncer):
    ```python
@@ -266,7 +266,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 **Files to touch:** `docker-compose.yml`, `app/db/session.py`, `.env` (DATABASE_URL if running locally without compose).
 **Commands:** `docker compose up -d pgbouncer app && docker compose logs pgbouncer`.
-**Verify:** `docker exec dating_db psql -U dating_user -c "select count(*) from pg_stat_activity"` stays ~20 under load. Load-test with `wrk`/`locust` at 100 concurrent — no `TooManyConnections`.
+**Verify:** `docker exec bondi psql -U bondi_admin -c "select count(*) from pg_stat_activity"` stays ~20 under load. Load-test with `wrk`/`locust` at 100 concurrent — no `TooManyConnections`.
 **Gotchas:**
 - PgBouncer transaction mode breaks server-side cursors and `LISTEN/NOTIFY`. The WebSocket manager uses Redis Pub/Sub (not PG NOTIFY), so you're fine — but don't add PG NOTIFY later without switching to session mode.
 - GlitchTip uses the same Postgres; give it its own small pool (P2-14).
@@ -291,7 +291,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
        - /etc/letsencrypt:/etc/letsencrypt:ro
        - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
    ```
-5. Set `GLITCHTIP_DSN` in `.env` to the **public** GlitchTip URL (or `http://<publickey>@glitchtip:80/1` for in-Docker).
+5. Set `GLITCHTIP_DSN` in `.env` to the **public** GlitchTip URL (or `http://<publickey>@bondi_glitchtip:80/1` for in-Docker).
 6. Force HTTP→HTTPS redirect (the 80→443 `return 301` is already in the commented block).
 
 **Files to touch:** `nginx/nginx.conf`, `docker-compose.yml`, `.env`, DNS.
@@ -356,7 +356,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. Set real `ZARINPAL_MERCHANT_ID` in `.env`, `ZARINPAL_SANDBOX=false` for prod, and a real `ZARINPAL_CALLBACK_URL=https://api.<domain>/api/v1/subscriptions/verify`.
 
 **Files to touch:** new `app/services/payment_service.py`, `app/api/v1/endpoints/subscriptions.py`, `app/services/subscriptions.py`, `.env`.
-**Commands:** `pytest tests/done/test_subscriptions.py -v` (add a test that mocks httpx to assert verify-on-fake-authority fails).
+**Commands:** `pytest tests/test_subscriptions.py -v` (add a test that mocks httpx to assert verify-on-fake-authority fails).
 **Verify:** In sandbox, walk through purchase → redirect → callback → premium granted. Try replaying the callback → should be idempotent (delete the Redis key after verify).
 **Gotchas:**
 - ZarinPal v4 wants amounts in **Rials** (toman × 10). The current `subscriptions.py` mixes both — standardize.
@@ -388,7 +388,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. Keep the existing test mock (`mock_email_service` patches `send_verification_code`) so tests stay deterministic.
 
 **Files to touch:** `app/services/email_service.py`, `app/api/v1/endpoints/auth.py`, `app/core/config.py`, `.env`.
-**Commands:** `pytest tests/done/test_auth.py -v`.
+**Commands:** `pytest tests/test_auth.py -v`.
 **Verify:** Register with a real inbox → receive the code email within seconds. Confirm wrong-code attempts don't leak the correct code.
 **Gotchas:**
 - Iranian mail delivery to Gmail can be unreliable / rate-limited. Consider a transactional provider (Mailgun/Postmark) with a non-Iranian SMTP relay.
@@ -450,7 +450,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Better: once P1-7 lands, push entirely to a Celery task so a failed FCM call can retry and never touches the request worker.
 
 **Files to touch:** `app/services/push_service.py`.
-**Commands:** `pytest tests/done/ -k push -v` (tests mock FCM; they'll still pass).
+**Commands:** `pytest tests/ -k push -v` (tests mock FCM; they'll still pass).
 **Verify:** Load-test 50 simultaneous matches → event-loop latency (p99) stays flat instead of spiking during the FCM bursts.
 **Gotchas:** `firebase_admin` is global-initialized (`push_service.py:13-29`) and not thread-safe to re-init. Keep the single `_initialize_firebase()` guard; just offload the *send* call, not the init.
 
@@ -482,7 +482,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. Even better: use a single `MGET` to batch all presigned URLs for a page instead of N round-trips.
 
 **Files to touch:** `app/services/photo_service.py`, `app/api/v1/endpoints/discover.py`, `app/api/v1/endpoints/search.py`, `app/schemas/discover.py` (response may only carry `main_photo_url` on the deck).
-**Commands:** `pytest tests/done/test_discover.py tests/done/test_search.py -v`.
+**Commands:** `pytest tests/test_discover.py tests/test_search.py -v`.
 **Verify:** Time `GET /discover?limit=20` — should drop dramatically. Redis `KEYS presign:*` shows cached URLs.
 **Gotchas:** If a photo's moderation status flips pending→approved, the cached presigned URL for the private version lingers 5 min — acceptable, but invalidate on `publish_photo` (`admin_photos.py`).
 
@@ -532,11 +532,11 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
      frontend:
        driver: bridge
    ```
-2. Put `db`, `redis`, `minio`, `pgbouncer` on `internal` only. Put `nginx` on `frontend` only. Put `app` (and `glitchtip`) on **both** so it can talk to both sides.
+2. Put `db`, `redis`, `minio`, `pgbouncer` on `internal` only. Put `nginx` on `frontend` only. Put `app` (and `bondi_glitchtip`) on **both** so it can talk to both sides.
 3. Remove `ports:` from `db`, `redis`, `minio`, `pgbouncer` in prod compose (keep them only in a dev override file).
 
 **Files to touch:** `docker-compose.yml`, optionally a `docker-compose.override.yml` for dev ports.
-**Commands:** `docker network inspect dating_internal | grep -i container`.
+**Commands:** `docker network inspect bondi_internal | grep -i container`.
 **Verify:** From the host, `nc -z localhost 6379` should fail in prod. From inside `app`, `redis-cli ping` works.
 **Gotchas:** Don't put GlitchTip on `internal` if it needs to receive events from outside — but it talks to `redis` and `db`, so `internal` (+ outbound only) is fine.
 
@@ -572,7 +572,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. On single-token logout (`revoke_refresh_token`), remove the matching jti from the set too.
 
 **Files to touch:** `app/core/redis.py`, `app/core/security.py` (jti already generated — reuse it), `auth.py` (store/refresh/logout).
-**Commands:** `pytest tests/done/test_auth.py -v`.
+**Commands:** `pytest tests/test_auth.py -v`.
 **Verify:** Change password with 50k tokens in Redis → completes in <50 ms (was seconds).
 **Gotchas:** The set `user_tokens:{user_id}` must have a TTL so it doesn't leak after the last token expires. Re-set the TTL on each `store_refresh_token`.
 
@@ -598,7 +598,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Optionally add a SlowAPI custom key func for the global 30/min too, but the Redis bucket is the real per-match throttle.
 
 **Files to touch:** `app/api/v1/endpoints/messages.py` (send endpoint), maybe `app/core/limiter.py`.
-**Commands:** `pytest tests/done/test_messages*.py -v` (add a test: 31st message to the same match → 429).
+**Commands:** `pytest tests/test_messages*.py -v` (add a test: 31st message to the same match → 429).
 **Verify:** Send 31 messages to one match fast → 429 on the 31st. Send 1 message to a different match → 200.
 **Gotchas:** Make sure `user_id` and `match_id` are both resolved **before** the bucket check (they are, in the existing send flow). Count the bucket by minute-epoch so it self-expires.
 
@@ -684,7 +684,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. Store the Tehran date in `daily_limits.date` (already the intent).
 
 **Files to touch:** `app/services/reward_service.py`, `app/services/chat_service.py`, any other `date.today()` in limit paths.
-**Commands:** `grep -rn 'date.today()\|datetime.now()' app/` then `pytest tests/done/ -k limit -v`.
+**Commands:** `grep -rn 'date.today()\|datetime.now()' app/` then `pytest tests/ -k limit -v`.
 **Verify:** Set server TZ to UTC; a like at 23:00 Tehran → `daily_limits.date` is today-Tehran, TTL ~1h.
 **Gotchas:** If a user travels, their "today" is still server-Tehran by design — that's the product decision (limits are per-calendar-day-Tehran). Don't use the user's device time.
 
@@ -703,7 +703,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 **Files to touch:** `app/services/chat_service.py`, and any hit from the grep.
 **Commands:** `grep -rn 'utcnow()' app/` (should return nothing after).
-**Verify:** `pytest tests/done/test_messages*.py -v`. Mark a message read → `read_at` is tz-aware in the DB.
+**Verify:** `pytest tests/test_messages*.py -v`. Mark a message read → `read_at` is tz-aware in the DB.
 **Gotchas:** None — this is a pure, mechanical improvement.
 
 ### P2-3 — Unmatched-chat path has no block check + spam vector · `M` · NEW
@@ -734,7 +734,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. Add a per-target rate limit (Redis bucket per `(sender, receiver)`) so a user can't mass-open unmatched chats.
 
 **Files to touch:** `app/api/v1/endpoints/messages.py`, `app/services/chat_service.py`, `app/models/block.py`.
-**Commands:** `pytest tests/done/test_messages*.py tests/done/test_blocks.py -v` (add tests: blocked user can't unmatched-chat; arbitrary UUID → 403/404).
+**Commands:** `pytest tests/test_messages*.py tests/test_blocks.py -v` (add tests: blocked user can't unmatched-chat; arbitrary UUID → 403/404).
 **Verify:** Block user B, then try to unmatched-message them as A → 403.
 **Gotchas:** Don't leak whether the block exists via timing — return the same 403/404 as "user not found" to avoid enumeration.
 
@@ -763,7 +763,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Getter: on decrypt failure, log to GlitchTip and return a safe placeholder string (e.g. `"[undecryptable]"`), never the raw ciphertext blob.
 
 **Files to touch:** `app/models/message.py`.
-**Commands:** `pytest tests/done/test_messages_encryption.py -v`.
+**Commands:** `pytest tests/test_messages_encryption.py -v`.
 **Verify:** Temporarily set a bad `ENCRYPTION_SECRET` → sending a message fails loudly (500/log), no plaintext row in DB.
 **Gotchas:** This is a fail-closed change — make sure no existing code path relies on the silent plaintext fallback (none should). Test the rotation script (P0-8) still works with the new raising setter.
 
@@ -783,7 +783,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. Add a small helper `verified_badge(profile) -> bool` and use it in both.
 
 **Files to touch:** `app/api/v1/endpoints/discover.py`, `app/api/v1/endpoints/search.py`, maybe `app/schemas/discover.py`.
-**Commands:** `pytest tests/done/test_discover.py tests/done/test_search.py -v`.
+**Commands:** `pytest tests/test_discover.py tests/test_search.py -v`.
 **Verify:** A face-verified user shows the badge in both discover and search; a non-verified shows it in neither.
 **Gotchas:** If `phone_verified` is the product's intended "verified" meaning for now, flip both to it instead — just pick one and use it everywhere.
 
@@ -805,7 +805,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Keep the silent fallback (don't raise) — availability is more important than cache freshness.
 
 **Files to touch:** `app/core/cache.py`.
-**Commands:** `pytest tests/done/ -q`.
+**Commands:** `pytest tests/ -q`.
 **Verify:** Stop Redis → hit `/interests` → GlitchTip shows `cache_get_failed` warnings; the endpoint still works (DB fallback).
 **Gotchas:** Use `logger.warning`, not `error`, so you don't page on-call for every cache miss during a Redis blip. Add an alert on a high rate of `cache_*_failed`.
 
@@ -830,7 +830,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 5. If even the ML model is too slow on CPU, move NSFW into the Celery worker (P1-7) — accept the photo as `pending`, then flip to `approved`/`rejected` after the async check.
 
 **Files to touch:** `app/services/nsfw_service.py`, `app/api/v1/endpoints/photos.py`, `requirements.txt` (`opennsfw2` or `onnxruntime` + model).
-**Commands:** `pytest tests/done/ -k nsfw -v`.
+**Commands:** `pytest tests/ -k nsfw -v`.
 **Verify:** Upload a set of diverse skin-tone portraits → none auto-rejected for NSFW. Upload actual NSFW → rejected.
 **Gotchas:** `opennsfw2` pulls TensorFlow (heavy image). Prefer an ONNX variant to keep the image lean (you already have `onnxruntime` pinned). Validate the model on your actual user-photo distribution before trusting the threshold.
 
@@ -855,7 +855,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 4. The 24h cache (`reverse_geocode` already caches) is good — keep it.
 
 **Files to touch:** `app/services/location_service.py`, `docker-compose.yml` (if self-hosting Nominatim).
-**Commands:** `pytest tests/done/test_locations.py -v`.
+**Commands:** `pytest tests/test_locations.py -v`.
 **Verify:** Hammer the location update endpoint → no 429/ban from OSM; results come from cache after the first.
 **Gotchas:** Self-hosted Nominatim needs ~30–70 GB RAM to build the planet; use the Iran extract (much smaller) or Photon (Elasticsearch) which is lighter.
 
@@ -876,7 +876,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Apply `ORDER BY` + `offset/limit` only on the data query.
 
 **Files to touch:** `app/api/v1/endpoints/notifications.py`.
-**Commands:** `pytest tests/done/test_notifications.py -v`.
+**Commands:** `pytest tests/test_notifications.py -v`.
 **Verify:** `EXPLAIN` the count query → no Sort node.
 **Gotchas:** Minor but it's a free win. The same pattern recurs in `matches.py` (P2-10) and `swipes.py` liked/likers.
 
@@ -898,7 +898,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Apply the same fix to `swipes.py` `get_liked`/`get_likers` count subqueries (`:457-468`).
 
 **Files to touch:** `app/api/v1/endpoints/matches.py`, `app/api/v1/endpoints/swipes.py`.
-**Commands:** `pytest tests/done/test_matches.py tests/done/test_swipes.py -v`.
+**Commands:** `pytest tests/test_matches.py tests/test_swipes.py -v`.
 **Verify:** `EXPLAIN ANALYZE` the count → no join to `user_profiles`/`photos`.
 **Gotchas:** Make sure the count filter matches the data query's filter exactly (same `is_active`, same user conditions) or the total/next_offset will drift.
 
@@ -918,7 +918,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. If you want runtime-overridable, make it a `@staticmethod` reading `settings` on each call.
 
 **Files to touch:** `app/services/photo_service.py`.
-**Commands:** `pytest tests/done/test_photos.py -v`.
+**Commands:** `pytest tests/test_photos.py -v`.
 **Verify:** Upload a 7MB photo with `MAX_PHOTO_SIZE_MB=10` → accepted (was rejected).
 **Gotchas:** Make sure the nginx `client_max_body_size` (P2-13) is at least as large, or nginx 413s before the app's check runs.
 
@@ -945,7 +945,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Replace the per-call `aioboto3.Session()` in `media_service.py` and `nsfw_service.py:quarantine_photo` with `from app.services.storage import s3_client`.
 
 **Files to touch:** new `app/services/storage.py`, `app/services/media_service.py`, `app/services/photo_service.py`, `app/services/nsfw_service.py`.
-**Commands:** `pytest tests/done/ -q`.
+**Commands:** `pytest tests/ -q`.
 **Verify:** Behavior unchanged; fewer connection churn logs in MinIO.
 **Gotchas:** `storage.py` currently returns empty content — it's a placeholder file; repurpose it.
 
@@ -971,24 +971,24 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 - [ ] Done
 
-**Evidence:** `docker-compose.yml:129` GlitchTip `DATABASE_URL: postgres://dating_user:dating_pass@db:5432/glitchtip` — same Postgres process as the app.
+**Evidence:** `docker-compose.yml:129` GlitchTip `DATABASE_URL: postgres://bondi_admin:CHANGE_ME@db:5432/bondi_glitchtip` — same Postgres process as the app.
 
 **Why:** Under load, GlitchTip's event inserts compete with app queries for the same Postgres connection budget/CPU. A bug storm can degrade the app itself (the error tracker making the app slower is a bad feedback loop).
 
 **Fix (step-by-step):**
 1. Spin up a second small Postgres for GlitchTip (or a separate database with its own user + connection limit):
    ```yaml
-   glitchtip-db:
+   bondi_glitchtip-db:
      image: postgis/postgis:15-3.3
-     environment: { POSTGRES_USER: glitchtip, POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASS}, POSTGRES_DB: glitchtip }
-   glitchtip:
+     environment: { POSTGRES_USER: bondi_glitchtip, POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASS}, POSTGRES_DB: bondi_glitchtip }
+   bondi_glitchtip:
      environment:
-       DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASS}@glitchtip-db:5432/glitchtip
+       DATABASE_URL: postgres://bondi_glitchtip:${GLITCHTIP_DB_PASS}@bondi_glitchtip-db:5432/bondi_glitchtip
    ```
-2. Alternatively set a `connection_limit` on the `dating_user` role for the glitchtip DB.
+2. Alternatively set a `connection_limit` on the `bondi_admin` role for the bondi_glitchtip DB.
 
 **Files to touch:** `docker-compose.yml`.
-**Commands:** `docker compose up -d glitchtip-db glitchtip`.
+**Commands:** `docker compose up -d bondi_glitchtip-db bondi_glitchtip`.
 **Verify:** `pg_stat_activity` for the app DB no longer shows GlitchTip connections.
 **Gotchas:** GlitchTip needs its migrations run; the worker already does `python manage.py migrate` — keep that pointing at the new DB.
 
@@ -1040,7 +1040,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Move the `grant_premium_days` calls to **after** the reward insert succeeds, so you don't grant premium then fail on the reward row.
 
 **Files to touch:** `app/api/v1/endpoints/referrals.py`.
-**Commands:** `pytest tests/done/test_referrals.py -v` (add: two concurrent claims → one 400, one 200, only one premium grant).
+**Commands:** `pytest tests/test_referrals.py -v` (add: two concurrent claims → one 400, one 200, only one premium grant).
 **Verify:** Two near-simultaneous claims → one succeeds, one clean 400, no 500, no double premium.
 **Gotchas:** The ordering fix is important — don't grant premium before the reward row commits, or a failed reward leaves a dangling subscription.
 
@@ -1079,7 +1079,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 3. Cap array sizes: on `read`, reject `message_ids` longer than ~200 to prevent a giant-payload DoS.
 
 **Files to touch:** `app/schemas/message.py` (add WS inbound models), `app/api/v1/websocket/chat.py`, `app/api/v1/websocket/matches.py`.
-**Commands:** `pytest tests/done/ -k websocket -v`.
+**Commands:** `pytest tests/ -k websocket -v`.
 **Verify:** Send `{"type":"read","message_ids":[200 UUIDs]}` → handled; send garbage JSON → `error` frame, connection stays open.
 **Gotchas:** Don't echo the raw payload in the error (could leak data). Keep `except Exception: break` as a last resort but log the reason first so GlitchTip sees it.
 
@@ -1104,7 +1104,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. If a "rotated-from" jti is ever presented again → it's reuse → revoke the **whole family** (delete all its jtis), forcing re-login everywhere. This is the OAuth2 refresh-rotation theft-detection pattern.
 3. Pair with P1-5's `user_tokens` set for bulk revoke.
 **Files to touch:** `app/core/redis.py`, `app/api/v1/endpoints/auth.py`.
-**Commands:** `pytest tests/done/test_auth.py -v` (add: reuse of rotated token → whole family revoked).
+**Commands:** `pytest tests/test_auth.py -v` (add: reuse of rotated token → whole family revoked).
 **Verify:** Replay an already-rotated refresh token → 401 + all that family's tokens gone.
 **Gotchas:** This is the gold-standard defense; optional before launch but expected for a dating app handling sensitive DMs.
 
@@ -1120,7 +1120,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 2. Add `await log_admin_action(...)` to each missing one (actor, action, target, timestamp).
 3. Add tests that each admin write produces an `admin_logs` row.
 **Files to touch:** any `admin_*.py` endpoint missing the call; tests.
-**Commands:** `pytest tests/done/ -k admin -v`.
+**Commands:** `pytest tests/ -k admin -v`.
 **Verify:** Grep returns zero admin mutation endpoints without `log_admin_action`.
 **Gotchas:** Read-only admin endpoints (dashboard stats) don't strictly need logging, but writes (ban, photo approve, message delete) absolutely do.
 
@@ -1132,11 +1132,11 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 **Evidence:** `.env:119` `GLITCHTIP_DSN=http://...@localhost:8080/1`. In prod the app container can't reach `localhost:8080` (that's the host). `main.py:55` only inits Sentry if `GLITCHTIP_DSN` is set — so errors silently aren't captured.
 **Fix (step-by-step):**
-1. Set the DSN to the container-reachable GlitchTip: `http://<publickey>@glitchtip:80/1` (or the public GlitchTip URL).
+1. Set the DSN to the container-reachable GlitchTip: `http://<publickey>@bondi_glitchtip:80/1` (or the public GlitchTip URL).
 2. Confirm `traces_sample_rate=0.1` in `main.py:65` is sensible (it is).
 3. Test capture from inside the container.
 **Files to touch:** `.env` (prod), `main.py`.
-**Commands:** `docker exec dating_app python -c "import sentry_sdk; sentry_sdk.capture_message('test'); sentry_sdk.flush()"`.
+**Commands:** `docker exec bondi_app python -c "import sentry_sdk; sentry_sdk.capture_message('test'); sentry_sdk.flush()"`.
 **Verify:** The test message appears in the GlitchTip UI.
 **Gotchas:** If GlitchTip is down, the Sentry SDK fails open (no crash) — good. Make sure the DSN's project number matches the GlitchTip project you created.
 
@@ -1168,7 +1168,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Fix (step-by-step):**
 1. Postgres: nightly `pg_dump` to off-box (S3/B2) cron, or WAL-G for PITR:
    ```sh
-   docker exec dating_db pg_dump -U dating_user dating_db | gzip | \
+   docker exec bondi pg_dump -U bondi_admin bondi | gzip | \
      aws s3 cp - s3://bondi-backups/$(date +%F).sql.gz
    ```
 2. MinIO: `mc mirror` cron to a remote MinIO/S3, or enable bucket versioning + replication.
@@ -1267,7 +1267,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 - [ ] P6-6 Set up firewall: `sudo bash scripts/firewall.sh`
 - [ ] P6-7 Add GitHub Secrets for auto-deploy (`VPS_HOST`, `VPS_USERNAME`, `VPS_PASSWORD`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`)
 
-> The CI pipeline is `.github/workflows/deploy.yml` — it runs `pytest tests/done/` then SSH-deploys via `scripts/deploy.sh`. Note: CI installs deps with `pip install -r requirements.txt` (no lockfile) and runs tests against ephemeral GitHub services; it does **not** run migrations (it builds tables from models) — see P4-5.
+> The CI pipeline is `.github/workflows/deploy.yml` — it runs `pytest tests/` then SSH-deploys via `scripts/deploy.sh`. Note: CI installs deps with `pip install -r requirements.txt` (no lockfile) and runs tests against ephemeral GitHub services; it does **not** run migrations (it builds tables from models) — see P4-5.
 
 ---
 

@@ -12,13 +12,13 @@ jobs:
       db_test:
         image: postgis/postgis:15-3.3
         env:
-          POSTGRES_USER: dating_user
-          POSTGRES_PASSWORD: dating_pass
-          POSTGRES_DB: dating_test
+          POSTGRES_USER: bondi_admin
+          POSTGRES_PASSWORD: WqPEfyoNesuS5xky
+          POSTGRES_DB: bondi_test
         ports:
           - 5433:5432
         options: >-
-          --health-cmd "pg_isready -U dating_user -d dating_test"
+          --health-cmd "pg_isready -U bondi_admin -d bondi_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -37,7 +37,7 @@ jobs:
 
       - name: Verify migrations (fresh DB, drift check)
         run: |
-          export DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@localhost:5433/dating_test
+          export DATABASE_URL=postgresql+asyncpg://bondi_admin:WqPEfyoNesuS5xky@localhost:5433/bondi_test
           export REDIS_URL=redis://localhost:6380
           export SECRET_KEY=ci-secret-key
           export S3_ENDPOINT_URL=http://localhost:9090
@@ -58,13 +58,13 @@ jobs:
       db_test:
         image: postgis/postgis:15-3.3
         env:
-          POSTGRES_USER: dating_user
-          POSTGRES_PASSWORD: dating_pass
-          POSTGRES_DB: dating_test
+          POSTGRES_USER: bondi_admin
+          POSTGRES_PASSWORD: WqPEfyoNesuS5xky
+          POSTGRES_DB: bondi_test
         ports:
           - 5433:5432
         options: >-
-          --health-cmd "pg_isready -U dating_user -d dating_test"
+          --health-cmd "pg_isready -U bondi_admin -d bondi_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -88,15 +88,15 @@ jobs:
           docker run -d \
             --name minio-test \
             -p 9090:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
+            -e MINIO_ROOT_USER=bondi_minio \
+            -e MINIO_ROOT_PASSWORD=rKpgfRsEqw9yqavC \
             minio/minio server /data --console-address ":9091"
           sleep 5
           docker run --rm \
             --network host \
             --entrypoint sh \
             minio/mc -c "
-              mc alias set local http://localhost:9090 minioadmin minioadmin &&
+              mc alias set local http://localhost:9090 bondi_minio rKpgfRsEqw9yqavC &&
               mc mb --ignore-existing local/photos-public-test &&
               mc mb --ignore-existing local/photos-private-test &&
               mc anonymous set download local/photos-public-test
@@ -112,7 +112,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest tests/done/ -v --tb=short
+        run: pytest tests/ -v --tb=short
 
       - name: Cleanup
         if: always()

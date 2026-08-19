@@ -205,7 +205,7 @@ After starting the server, open your browser:
 - **API docs (ReDoc):** http://localhost:8000/api/redoc
 - **OpenAPI JSON:** http://localhost:8000/api/openapi.json
 - **MinIO console:** http://localhost:9001 (login `minioadmin` / `minioadmin`) → browse uploaded photos, confirm `photos-public` and `photos-private` buckets exist
-- **GlitchTip dashboard:** http://localhost:8080 (login `admin@glitchtip.dev` / `admin123`) → error tracking dashboard
+- **GlitchTip dashboard:** http://localhost:8080 (login `admin@bondi_glitchtip.dev` / `admin123`) → error tracking dashboard
 
 ---
 
@@ -215,7 +215,7 @@ Copy `.env.example` to `.env` and fill in your values:
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@localhost:5432/dating_db
+DATABASE_URL=postgresql+asyncpg://bondi_admin:CHANGE_ME@localhost:5432/bondi
 
 # Redis
 REDIS_URL=redis://localhost:6379
@@ -335,7 +335,7 @@ docker compose up -d
 
 ## GlitchTip Error Tracking Setup
 
-[GlitchTip](https://glitchtip.com/) is a self-hosted, open-source error tracker — a drop-in Sentry alternative. It catches unhandled exceptions and errors from the FastAPI app and displays them in a web dashboard.
+[GlitchTip](https://bondi_glitchtip.com/) is a self-hosted, open-source error tracker — a drop-in Sentry alternative. It catches unhandled exceptions and errors from the FastAPI app and displays them in a web dashboard.
 
 ### How It Works
 
@@ -367,10 +367,10 @@ GlitchTip setup is the **same on all platforms** — it runs entirely in Docker.
 docker compose up -d
 
 # Verify all GlitchTip services are running:
-docker ps --filter "name=dating_glitchtip"
+docker ps --filter "name=bondi_bondi_glitchtip"
 # Should show:
-#   dating_glitchtip        Up   (web dashboard)
-#   dating_glitchtip_worker Up   (event worker)
+#   bondi_bondi_glitchtip        Up   (web dashboard)
+#   bondi_bondi_glitchtip_worker Up   (event worker)
 
 # Wait ~15 seconds for migrations, then open:
 # Dashboard: http://localhost:8080
@@ -384,8 +384,8 @@ docker ps --filter "name=dating_glitchtip"
 docker compose up -d
 
 # Verify:
-docker ps --filter "name=dating_glitchtip"
-# Should show both dating_glitchtip and dating_glitchtip_worker
+docker ps --filter "name=bondi_bondi_glitchtip"
+# Should show both bondi_bondi_glitchtip and bondi_bondi_glitchtip_worker
 
 # Open: http://localhost:8080
 ```
@@ -398,7 +398,7 @@ docker ps --filter "name=dating_glitchtip"
 docker compose up -d
 
 # Verify:
-docker ps --filter "name=dating_glitchtip"
+docker ps --filter "name=bondi_bondi_glitchtip"
 
 # Open: http://localhost:8080
 ```
@@ -414,7 +414,7 @@ docker compose up -d
 sleep 15
 
 # 3. Create admin user
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.contrib.auth import get_user_model
 User = get_user_model()
 user = User.objects.create_superuser(email='admin@yourdomain.com', password='CHANGEME')
@@ -422,7 +422,7 @@ print(f'Admin created: {user.email}')
 "
 
 # 4. Create organization + project + get DSN
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.apps import apps
 from django.contrib.auth import get_user_model
 
@@ -458,15 +458,15 @@ After `docker compose up -d`, GlitchTip needs a one-time initialization:
 sleep 15
 
 # 2. Create admin user
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.contrib.auth import get_user_model
 User = get_user_model()
-User.objects.create_superuser(email='admin@glitchtip.dev', password='admin123')
+User.objects.create_superuser(email='admin@bondi_glitchtip.dev', password='admin123')
 print('Admin created successfully')
 "
 
 # 3. Create organization, project, and API key
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.apps import apps
 from django.contrib.auth import get_user_model
 
@@ -477,7 +477,7 @@ OrgOwner = apps.get_model('organizations_ext', 'OrganizationOwner')
 ProjectModel = apps.get_model('projects', 'Project')
 KeyModel = apps.get_model('projects', 'ProjectKey')
 
-user = User.objects.get(email='admin@glitchtip.dev')
+user = User.objects.get(email='admin@bondi_glitchtip.dev')
 org = OrgModel.objects.create(name='DatingApp', slug='datingapp')
 org_user = OrgUser.objects.create(user=user, organization=org, role=0)
 OrgOwner.objects.create(organization_user=org_user, organization=org)
@@ -511,7 +511,7 @@ uvicorn app.main:app --reload
 
 # 2. Open the GlitchTip dashboard
 #    http://localhost:8080
-#    Login: admin@glitchtip.dev / admin123
+#    Login: admin@bondi_glitchtip.dev / admin123
 
 # 3. Send a test error from a separate terminal:
 source venv/bin/activate
@@ -576,25 +576,25 @@ with sentry_sdk.push_scope() as scope:
 
 | Container | Service | Purpose |
 |-----------|---------|---------|
-| `dating_glitchtip` | `glitchtip` | Web UI + event ingestion API (port 8080) |
-| `dating_glitchtip_worker` | `glitchtip-worker` | Background worker that processes events |
-| `dating_glitchtip_db_init` | `glitchtip-db-init` | One-shot: creates the `glitchtip` database |
+| `bondi_bondi_glitchtip` | `bondi_glitchtip` | Web UI + event ingestion API (port 8080) |
+| `bondi_bondi_glitchtip_worker` | `bondi_glitchtip-worker` | Background worker that processes events |
+| `bondi_bondi_glitchtip_db_init` | `bondi_glitchtip-db-init` | One-shot: creates the `bondi_glitchtip` database |
 
 ### Troubleshooting
 
 **500 error on `/api/0/users/me/` after login:**
-- Caused by using a `.local` email domain (e.g. `admin@glitchtip.local`) — Pydantic rejects `.local` as a reserved TLD
-- Fix: use a real domain like `admin@glitchtip.dev` or `admin@yourdomain.com`
-- If already created: `docker exec dating_glitchtip python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u = User.objects.get(is_superuser=True); u.email = 'admin@glitchtip.dev'; u.save()"`
+- Caused by using a `.local` email domain (e.g. `admin@bondi_glitchtip.local`) — Pydantic rejects `.local` as a reserved TLD
+- Fix: use a real domain like `admin@bondi_glitchtip.dev` or `admin@yourdomain.com`
+- If already created: `docker exec bondi_bondi_glitchtip python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u = User.objects.get(is_superuser=True); u.email = 'admin@bondi_glitchtip.dev'; u.save()"`
 
 **Events not showing up in dashboard:**
-- Check the worker is running: `docker ps --filter "name=dating_glitchtip_worker"`
-- If missing, the `glitchtip-worker` service was added after initial setup. Run: `docker compose up -d glitchtip-worker`
-- Worker logs: `docker logs dating_glitchtip_worker`
+- Check the worker is running: `docker ps --filter "name=bondi_bondi_glitchtip_worker"`
+- If missing, the `bondi_glitchtip-worker` service was added after initial setup. Run: `docker compose up -d bondi_glitchtip-worker`
+- Worker logs: `docker logs bondi_bondi_glitchtip_worker`
 
 **Dashboard shows "Mode: Web only":**
 - This means the worker container is not running. The web container always shows "Web only" — the worker is separate.
-- Fix: `docker compose up -d glitchtip-worker`
+- Fix: `docker compose up -d bondi_glitchtip-worker`
 
 **GlitchTip won't start / database errors:**
 - Recreate from scratch: `docker compose down -v && docker compose up -d`
@@ -607,7 +607,7 @@ with sentry_sdk.push_scope() as scope:
 **Port 8080 already in use:**
 - Change the mapping in `docker-compose.yml`:
   ```yaml
-  glitchtip:
+  bondi_glitchtip:
     ports:
       - "8180:80"   # use port 8180 instead
   ```
@@ -619,7 +619,7 @@ with sentry_sdk.push_scope() as scope:
 - Set a strong `GLITCHTIP_SECRET_KEY` (generate with `openssl rand -hex 32`)
 - Restrict `ALLOWED_HOSTS` on the GlitchTip container in production:
   ```yaml
-  glitchtip:
+  bondi_glitchtip:
     environment:
       ALLOWED_HOSTS: yourdomain.com
   ```

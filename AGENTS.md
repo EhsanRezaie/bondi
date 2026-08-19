@@ -8,15 +8,15 @@ Persian-language dating app (FastAPI + PostgreSQL/PostGIS + Redis + MinIO + Cele
 # Dev server (local)
 uvicorn app.main:app --reload
 
-# Docker (full stack — app + db + redis + minio + glitchtip)
+# Docker (full stack — app + db + redis + minio + bondi_glitchtip)
 docker compose up -d
 
 # Docker (dev with hot-reload, source mounted)
 docker compose up -d app
 
 # Tests (requires test infra — see below)
-pytest tests/done/ -v                    # all tests
-pytest tests/done/test_auth.py -v        # single file
+pytest tests/ -v                    # all tests
+pytest tests/test_auth.py -v        # single file
 
 # Migrations
 alembic upgrade head
@@ -115,4 +115,4 @@ Test endpoint: `POST /admin/face-verification/test` accepts a video + user_id, r
 
 ## Face verification tests
 
-`tests/done/test_face_verification.py` has 28 tests covering challenge generation, verification status, video submission (with mocked face service), and pure unit tests for the service layer. All InsightFace/OpenCV calls are mocked in endpoint tests; only the service unit tests run real numpy/cosine comparisons.
+`tests/test_face_verification.py` has 28 tests covering challenge generation, verification status, video submission (with mocked face service), and pure unit tests for the service layer. All InsightFace/OpenCV calls are mocked in endpoint tests; only the service unit tests run real numpy/cosine comparisons.

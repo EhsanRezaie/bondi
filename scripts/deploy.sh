@@ -6,7 +6,7 @@ DEPLOY_DIR="/opt/demo-bondi"
 HEALTH_URL="http://localhost/health/ready"
 HEALTH_RETRIES=24
 HEALTH_INTERVAL=10
-ROLLBACK_IMAGE="dating-app:rollback"
+ROLLBACK_IMAGE="bondi-app:rollback"
 COMPOSE_FILE="docker-compose.yml"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

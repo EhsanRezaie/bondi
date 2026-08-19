@@ -18,7 +18,7 @@ LOCATION_MANUAL_URL = "/api/v1/locations/me/location-manual"
 # ============ Helper Functions ============
 async def create_test_user(client: AsyncClient, db_session, mock_verification_code) -> dict:
     """Create a fully registered test user."""
-    from tests.done.test_auth import register_user_full
+    from tests.test_auth import register_user_full
     result = await register_user_full(client, mock_verification_code)
     return result
 
@@ -261,7 +261,7 @@ class TestLocationGPS:
     ):
         """Should update user location from GPS coordinates."""
         # Create user using register_user_full from tests/done/test_auth.py
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -294,7 +294,7 @@ class TestLocationGPS:
         mock_verification_code
     ):
         """Should handle partial reverse geocode response."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -324,7 +324,7 @@ class TestLocationGPS:
         mock_verification_code
     ):
         """LocationUpdateResponse should contain all 6 fields."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
@@ -357,7 +357,7 @@ class TestLocationGPS:
         mock_verification_code
     ):
         """Should return 422 for invalid latitude."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -374,7 +374,7 @@ class TestLocationGPS:
         mock_verification_code
     ):
         """Should return 422 for invalid longitude."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -407,7 +407,7 @@ class TestLocationManual:
         mock_verification_code
     ):
         """Should update user location from manual selection."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -438,7 +438,7 @@ class TestLocationManual:
         mock_verification_code
     ):
         """LocationUpdateResponse should contain all 6 fields for manual."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
@@ -468,7 +468,7 @@ class TestLocationManual:
         mock_verification_code
     ):
         """Should estimate lat/lng from city centroid."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -500,7 +500,7 @@ class TestLocationManual:
         mock_verification_code
     ):
         """Should return 422 when required parameters are missing."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
@@ -538,7 +538,7 @@ class TestLocationIntegration:
         mock_verification_code
     ):
         """Should switch from GPS to manual location."""
-        from tests.done.test_auth import register_user_full
+        from tests.test_auth import register_user_full
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         

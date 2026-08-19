@@ -64,9 +64,9 @@ Add to `docker-compose.yml`:
 ```yaml
 pgbouncer:
   image: edoburu/pgbouncer:latest
-  container_name: dating_pgbouncer
+  container_name: bondi_pgbouncer
   environment:
-    DATABASE_URL: "postgres://dating_user:dating_pass@db:5432/dating_db"
+    DATABASE_URL: "postgres://bondi_admin:CHANGE_ME@db:5432/bondi"
     POOL_MODE: transaction          # best for async FastAPI
     MAX_CLIENT_CONN: 1000           # connections from FastAPI workers
     DEFAULT_POOL_SIZE: 20           # actual connections to PostgreSQL
@@ -82,7 +82,7 @@ pgbouncer:
 Update `.env`:
 ```env
 # FastAPI now connects to PgBouncer, not PostgreSQL directly
-DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
+DATABASE_URL=postgresql+asyncpg://bondi_admin:CHANGE_ME@pgbouncer:5432/bondi
 ```
 
 Update SQLAlchemy engine in `app/database.py` — disable statement cache
@@ -1040,7 +1040,7 @@ stmt = stmt.where(User.id.not_in(swiped_ids))
 ```yaml
 nginx:
   image: nginx:alpine
-  container_name: dating_nginx
+  container_name: bondi_nginx
   ports:
     - "80:80"
     - "443:443"
@@ -1173,7 +1173,7 @@ services:
 
   db:
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dating_user -d dating_db"]
+      test: ["CMD-SHELL", "pg_isready -U bondi_admin -d bondi"]
       interval: 10s
       timeout: 5s
       retries: 5

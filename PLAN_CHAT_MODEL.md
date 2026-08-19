@@ -299,7 +299,7 @@ Delete `ConversationResponse`, `ConversationListResponse`, `kind`, `is_accepted`
 
 > Policy: never run the full suite. Start test docker, run only affected files, stop docker.
 
-### `tests/done/test_messages.py` — rewrite
+### `tests/test_messages.py` — rewrite
 - `test_send_text_message_in_matched_chat` → build chat via `POST /chats` (mutual-like pair → `accepted`), send text, assert 200 + `chat_accepted == true`.
 - `test_get_chat_history` → create chat + send, `GET /messages/{chat_id}`.
 - `test_unmatched_chat_limit` → **replaced** by pending rule:
@@ -309,24 +309,24 @@ Delete `ConversationResponse`, `ConversationListResponse`, `kind`, `is_accepted`
 - `test_mark_messages_as_read` → accepted chat → read → status `is_read == true`.
 - Photo/voice tests → all use accepted chats; unmatched-fail tests now target `pending` chat (photo/voice → 403).
 
-### `tests/done/test_conversations.py` → rewrite against `/chats`
+### `tests/test_conversations.py` → rewrite against `/chats`
 - List after creating chat → one entry, other-user fields, last_message, status.
 - No duplicate conversation for same pair.
 - Pending vs accepted status surfaced.
 - Blocked pair excluded from list.
 - Pagination `limit/offset` + `next_offset`.
 
-### `tests/done/test_matches.py` — mostly unchanged
+### `tests/test_matches.py` — mostly unchanged
 - Verify matches still created on mutual like (unchanged). Confirm matches list does NOT include chat data.
 
-### `tests/done/test_swipes.py` — unchanged
+### `tests/test_swipes.py` — unchanged
 - Swipes independent; verify swipe alone does not create a chat.
 
-### `tests/done/test_websocket.py` — update
+### `tests/test_websocket.py` — update
 - Connect to `/ws/chat/{chat_id}`; receive `new_message`, `chat_accepted`, typing, read, presence.
 - Remove unmatched-channel tests.
 
-### New test file `tests/done/test_chats.py`
+### New test file `tests/test_chats.py`
 - `POST /chats` new → `is_new=true`, `status=pending` (no mutual like), message content present, `chats_remaining_today` decremented for free user.
 - `POST /chats` existing → `is_new=false`, `status` returned, **no new message row**, no limit decrement.
 - Auto-accept: mutual like first → chat `status=accepted`.

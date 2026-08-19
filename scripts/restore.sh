@@ -1,11 +1,14 @@
 #!/bin/bash
 set -e
 
+DB_USER="${POSTGRES_USER:-bondi_admin}"
+DB_NAME="${POSTGRES_DB:-bondi}"
+
 if [ -z "$1" ]; then
     echo "Usage: $0 <backup_file.sql.gz>"
     echo ""
     echo "Available backups:"
-    ls -la /opt/dating-app/backups/db_*.sql.gz 2>/dev/null || echo "  No backups found"
+    ls -la /opt/demo-bondi/backups/db_*.sql.gz 2>/dev/null || echo "  No backups found"
     exit 1
 fi
 
@@ -33,12 +36,12 @@ docker compose stop app
 
 # Drop and recreate database
 echo "Recreating database..."
-docker exec dating_db psql -U dating_user -d postgres -c "DROP DATABASE dating_db;"
-docker exec dating_db psql -U dating_user -d postgres -c "CREATE DATABASE dating_db OWNER dating_user;"
+docker exec bondi_db psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);"
+docker exec bondi_db psql -U "$DB_USER" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
 
 # Restore
 echo "Restoring data..."
-gunzip -c "$BACKUP_FILE" | docker exec -i dating_db psql -U dating_user -d dating_db
+gunzip -c "$BACKUP_FILE" | docker exec -i bondi_db psql -U "$DB_USER" -d "$DB_NAME"
 
 # Start app
 echo "Starting app..."

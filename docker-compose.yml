@@ -3,12 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dating_app
+    container_name: bondi_app
     restart: unless-stopped
     stop_grace_period: 60s
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@pgbouncer:5432/${POSTGRES_DB:-bondi}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
       # Reached only by clients (phones/browsers), NOT the container network.
@@ -41,10 +41,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dating_migrate
+    container_name: bondi_migrate
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@db:5432/dating_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/${POSTGRES_DB:-bondi}
     entrypoint: ["/bin/sh", "-c", "alembic upgrade head"]
     volumes:
       - ./alembic/versions:/app/alembic/versions
@@ -59,12 +59,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dating_celery_worker
+    container_name: bondi_celery_worker
     restart: unless-stopped
     env_file: .env
     environment:
       CELERY_ENABLED: "true"
-      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@pgbouncer:5432/${POSTGRES_DB:-bondi}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
     volumes:
       - ./firebase-service-account.json:/app/firebase-service-account.json
@@ -92,12 +92,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dating_celery_beat
+    container_name: bondi_celery_beat
     restart: unless-stopped
     env_file: .env
     environment:
       CELERY_ENABLED: "true"
-      DATABASE_URL: postgresql+asyncpg://dating_user:dating_pass@pgbouncer:5432/dating_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@pgbouncer:5432/${POSTGRES_DB:-bondi}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
     volumes:
       - ./firebase-service-account.json:/app/firebase-service-account.json
@@ -113,7 +113,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: dating_nginx
+    container_name: bondi_nginx
     restart: unless-stopped
     ports:
       - "80:80"
@@ -129,32 +129,32 @@ services:
 
   db:
     image: postgis/postgis:15-3.3
-    container_name: dating_db
+    container_name: bondi_db
     restart: unless-stopped
     command: postgres -c max_connections=200
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-dating_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dating_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-dating_db}
+      POSTGRES_USER: ${POSTGRES_USER:-bondi_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-bondi}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dating_user -d dating_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bondi_admin} -d ${POSTGRES_DB:-bondi}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   pgbouncer:
     image: edoburu/pgbouncer:latest
-    container_name: dating_pgbouncer
+    container_name: bondi_pgbouncer
     restart: unless-stopped
     environment:
       DB_HOST: db
-      DB_USER: ${POSTGRES_USER:-dating_user}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-dating_pass}
-      DB_NAME: ${POSTGRES_DB:-dating_db}
+      DB_USER: ${POSTGRES_USER:-bondi_admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_NAME: ${POSTGRES_DB:-bondi}
       AUTH_TYPE: scram-sha-256
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
@@ -170,14 +170,14 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U dating_user -d dating_db"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-bondi_admin} -d ${POSTGRES_DB:-bondi}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: dating_redis
+    container_name: bondi_redis
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD:-} --appendonly yes
     volumes:
@@ -192,12 +192,12 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: dating_minio
+    container_name: bondi_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-bondi_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
     volumes:
       - minio_data:/data
     networks:
@@ -210,13 +210,13 @@ services:
 
   minio-init:
     image: minio/mc:latest
-    container_name: dating_minio_init
+    container_name: bondi_minio_init
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-bondi_minio} $${MINIO_ROOT_PASSWORD:-} &&
       mc mb --ignore-existing local/photos-public &&
       mc mb --ignore-existing local/photos-private &&
       mc anonymous set download local/photos-public &&
@@ -227,11 +227,11 @@ services:
 
   glitchtip-db-init:
     image: postgis/postgis:15-3.3
-    container_name: dating_glitchtip_db_init
+    container_name: bondi_glitchtip_db_init
     entrypoint: >
       /bin/sh -c "
-      psql postgresql://dating_user:dating_pass@db:5432/postgres -c
-      \"CREATE DATABASE glitchtip OWNER dating_user;\" 2>/dev/null; exit 0
+      psql postgresql://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/postgres -c
+      \"CREATE DATABASE bondi_glitchtip OWNER ${POSTGRES_USER:-bondi_admin};\" 2>/dev/null; exit 0
       "
     depends_on:
       db:
@@ -241,12 +241,12 @@ services:
 
   glitchtip:
     image: glitchtip/glitchtip:6.2.2
-    container_name: dating_glitchtip
+    container_name: bondi_glitchtip
     restart: unless-stopped
     ports:
       - "8080:80"
     environment:
-      DATABASE_URL: postgres://dating_user:dating_pass@db:5432/glitchtip
+      DATABASE_URL: postgres://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/bondi_glitchtip
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/1
       SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-to-a-random-string}
       PORT: 80
@@ -266,11 +266,11 @@ services:
 
   glitchtip-worker:
     image: glitchtip/glitchtip:6.2.2
-    container_name: dating_glitchtip_worker
+    container_name: bondi_glitchtip_worker
     restart: unless-stopped
     command: sh -c "python manage.py migrate --noinput && python manage.py runworker --scheduler"
     environment:
-      DATABASE_URL: postgres://dating_user:dating_pass@db:5432/glitchtip
+      DATABASE_URL: postgres://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/bondi_glitchtip
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/1
       SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-to-a-random-string}
     depends_on:
@@ -284,10 +284,10 @@ services:
 networks:
   frontend:
     driver: bridge
-    name: dating_frontend
+    name: bondi_frontend
   internal:
     driver: bridge
-    name: dating_internal
+    name: bondi_internal
     internal: true
 
 volumes:

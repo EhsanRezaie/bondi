@@ -50,13 +50,13 @@ docker compose logs -f   # wait for "Application startup complete"
 
 # 7. Setup GlitchTip
 sleep 15
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.contrib.auth import get_user_model
 User = get_user_model()
-User.objects.create_superuser(email='admin@glitchtip.dev', password='admin123')
+User.objects.create_superuser(email='admin@bondi_glitchtip.dev', password='admin123')
 print('Admin created')
 "
-docker exec dating_glitchtip python manage.py shell -c "
+docker exec bondi_bondi_glitchtip python manage.py shell -c "
 from django.apps import apps
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -65,7 +65,7 @@ OrgUser = apps.get_model('organizations_ext', 'OrganizationUser')
 OrgOwner = apps.get_model('organizations_ext', 'OrganizationOwner')
 ProjectModel = apps.get_model('projects', 'Project')
 KeyModel = apps.get_model('projects', 'ProjectKey')
-user = User.objects.get(email='admin@glitchtip.dev')
+user = User.objects.get(email='admin@bondi_glitchtip.dev')
 org = OrgModel.objects.create(name='DatingApp', slug='datingapp')
 org_user = OrgUser.objects.create(user=user, organization=org, role=0)
 OrgOwner.objects.create(organization_user=org_user, organization=org)
@@ -76,7 +76,7 @@ print(f'DSN: {key.get_dsn()}')
 
 # 8. Add GlitchTip DSN to .env
 nano .env
-# Set: GLITCHTIP_DSN=http://<public_key>@glitchtip:80/2
+# Set: GLITCHTIP_DSN=http://<public_key>@bondi_glitchtip:80/2
 docker compose restart app
 ```
 
@@ -96,13 +96,13 @@ openssl rand -hex 32   # GLITCHTIP_SECRET_KEY
 Required `.env` values:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://dating_user:dating_pass@localhost:5432/dating_db
+DATABASE_URL=postgresql+asyncpg://bondi_admin:CHANGE_ME@localhost:5432/bondi
 REDIS_URL=redis://localhost:6379
 SECRET_KEY=<openssl rand -hex 32>
 ADMIN_SECRET_KEY=<openssl rand -hex 16>
 ENCRYPTION_SECRET=<openssl rand -hex 16>
 GLITCHTIP_SECRET_KEY=<openssl rand -hex 32>
-GLITCHTIP_DSN=http://<public_key>@glitchtip:80/2
+GLITCHTIP_DSN=http://<public_key>@bondi_glitchtip:80/2
 ENVIRONMENT=production
 DEBUG=False
 CORS_ORIGINS=*
@@ -152,10 +152,10 @@ docker compose restart app
 
 # GlitchTip dashboard
 # Open: http://YOUR_SERVER_IP:8080
-# Login: admin@glitchtip.dev / admin123
+# Login: admin@bondi_glitchtip.dev / admin123
 
 # Test GlitchTip error reporting
-docker exec dating_app python -c "
+docker exec bondi_app python -c "
 import sentry_sdk
 sentry_sdk.init(dsn='$(grep GLITCHTIP_DSN .env | cut -d= -f2-)')
 try:
@@ -173,10 +173,10 @@ sentry_sdk.flush()
 
 ```bash
 # 158 interests (safe to re-run)
-docker exec dating_app python -m app.db.scripts.seed_interests
+docker exec bondi_app python -m app.db.scripts.seed_interests
 
 # 1000 dummy users (test1@test.com ... test1000@test.com, password: 12345678)
-docker exec dating_app python -m app.db.scripts.seed_dummy_users
+docker exec bondi_app python -m app.db.scripts.seed_dummy_users
 ```
 
 ---
@@ -202,7 +202,7 @@ The file is gitignored — it is never committed to the repository. For CI/CD de
 ```bash
 # View logs
 docker compose logs -f app
-docker compose logs -f glitchtip
+docker compose logs -f bondi_glitchtip
 
 # Restart a service
 docker compose restart app
@@ -218,10 +218,10 @@ docker compose down
 docker compose down -v
 
 # Access PostgreSQL
-docker exec -it dating_db psql -U dating_user -d dating_db
+docker exec -it bondi psql -U bondi_admin -d bondi
 
 # Run migrations manually
-docker exec dating_app alembic upgrade head
+docker exec bondi_app alembic upgrade head
 
 # Check firewall
 ufw status
@@ -239,4 +239,4 @@ ufw status
 | `/api/docs` returns 404 | Set `ENVIRONMENT=development` in .env and restart |
 | GlitchTip can't login | Create superuser (see Quick Start step 7) |
 | GlitchTip "database does not exist" | Worker runs migrate automatically — just wait and restart |
-| Port 8080 refused | `ufw allow 8080/tcp` + check glitchtip service has `ports: ["8080:80"]` |
+| Port 8080 refused | `ufw allow 8080/tcp` + check bondi_glitchtip service has `ports: ["8080:80"]` |

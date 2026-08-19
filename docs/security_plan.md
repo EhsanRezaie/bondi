@@ -947,9 +947,9 @@ S3_SECRET_KEY=your-strong-secret-key-min-8-chars
 
 Update in MinIO via `docker exec` or the console before first production deploy:
 ```bash
-docker exec dating_minio mc admin user add local newadmin newstrongpassword
-docker exec dating_minio mc admin policy attach local readwrite --user newadmin
-docker exec dating_minio mc admin user remove local minioadmin
+docker exec bondi_minio mc admin user add local newadmin newstrongpassword
+docker exec bondi_minio mc admin policy attach local readwrite --user newadmin
+docker exec bondi_minio mc admin user remove local minioadmin
 ```
 
 ---

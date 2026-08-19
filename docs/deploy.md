@@ -13,9 +13,9 @@ Redis, MinIO and PostgreSQL when running the `docker compose` stack.
 
 ```env
 # --- PostgreSQL (used to create the DB + used by pgbouncer) ---
-POSTGRES_USER=dating_user
+POSTGRES_USER=bondi_admin
 POSTGRES_PASSWORD=<openssl rand -hex 16>
-POSTGRES_DB=dating_db
+POSTGRES_DB=bondi
 
 # --- Redis password (empty = no auth; set one in production) ---
 REDIS_PASSWORD=<openssl rand -hex 24>
@@ -60,14 +60,14 @@ When running locally without Docker, `REDIS_PASSWORD` can stay empty and
 docker compose config -q
 
 # Redis requires the password
-docker exec dating_redis redis-cli -a "$REDIS_PASSWORD" ping   # PONG
+docker exec bondi_redis redis-cli -a "$REDIS_PASSWORD" ping   # PONG
 
 # App can reach Redis
 docker compose logs app | grep -i redis
 
 # MinIO buckets exist
-docker exec dating_minio mc ls local 2>/dev/null || \
-  docker exec dating_minio sh -c 'mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && mc ls local'
+docker exec bondi_minio mc ls local 2>/dev/null || \
+  docker exec bondi_minio sh -c 'mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && mc ls local'
 ```
 
 ---
@@ -81,7 +81,7 @@ in `docker-compose.yml`.
 Useful checks:
 
 ```bash
-docker exec dating_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U dating_user -d pgbouncer'
+docker exec bondi_pgbouncer sh -c 'echo "SHOW POOLS;" | psql -U bondi_admin -d pgbouncer'
 docker compose logs pgbouncer
 ```
 
