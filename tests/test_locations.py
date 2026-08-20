@@ -149,7 +149,7 @@ class TestReverseGeocode:
 
     async def test_reverse_geocode_success(self, client: AsyncClient):
         """Should return place names from coordinates."""
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": "Iran",
                 "country_iso2": "IR",
@@ -192,7 +192,7 @@ class TestReverseGeocode:
 
     async def test_reverse_geocode_service_unavailable(self, client: AsyncClient):
         """Should return 503 when Nominatim fails."""
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = None
             
             res = await client.get(
@@ -201,6 +201,16 @@ class TestReverseGeocode:
             )
             assert res.status_code == 503
             assert "unavailable" in res.json()["detail"].lower()
+
+    async def test_reverse_geocode_offline_resolves_tehran(self):
+        """Offline reverse geocoding should resolve real coordinates deterministically."""
+        from app.services.location_service import _offline_reverse
+        result = _offline_reverse(35.745483, 51.1954865)
+        assert result is not None
+        assert result["country"] == "Iran"
+        assert result["country_iso2"] == "IR"
+        assert result["province"] is not None
+        assert result["city"] is not None
 
 
 # =============================================================================
@@ -265,7 +275,7 @@ class TestLocationGPS:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": "Iran",
                 "country_iso2": "IR",
@@ -298,7 +308,7 @@ class TestLocationGPS:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": None,
                 "country_iso2": None,
@@ -328,7 +338,7 @@ class TestLocationGPS:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": "Iran",
                 "country_iso2": "IR",
@@ -543,7 +553,7 @@ class TestLocationIntegration:
         headers = {"Authorization": f"Bearer {result['access_token']}"}
         
         # Set GPS location
-        with patch("app.services.location_service._nominatim_reverse") as mock_reverse:
+        with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": "Iran",
                 "country_iso2": "IR",

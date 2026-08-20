@@ -3,6 +3,13 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 
+# ============================================
+# Hardware constants (not env-configurable)
+# ============================================
+# Max distance from a coordinate to a city centroid for reverse geocoding.
+GEO_REVERSE_MAX_DISTANCE_KM: float = 25.0
+
+
 class Settings(BaseSettings):
     # ============================================
     # App Settings

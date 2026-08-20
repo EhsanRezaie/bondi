@@ -1,12 +1,17 @@
 # app/services/location_service.py
 """
 Global location service using countrystatecity-countries library.
+
+Reverse geocoding is fully OFFLINE: GPS coordinates are resolved against the
+bundled city/state/country centroids (haversine nearest-neighbour) so there
+are no external API calls, API keys, rate limits or provider blocks.
 """
 import json
-import httpx
+import math
 from functools import lru_cache
 from typing import Optional, List, Dict, Any
 
+from app.core.config import GEO_REVERSE_MAX_DISTANCE_KM
 from app.core.logging import get_logger
 
 logger = get_logger("location_service")
@@ -22,10 +27,6 @@ from countrystatecity_countries import (
 )
 
 REVERSE_GC_CACHE_TTL = 60 * 60 * 24
-# Nominatim usage policy: valid contact info + ~1 req/sec. Keep the app name
-# fixed but use a real admin contact so OSM reach out to us (not IP-ban) on abuse.
-NOMINATIM_USER_AGENT = "Bondi (prod@example.com)"
-NOMINATIM_GLOBAL_RATE_SEC = 1  # global token bucket, 1 req/sec
 
 
 # ============================================================================
@@ -262,14 +263,112 @@ def clear_cache() -> None:
 
 
 # ============================================================================
-# Reverse Geocoding
+# Reverse Geocoding (OFFLINE — nearest city centroid)
 # ============================================================================
 
-async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional[dict]:
-    """Convert GPS coordinates to location text using Nominatim API.
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two coordinates in kilometres."""
+    R = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
 
-    The 24h cache is checked first; an un-cached miss consumes a global
-    Nominatim rate-limit token (1 req/sec) so the free OSM API doesn't ban us.
+
+@lru_cache(maxsize=512)
+def _geocode_cache_key(lat: float, lng: float, radius: float) -> Optional[dict]:
+    """In-process cached lookup; radius is only a cache-buster."""
+    return _offline_reverse_uncached(lat, lng)
+
+
+@lru_cache(maxsize=1)
+def _country_centroids() -> List[Dict[str, Any]]:
+    """Cached list of every country with its centroid (iso2, name, lat, lon)."""
+    countries = _countries_cached()
+    return [
+        {
+            "iso2": c["iso2"],
+            "name": c["name"],
+            "lat": float(c["latitude"]),
+            "lon": float(c["longitude"]),
+        }
+        for c in countries
+        if c.get("latitude") is not None and c.get("longitude") is not None
+    ]
+
+
+def _nearest_country(lat: float, lng: float) -> Optional[dict]:
+    """Nearest country centroid to a coordinate (only ~250 entries — cheap)."""
+    best = None
+    best_km = float("inf")
+    for row in _country_centroids():
+        km = _haversine_km(lat, lng, row["lat"], row["lon"])
+        if km < best_km:
+            best_km = km
+            best = row
+    return best
+
+
+def _offline_reverse_uncached(lat: float, lng: float) -> Optional[dict]:
+    """
+    Offline reverse geocode without building a global index.
+
+    Strategy (all from the bundled dataset, no network):
+      1. Find the nearest country by its centroid (~250 lookups, cached list).
+      2. Load ONLY that country's states + cities and pick the nearest city
+         (single-country index, built once per country and cached).
+      3. Fall back to the state centroid, then the country centroid.
+    """
+    country = _nearest_country(lat, lng)
+    if country is None:
+        return None
+
+    iso2 = country["iso2"]
+    country_name = country["name"]
+
+    states = {s["code"]: s["name"] for s in _states_cached(iso2)}
+    cities = _cities_by_country_cached(iso2)
+
+    best_city = None
+    best_city_km = float("inf")
+
+    for city in cities:
+        clat = city.get("latitude")
+        clon = city.get("longitude")
+        if clat is None or clon is None:
+            continue
+        km = _haversine_km(lat, lng, float(clat), float(clon))
+        if km < best_city_km:
+            best_city_km = km
+            best_city = city
+
+    def as_result(city_name: Optional[str], province: Optional[str]) -> dict:
+        return {
+            "country": country_name,
+            "country_iso2": iso2,
+            "province": province,
+            "city": city_name,
+        }
+
+    if best_city is None:
+        return as_result(None, None)
+
+    city_name = best_city["name"] if best_city_km <= GEO_REVERSE_MAX_DISTANCE_KM else None
+    province = states.get(best_city.get("state_code") or "")
+    return as_result(city_name, province)
+
+
+def _offline_reverse(lat: float, lng: float) -> Optional[dict]:
+    """Reverse geocode using the bundled offline dataset (long names)."""
+    return _geocode_cache_key(round(lat, 4), round(lng, 4), GEO_REVERSE_MAX_DISTANCE_KM)
+
+
+async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional[dict]:
+    """Convert GPS coordinates to location text using the offline dataset.
+
+    The 24h Redis cache is still used for coordinated caching; there is no
+    external service and therefore no rate limiter needed.
     """
     cache_key = f"geo:reverse:{round(lat, 3)}:{round(lng, 3)}"
 
@@ -281,18 +380,7 @@ async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional
         except Exception as e:
             logger.warning("Redis cache read failed", error=str(e))
 
-        # Global token-bucket limiter: one Nominatim call per second.
-        try:
-            allowed = await redis_client.set(
-                "rl:nominatim:global", "1", nx=True, ex=NOMINATIM_GLOBAL_RATE_SEC
-            )
-        except Exception as e:
-            logger.warning("Nominatim limiter check failed", error=str(e))
-            allowed = True
-        if not allowed:
-            return None
-
-    result = await _nominatim_reverse(lat, lng)
+    result = _offline_reverse(lat, lng)
     if result is None:
         return None
 
@@ -303,51 +391,6 @@ async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional
             logger.warning("Redis cache write failed", error=str(e))
 
     return result
-
-
-async def _nominatim_reverse(lat: float, lng: float) -> Optional[dict]:
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://nominatim.openstreetmap.org/reverse",
-                params={
-                    "lat": lat,
-                    "lon": lng,
-                    "format": "json",
-                    "addressdetails": 1,
-                    "accept-language": "en",
-                },
-                headers={"User-Agent": NOMINATIM_USER_AGENT},
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        address = data.get("address", {})
-        
-        return {
-            "country": address.get("country"),
-            "country_iso2": address.get("country_code", "").upper() or None,
-            "province": (
-                address.get("state")
-                or address.get("province")
-                or address.get("region")
-                or address.get("county")
-            ),
-            "city": (
-                address.get("city")
-                or address.get("town")
-                or address.get("municipality")
-                or address.get("village")
-                or address.get("hamlet")
-            ),
-        }
-
-    except httpx.TimeoutException:
-        logger.error("Nominatim timed out", lat=lat, lng=lng)
-        return None
-    except Exception as e:
-        logger.error("Reverse geocoding failed", lat=lat, lng=lng, error=str(e))
-        return None
 
 
 # =============================================================================
