@@ -143,26 +143,19 @@ jobs:
 
             set -e
 
-            # Safe sync — NEVER clobbers server state. Deploys only when the
-            # server tree exactly matches origin/main (on `main`, no local
-            # commits, no dirty/untracked files). Any drift aborts the pipeline
-            # so nothing on the server is ever overwritten. gitignored files
-            # (.env, firebase-service-account.json) never appear in the check.
+            # Force-sync the repo to origin/main. The repository is the source
+            # of truth for all tracked files; any local drift (manual edits,
+            # leftover files like backups) is discarded so deploys never get
+            # blocked. Gitignored runtime files (.env, firebase-service-account.json)
+            # are untouched by reset/clean.
             git fetch origin main
-            DIRTY="$(git status --porcelain)"
-            BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo 'detached')"
-            LOCAL_ONLY="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 1)"
-            if [ -n "$DIRTY" ] || [ "$BRANCH" != "main" ] || [ "${LOCAL_ONLY:-1}" -gt 0 ]; then
-              echo "ERROR: refusing to deploy — server has local drift (never overwritten by CI)."
-              echo "branch: $BRANCH"
-              if [ -n "$DIRTY" ]; then echo "$DIRTY"; fi
-              exit 1
+            if [ -n "$(git status --porcelain)" ]; then
+              echo "WARNING: server had local drift — overwriting from origin/main."
+              git status --porcelain
             fi
-
-            # Fast-forward only — applies the new commit without touching anything
-            # local. Runs BEFORE deploy.sh so the newly pushed scripts/deploy.sh
-            # lands on disk and is what executes below.
-            git merge --ff-only origin/main
+            git reset --hard origin/main
+            git clean -fd
+            git checkout -B main origin/main
             git log --oneline -1
 
             if [ -n "$FCM_SERVICE_ACCOUNT_JSON" ]; then

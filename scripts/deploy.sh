@@ -61,23 +61,19 @@ else
     log "No existing image — first deploy, rollback not available"
 fi
 
-# 2. Sync to origin/main — SAFE. Refuse to deploy if the server has any local
-#    drift (dirty files, untracked non-gitignored files, local commits, wrong
-#    branch) and fast-forward only. Local server state is never overwritten.
-#    gitignored files (.env, firebase-service-account.json) never appear in the
-#    check.
-log "Syncing to origin/main (fast-forward only, refusal on drift)..."
+# 2. Sync to origin/main — force-sync. The repository is the source of truth
+#    for all tracked files; any local drift (manual edits, leftover files) is
+#    discarded so deploys are never blocked. Gitignored runtime files (.env,
+#    firebase-service-account.json) are untouched by reset/clean.
+log "Force-syncing to origin/main..."
 git fetch origin main
-DIRTY="$(git status --porcelain)"
-BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo 'detached')"
-LOCAL_ONLY="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 1)"
-if [ -n "$DIRTY" ] || [ "$BRANCH" != "main" ] || [ "${LOCAL_ONLY:-1}" -gt 0 ]; then
-    fail "Server has local drift — refusing to overwrite server state."
-    if [ -n "$DIRTY" ]; then echo "$DIRTY"; fi
-    fail "Aborting deploy. Resolve the drift on the server (or commit it), then re-run CI."
-    exit 1
+if [ -n "$(git status --porcelain)" ]; then
+    echo "WARNING: server had local drift — overwriting from origin/main."
+    git status --porcelain
 fi
-git merge --ff-only origin/main
+git reset --hard origin/main
+git clean -fd
+git checkout -B main origin/main
 
 # 3. Check FCM service account file
 if [ ! -f firebase-service-account.json ]; then
