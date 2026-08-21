@@ -118,8 +118,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    configs:
+      # Mounted as a compose config so nginx.conf changes are content-hashed
+      # and the container is recreated on `docker compose up` (a bind mount
+      # would keep the old file inode until a manual --force-recreate).
+      - source: nginx_conf
+        target: /etc/nginx/nginx.conf
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx_certs:/etc/nginx/certs
     depends_on:
       - app
@@ -297,3 +302,7 @@ volumes:
   uploads_data:
   redis_data:
   nginx_certs:
+
+configs:
+  nginx_conf:
+    file: ./nginx/nginx.conf
