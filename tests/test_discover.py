@@ -14,6 +14,8 @@ def _phone(key: str) -> str:
 
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.photo import Photo
+from tests.photo_visibility_helper import grant_approved_photo
 
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
@@ -170,6 +172,7 @@ async def register_and_get_headers(
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
     headers = {"Authorization": f"Bearer {result['access_token']}"}
     user_id = result["user"]["id"]
+    await grant_approved_photo(user_id)
     return headers, user_id
 
 
@@ -756,6 +759,37 @@ class TestDiscover:
         
         for user in data["users"]:
             assert user["main_photo_url"] is None or isinstance(user["main_photo_url"], str)
+
+    async def test_discover_hides_users_with_unapproved_photos(
+        self,
+        client: AsyncClient,
+        mock_verification_code,
+        db_session
+    ):
+        """Users whose photos are not all approved must NOT appear in discover."""
+        male_headers, _ = await register_and_get_headers(
+            client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Set the female user's photo to pending (not all approved) -> hidden.
+        from sqlalchemy import update as sa_update
+        await db_session.execute(
+            sa_update(Photo).where(Photo.user_id == female_id).values(status="pending")
+        )
+        await db_session.commit()
+
+        res = await client.get(
+            DISCOVER_URL,
+            params={"gender": "female"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert all(u["id"] != female_id for u in data["users"])
+        assert data["total"] == 0
     
     async def test_discover_empty_results(
         self, 

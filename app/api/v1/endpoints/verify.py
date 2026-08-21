@@ -101,22 +101,27 @@ async def verify_selfie(
         await _increment_attempts(str(current_user.id)).execute()
         raise HTTPException(status_code=400, detail=error)
 
-    # Load user's approved photos
+    # Load the user's photos (pending or approved — NOT rejected). During
+    # onboarding photos are still pending, so selfie verification must be able
+    # to compare against them before they are approved.
     result = await session.execute(
         select(Photo).where(
             Photo.user_id == current_user.id,
-            Photo.status == "approved",
+            Photo.status.in_(["pending", "approved"]),
         )
     )
-    photos = result.scalars().all()
+    photos = list(result.scalars().all())
 
     if len(photos) < settings.FACE_VERIFICATION_MIN_PHOTOS:
         raise HTTPException(
             status_code=400,
-            detail=f"Upload at least {settings.FACE_VERIFICATION_MIN_PHOTOS} approved photo(s) first",
+            detail=f"Upload at least {settings.FACE_VERIFICATION_MIN_PHOTOS} photo(s) first",
         )
 
-    # Download photos and compare the selfie against EACH one.
+    # Download photos and compare the selfie against EACH one. Collect every
+    # photo that doesn't match so the app can tell the user which ones failed.
+    mismatched_photo_ids: list[str] = []
+    matched_any = False
     best_similarity = 0.0
     for photo in photos:
         try:
@@ -133,33 +138,43 @@ async def verify_selfie(
             selfie_embedding, photo_embedding
         )
         best_similarity = max(best_similarity, similarity)
-        if not matched:
-            # One photo must still match the selfie for the pair; a single
-            # mismatch with one photo fails the whole attempt.
-            await _increment_attempts(str(current_user.id)).execute()
-            logger.warning(
-                "face_match_failed",
-                user_id=str(current_user.id),
-                photo_id=str(photo.id),
-                similarity_score=similarity,
-                threshold=settings.FACE_MATCH_THRESHOLD,
-            )
-            raise HTTPException(
-                status_code=400,
-                detail="Verification failed. Ensure good lighting and that you match your photos.",
-            )
+        if matched:
+            matched_any = True
+        else:
+            mismatched_photo_ids.append(str(photo.id))
 
-    if not photos:
-        raise HTTPException(status_code=400, detail="Could not load profile photos")
+    if not matched_any or mismatched_photo_ids:
+        await _increment_attempts(str(current_user.id)).execute()
+        logger.warning(
+            "face_match_failed",
+            user_id=str(current_user.id),
+            mismatched_photo_ids=mismatched_photo_ids,
+            best_similarity=round(best_similarity, 4),
+            threshold=settings.FACE_MATCH_THRESHOLD,
+        )
+        return VerifyResponse(
+            verified=False,
+            message=(
+                "Some of your photos didn't match your selfie. Update them and "
+                "try again, or send a ticket for manual review."
+                if mismatched_photo_ids
+                else "Could not match your selfie with your photos. Try again in good lighting."
+            ),
+            similarity_score=best_similarity if settings.DEBUG else None,
+            mismatched_photo_ids=mismatched_photo_ids,
+        )
 
-    # Success — mark user as verified
+    # Success — mark user as verified, face-verify every photo, and auto-approve
+    # (publish) any that were still pending so the profile becomes visible.
     now = datetime.now(timezone.utc)
     current_user.profile.is_verified = True
     current_user.profile.verified_at = now
 
-    # Mark all approved photos as face_verified
     for photo in photos:
         photo.face_verified = True
+        if photo.status != "approved":
+            photo.status = "approved"
+            await PhotoService.publish_photo(str(current_user.id), str(photo.id))
 
     await session.commit()
 
@@ -191,6 +206,7 @@ async def verify_selfie(
         verified=True,
         message="Profile verified successfully!",
         similarity_score=best_similarity if settings.DEBUG else None,
+        mismatched_photo_ids=[],
     )
 
 

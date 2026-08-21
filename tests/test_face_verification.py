@@ -210,7 +210,7 @@ class TestSelfieSubmission:
 
     @pytest.mark.asyncio
     async def test_verify_low_similarity(self, client, auth_headers, db_session, test_user, patch_redis):
-        _add_approved_photo(db_session, test_user.id)
+        photo = _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
         with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
@@ -227,8 +227,50 @@ class TestSelfieSubmission:
                 headers=auth_headers,
                 files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
             )
-            assert resp.status_code == 400
-            assert "failed" in resp.json()["detail"].lower()
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["verified"] is False
+            assert str(photo.id) in data["mismatched_photo_ids"]
+
+    @pytest.mark.asyncio
+    async def test_verify_success_auto_approves_pending_photos(
+        self, client, auth_headers, db_session, test_user, patch_redis
+    ):
+        """During onboarding photos are pending; successful selfie verification
+        must auto-approve (publish) them so the user becomes visible."""
+        photo = Photo(
+            user_id=test_user.id,
+            url=f"users/{test_user.id}/{uuid.uuid4()}.jpg",
+            status="pending",
+            face_verified=False,
+            is_main=True,
+        )
+        db_session.add(photo)
+        await db_session.commit()
+
+        fake_emb = make_fake_embedding()
+        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_ps.publish_photo = AsyncMock()
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
+
+            resp = await client.post(
+                "/api/v1/users/me/verify",
+                headers=auth_headers,
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["verified"] is True
+
+        mock_ps.publish_photo.assert_awaited_once()
+        await db_session.refresh(photo)
+        assert photo.status == "approved"
+        assert photo.face_verified is True
 
     @pytest.mark.asyncio
     async def test_verify_success(self, client, auth_headers, db_session, test_user, patch_redis):

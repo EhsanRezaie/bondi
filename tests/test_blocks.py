@@ -11,6 +11,7 @@ def _phone(key: str) -> str:
 
 
 from app.models.user import User
+from tests.photo_visibility_helper import grant_approved_photo
 
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
@@ -94,6 +95,7 @@ async def register_and_get_headers(
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
     headers = {"Authorization": f"Bearer {result['access_token']}"}
     user_id = result["user"]["id"]
+    await grant_approved_photo(user_id)
     return headers, user_id
 
 

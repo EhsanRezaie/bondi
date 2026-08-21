@@ -10,6 +10,7 @@ import json
 from app.db.session import get_session
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.photo import Photo
 from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.block import Block
@@ -124,6 +125,9 @@ async def discover(
         User.id.not_in(select(blocked_user_ids.c.blocked_id)),
         User.id.not_in(select(blocked_by_user_ids.c.blocker_id)),
         User.id.not_in(select(matched_user_ids.c.user2_id)),
+        # Visibility policy: only show users whose photos are all approved.
+        User.photos.any(),
+        ~User.photos.any(Photo.status != "approved"),
     )
 
     # Exclude swiped users via Redis set (if populated), else fall back to DB

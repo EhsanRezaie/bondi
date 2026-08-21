@@ -142,6 +142,9 @@ async def search_users(
         User.id != current_user.id,
         User.id.not_in(blocked_user_ids),
         User.id.not_in(blocked_by_user_ids),
+        # Visibility policy: only show users whose photos are all approved.
+        User.photos.any(),
+        ~User.photos.any(Photo.status != "approved"),
     )
 
     query = query.join(UserProfile, User.id == UserProfile.user_id)
