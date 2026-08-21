@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import os
+from contextlib import asynccontextmanager
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,8 +57,23 @@ from app.api.v1.endpoints.matches import router as matches_router
 from app.api.v1.endpoints.messages import router as messages_router
 from app.api.v1.endpoints.chats import router as chats_router
 
-from app.core.logging import setup_logging
+from app.core.logging import get_logger, setup_logging
 setup_logging()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure MinIO/S3 buckets exist so photo/media uploads never 500 with
+    # NoSuchBucket. Idempotent + non-fatal: a brief MinIO hiccup must not
+    # block boot, and multi-worker starts race safely (create is guarded).
+    try:
+        from app.services.storage import ensure_buckets
+
+        await ensure_buckets()
+    except Exception:
+        get_logger("app.main").exception("bucket bootstrap failed")
+
+    yield
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -65,6 +81,7 @@ app = FastAPI(
     docs_url="/api/docs" if settings.ENVIRONMENT == "development" else None,
     redoc_url="/api/redoc" if settings.ENVIRONMENT == "development" else None,
     openapi_url="/api/openapi.json" if settings.ENVIRONMENT == "development" else None,
+    lifespan=lifespan,
 )
 
 # Error tracking: structlog ERROR bridge -> GlitchTip + global exception handlers.
