@@ -161,8 +161,10 @@ class TestSelfieSubmission:
             headers=verified_auth_headers,
             files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
         )
-        assert resp.status_code == 400
-        assert "already verified" in resp.json()["detail"].lower()
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["verified"] is True
+        assert "already verified" in data["message"].lower()
 
     @pytest.mark.asyncio
     async def test_verify_image_too_large(self, client, auth_headers, test_user, patch_redis):

@@ -60,7 +60,14 @@ async def verify_selfie(
     """
     # Check if already verified
     if current_user.profile and current_user.profile.is_verified:
-        raise HTTPException(status_code=400, detail="Profile already verified")
+        # Already verified — return 200 so clients treat this as success and
+        # can show "Finish" instead of failing on a 400.
+        return VerifyResponse(
+            verified=True,
+            message="Profile already verified",
+            similarity_score=None,
+            mismatched_photo_ids=[],
+        )
 
     # Check cooldown
     cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
