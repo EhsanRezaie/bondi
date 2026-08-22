@@ -20,6 +20,7 @@ services:
       - uploads_data:/app/uploads
       - ./firebase-service-account.json:/app/firebase-service-account.json
       - ./alembic/versions:/app/alembic/versions
+      - face_models_data:/app/face_models
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -302,6 +303,7 @@ volumes:
   uploads_data:
   redis_data:
   nginx_certs:
+  face_models_data:
 
 configs:
   nginx_conf:

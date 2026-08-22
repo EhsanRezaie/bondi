@@ -156,10 +156,12 @@ class Settings(BaseSettings):
     NSFW_THRESHOLD: float = 0.8
 
     # ============================================
-    # Face Verification (image-based selfie)
+    # Face Verification (lightweight mobile models: YuNet + SFace)
     # ============================================
-    FACE_VERIFICATION_MODEL: str = "buffalo_l"
-    FACE_MATCH_THRESHOLD: float = 0.45
+    FACE_MODELS_DIR: str = "/app/face_models"
+    FACE_DET_SCORE_THRESHOLD: float = 0.5
+    FACE_MODEL_THREADS: int = 2
+    FACE_MATCH_THRESHOLD: float = 0.35
     FACE_VERIFICATION_MAX_SIZE_MB: int = 10
     FACE_VERIFICATION_COOLDOWN_TTL: int = 86400
     FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 10

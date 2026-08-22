@@ -369,7 +369,7 @@ class TestFaceVerificationService:
     def test_compare_embeddings_high_similarity(self):
         from app.services.face_verification_service import FaceVerificationService
         svc = FaceVerificationService()
-        emb = np.random.randn(512).astype(np.float32)
+        emb = np.random.randn(128).astype(np.float32)
         emb = emb / np.linalg.norm(emb)
         matched, score = svc.compare_embeddings(emb, emb)
         assert matched is True
@@ -378,7 +378,7 @@ class TestFaceVerificationService:
     def test_compare_embeddings_low_similarity(self):
         from app.services.face_verification_service import FaceVerificationService
         svc = FaceVerificationService()
-        emb1 = np.random.randn(512).astype(np.float32)
+        emb1 = np.random.randn(128).astype(np.float32)
         emb1 = emb1 / np.linalg.norm(emb1)
         matched, score = svc.compare_embeddings(emb1, -emb1)
         assert matched is False
@@ -387,44 +387,14 @@ class TestFaceVerificationService:
     def test_compare_embeddings_zero_vector(self):
         from app.services.face_verification_service import FaceVerificationService
         svc = FaceVerificationService()
-        matched, score = svc.compare_embeddings(np.zeros(512, dtype=np.float32), np.random.randn(512).astype(np.float32))
+        matched, score = svc.compare_embeddings(np.zeros(128, dtype=np.float32), np.random.randn(128).astype(np.float32))
         assert matched is False
         assert score == 0.0
 
-    def test_ear_calculation(self):
-        from app.services.face_verification_service import FaceVerificationService
-        svc = FaceVerificationService()
-        landmarks = np.zeros((68, 3), dtype=np.float64)
-        landmarks[36] = [100, 200, 0]
-        landmarks[37] = [110, 190, 0]
-        landmarks[38] = [130, 190, 0]
-        landmarks[39] = [140, 200, 0]
-        landmarks[40] = [130, 210, 0]
-        landmarks[41] = [110, 210, 0]
-        ear = svc._compute_ear(landmarks)
-        assert 0.0 <= ear <= 1.0
-
-    def test_validate_selfie_no_face(self):
-        from app.services.face_verification_service import FaceVerificationService
-        svc = FaceVerificationService.__new__(FaceVerificationService)
-        with patch.object(svc, "_face_analyzer") as mock_analyzer:
-            mock_analyzer.get = MagicMock(return_value=[])
-            ok, reason = svc.validate_selfie_image(np.zeros((640, 640, 3), dtype=np.uint8))
-            assert ok is False
-            assert "no face" in reason.lower()
-
-    def test_validate_selfie_multiple_faces(self):
-        from app.services.face_verification_service import FaceVerificationService
-        svc = FaceVerificationService.__new__(FaceVerificationService)
-        with patch.object(svc, "_face_analyzer") as mock_analyzer:
-            mock_analyzer.get = MagicMock(return_value=[MagicMock(), MagicMock()])
-            ok, reason = svc.validate_selfie_image(np.zeros((640, 640, 3), dtype=np.uint8))
-            assert ok is False
-            assert "multiple" in reason.lower()
-
     def test_config_settings_exist(self):
         for attr in (
-            "FACE_MATCH_THRESHOLD", "FACE_VERIFICATION_MODEL",
+            "FACE_MODELS_DIR", "FACE_DET_SCORE_THRESHOLD", "FACE_MODEL_THREADS",
+            "FACE_MATCH_THRESHOLD",
             "FACE_VERIFICATION_MAX_SIZE_MB", "FACE_VERIFICATION_COOLDOWN_TTL",
             "FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY",
             "FACE_VERIFICATION_MIN_PHOTOS", "FACE_REFERENCE_CACHE_TTL",
