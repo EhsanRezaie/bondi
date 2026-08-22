@@ -105,12 +105,17 @@ async def upload_photo(
     if reference_embedding is not None:
         import numpy as np
         ref_np = np.asarray(reference_embedding, dtype=np.float64)
-        matched, _ = face_verification_service.compare_embeddings(new_embedding, ref_np)
-        if not matched:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Photo rejected: this photo doesn't match your other photos.",
+        # Ignore a stale cached reference whose size doesn't match the current
+        # embedding (e.g. 512-d from the old model) instead of rejecting photos.
+        if ref_np.ndim == 1 and ref_np.shape[0] == new_embedding.shape[0]:
+            matched, _ = face_verification_service.compare_embeddings(
+                new_embedding, ref_np
             )
+            if not matched:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Photo rejected: this photo doesn't match your other photos.",
+                )
     else:
         # Build reference from existing approved photos (if any).
         approved_result = await session.execute(

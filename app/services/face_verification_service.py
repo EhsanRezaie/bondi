@@ -63,7 +63,7 @@ class FaceVerificationService:
 
     _instance: ClassVar[Optional["FaceVerificationService"]] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
-    _det: Optional[ort.InferenceSession] = None
+    _face_detector: Optional[object] = None
     _rec: Optional[ort.InferenceSession] = None
 
     def __new__(cls) -> "FaceVerificationService":
@@ -90,19 +90,28 @@ class FaceVerificationService:
         return dest
 
     def _ensure_model(self) -> None:
-        if self._det is not None and self._rec is not None:
+        if self._face_detector is not None and self._rec is not None:
             return
         with self._lock:
-            if self._det is not None and self._rec is not None:
+            if self._face_detector is not None and self._rec is not None:
                 return
             d = self._model_dir()
             det_path = self._download(YU_NET_URL, d / "face_detection_yunet.onnx")
             rec_path = self._download(S_FACE_URL, d / "face_recognition_sface.onnx")
+
+            # YuNet via OpenCV's built-in FaceDetectorYN (handles resize,
+            # normalization, box decoding and NMS correctly).
+            self._face_detector = cv2.FaceDetectorYN.create(
+                str(det_path),
+                "",
+                (320, 320),
+                score_threshold=settings.FACE_DET_SCORE_THRESHOLD,
+                nms_threshold=0.3,
+                top_k=5000,
+            )
+
             so = ort.SessionOptions()
             so.intra_op_num_threads = settings.FACE_MODEL_THREADS
-            self._det = ort.InferenceSession(
-                str(det_path), sess_options=so, providers=["CPUExecutionProvider"]
-            )
             self._rec = ort.InferenceSession(
                 str(rec_path), sess_options=so, providers=["CPUExecutionProvider"]
             )
@@ -112,50 +121,22 @@ class FaceVerificationService:
     # Detection / alignment / embedding
     # ------------------------------------------------------------------
     def _detect_faces(self, frame: np.ndarray) -> list:
-        """Return YuNet detections; each is [x, y, w, h, score, *5 landmarks].
-
-        The YuNet ONNX expects a fixed 640x640 input, so we resize and then
-        scale the detections back to the original frame coordinates.
-        """
+        """Return YuNet detections; each is [x, y, w, h, score, *5 landmarks]."""
         h, w = frame.shape[:2]
-        input_h, input_w = 640, 640
-        resized = cv2.resize(frame, (input_w, input_h))
-        blob = cv2.dnn.blobFromImage(
-            resized, 1.0, (input_w, input_h), (104.0, 117.0, 123.0),
-            swapRB=True, crop=False,
-        )
-        out = self._det.run(None, {self._det.get_inputs()[0].name: blob})[0]
-
-        scale_x = w / input_w
-        scale_y = h / input_h
-        faces = []
-        for det in out[0]:
-            if len(det) < 15:
-                continue
-            if det[4] < settings.FACE_DET_SCORE_THRESHOLD:
-                continue
-            det = det.copy()
-            det[0] *= scale_x
-            det[1] *= scale_y
-            det[2] *= scale_x
-            det[3] *= scale_y
-            for i in range(5, 15, 2):
-                det[i] *= scale_x
-                det[i + 1] *= scale_y
-            faces.append(det)
-        return faces
+        self._face_detector.setInputSize((w, h))
+        _, faces = self._face_detector.detect(frame)
+        if faces is None:
+            return []
+        return list(faces)
 
     def _align(self, frame: np.ndarray, det) -> Optional[np.ndarray]:
         """Warp the detected face to the canonical 112x112 SFace crop."""
-        # YuNet landmark order: right eye, left eye, nose, right mouth, left mouth.
-        right_eye = det[5:7]
-        left_eye = det[7:9]
-        nose = det[9:11]
-        right_mouth = det[11:13]
-        left_mouth = det[13:15]
-
+        # FaceDetectorYN row: [x, y, w, h, l1..l5 (2 each), score]. The
+        # landmark order already matches the template:
+        #   left eye, right eye, nose, left mouth, right mouth.
         src = np.array(
-            [left_eye, right_eye, nose, left_mouth, right_mouth], dtype=np.float32
+            [det[4:6], det[6:8], det[8:10], det[10:12], det[12:14]],
+            dtype=np.float32,
         ).reshape(5, 2)
 
         tform = cv2.estimateAffinePartial2D(src, ALIGN_TEMPLATE, method=cv2.LMEDS)
@@ -281,8 +262,17 @@ class FaceVerificationService:
         embedding_b: np.ndarray,
     ) -> Tuple[bool, float]:
         """Cosine similarity comparison against FACE_MATCH_THRESHOLD."""
-        dot_product = np.dot(embedding_a, embedding_b)
-        norm_product = np.linalg.norm(embedding_a) * np.linalg.norm(embedding_b)
+        if embedding_a is None or embedding_b is None:
+            return False, 0.0
+        a = np.asarray(embedding_a, dtype=np.float64)
+        b = np.asarray(embedding_b, dtype=np.float64)
+        # Guard against stale references with a different embedding size
+        # (e.g. 512-d from the old model) so they never crash or misfire.
+        if a.ndim != 1 or b.ndim != 1 or a.shape != b.shape or a.size == 0:
+            return False, 0.0
+
+        dot_product = np.dot(a, b)
+        norm_product = np.linalg.norm(a) * np.linalg.norm(b)
 
         if norm_product == 0:
             return False, 0.0
