@@ -133,12 +133,12 @@ class FaceVerificationService:
         dist_coeffs = np.zeros((4, 1), dtype=np.float64)
 
         image_points = np.array([
-            landmarks[30],  # Nose tip
-            landmarks[8],   # Chin
-            landmarks[36],  # Left eye left corner
-            landmarks[45],  # Right eye right corner
-            landmarks[48],  # Left mouth corner
-            landmarks[54],  # Right mouth corner
+            landmarks[30, :2],  # Nose tip
+            landmarks[8, :2],   # Chin
+            landmarks[36, :2],  # Left eye left corner
+            landmarks[45, :2],  # Right eye right corner
+            landmarks[48, :2],  # Left mouth corner
+            landmarks[54, :2],  # Right mouth corner
         ], dtype=np.float64)
 
         success, rotation_vector, _ = cv2.solvePnP(
