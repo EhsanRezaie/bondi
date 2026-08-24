@@ -18,6 +18,7 @@ All heavy computation runs in a thread executor to avoid blocking the loop.
 import asyncio
 import threading
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import ClassVar, Optional, Tuple
 
@@ -37,10 +38,14 @@ YU_NET_URL = (
     "face_detection_yunet/face_detection_yunet_2023mar.onnx"
 )
 # ArcFace MobileFaceNet@WebFace600K (512-d). Mirrors InsightFace's `buffalo_sc`
-# pack recognition model; direct ONNX download from the v0.7 release.
-ARC_FACE_URL = (
-    "https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_mbf.onnx"
+# pack recognition model. The ONNX file is bundled inside `buffalo_sc.zip`
+# (v0.7 release) — there is no standalone `w600k_mbf.onnx` release asset.
+BUFFALO_SC_URL = (
+    "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
 )
+# Name of the recognition model inside buffalo_sc.zip (the other member,
+# det_500m.onnx, is not used — YuNet handles detection).
+REC_MODEL_MEMBER = "w600k_mbf.onnx"
 
 # ArcFace expects 112x112 aligned RGB crops.
 INPUT_SIZE = 112
@@ -92,6 +97,23 @@ class FaceVerificationService:
         logger.info("face_model_downloaded", path=str(dest))
         return dest
 
+    def _ensure_recognition_model(self, model_dir: Path) -> Path:
+        """Return the ArcFace ONNX path, downloading + extracting it once.
+
+        w600k_mbf.onnx ships inside buffalo_sc.zip (no standalone release
+        asset), so fetch the bundle and extract just the recognition model.
+        Persists in FACE_MODELS_DIR (a named volume) across deploys.
+        """
+        rec_path = model_dir / REC_MODEL_MEMBER
+        if rec_path.exists():
+            return rec_path
+        zip_path = model_dir / "buffalo_sc.zip"
+        self._download(BUFFALO_SC_URL, zip_path)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extract(REC_MODEL_MEMBER, model_dir)
+        logger.info("face_model_extracted", member=REC_MODEL_MEMBER)
+        return rec_path
+
     def _ensure_model(self) -> None:
         if self._face_detector is not None and self._rec is not None:
             return
@@ -100,7 +122,7 @@ class FaceVerificationService:
                 return
             d = self._model_dir()
             det_path = self._download(YU_NET_URL, d / "face_detection_yunet.onnx")
-            rec_path = self._download(ARC_FACE_URL, d / "w600k_mbf.onnx")
+            rec_path = self._ensure_recognition_model(d)
 
             # YuNet via OpenCV's built-in FaceDetectorYN (handles resize,
             # normalization, box decoding and NMS correctly).
