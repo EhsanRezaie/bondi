@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import create_access_token
@@ -183,8 +184,10 @@ class TestSelfieSubmission:
             data = resp.json()
             assert data["verified"] is True
 
-        await db_session.refresh(verified_user)
-        assert verified_user.profile.is_verified is True
+        result = await db_session.execute(
+            select(UserProfile).where(UserProfile.user_id == verified_user.id)
+        )
+        assert result.scalar_one().is_verified is True
 
     @pytest.mark.asyncio
     async def test_verify_already_verified_mismatch_revokes_badge(
@@ -215,9 +218,12 @@ class TestSelfieSubmission:
             data = resp.json()
             assert data["verified"] is False
 
-        await db_session.refresh(verified_user)
-        assert verified_user.profile.is_verified is False
-        assert verified_user.profile.verified_at is None
+        result = await db_session.execute(
+            select(UserProfile).where(UserProfile.user_id == verified_user.id)
+        )
+        profile = result.scalar_one()
+        assert profile.is_verified is False
+        assert profile.verified_at is None
 
     @pytest.mark.asyncio
     async def test_verify_image_too_large(self, client, auth_headers, test_user, patch_redis):
