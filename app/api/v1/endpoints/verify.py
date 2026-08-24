@@ -54,9 +54,9 @@ async def verify_selfie(
     Verify identity with a clear frontal selfie.
 
     The selfie image is checked (single face, frontal, eyes open, not too
-    small), its face embedding is compared against every approved profile
-    photo, and on success the account is marked verified. The selfie
-    embedding is stored as the canonical face reference.
+    small), its face embedding is compared against the user's not-yet-verified
+    profile photos, and on success those photos are marked verified and the
+    account is marked verified. Nothing is persisted to Redis.
     """
     # A verified account is STILL re-checked against its current photos: the
     # old unconditional fast path let someone swap in another person's photo
@@ -126,9 +126,7 @@ async def verify_selfie(
 
     # Only photos not yet face-verified need checking (e.g. a photo replaced
     # after the account was verified). Already-verified photos are skipped —
-    # re-checking them on every selfie is wasted work, and swap protection
-    # already lives at upload time (photos.py compares each new photo against
-    # the cached face reference).
+    # re-checking them on every selfie is wasted work.
     to_check = [p for p in photos if not p.face_verified]
 
     # Download photos and compare the selfie against EACH unverified one.
