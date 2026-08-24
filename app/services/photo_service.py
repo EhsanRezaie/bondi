@@ -133,6 +133,12 @@ class PhotoService:
                 try:
                     await s3.head_object(Bucket=bucket, Key=key)
                 except ClientError as e:
+                    # Object already gone (or never made it to this bucket) —
+                    # normal for deletes; not an error. Other failures (auth,
+                    # network, server errors) still get logged loudly.
+                    code = e.response.get("Error", {}).get("Code", "")
+                    if code in ("404", "NoSuchKey", "NotFound"):
+                        continue
                     logger.warning("photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True)
                     continue  # not in this bucket
                 await s3.delete_object(Bucket=bucket, Key=key)
