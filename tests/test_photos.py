@@ -56,7 +56,9 @@ def make_image_bytes(width=800, height=800, fmt="JPEG", color=None) -> bytes:
                  100 + (_img_counter * 61) % 155,
                  150 + (_img_counter * 17) % 105)
         _img_counter += 1
-    rng = np.random.default_rng(sum(color) * 7919)
+    rng = np.random.default_rng(
+        (color[0] << 16) | (color[1] << 8) | color[2]
+    )
     noise = rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
     img = Image.fromarray(noise, mode="RGB")
     buf = io.BytesIO()

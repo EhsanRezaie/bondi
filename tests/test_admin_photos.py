@@ -62,7 +62,9 @@ class TestAdminPhotos:
         n = getattr(self, "_n", 0)
         self._n = n + 1
         color = (30 + n * 41 % 225, 80 + n * 53 % 175, 130 + n * 29 % 125)
-        rng = np.random.default_rng(sum(color) * 7919)
+        rng = np.random.default_rng(
+            (color[0] << 16) | (color[1] << 8) | color[2]
+        )
         img = Image.fromarray(
             rng.integers(0, 256, size=(200, 200, 3), dtype=np.uint8),
             mode="RGB",
