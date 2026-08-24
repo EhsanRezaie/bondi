@@ -1801,7 +1801,7 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `FACE_VERIFICATION_MODEL` | `buffalo_l` | InsightFace model name |
-| `FACE_MATCH_THRESHOLD` | `0.45` | Cosine similarity threshold |
+| `FACE_MATCH_THRESHOLD` | `0.5` | Cosine similarity threshold |
 | `FACE_VERIFICATION_FRAME_RATE` | `2` | Frames per second to sample |
 | `FACE_VERIFICATION_VIDEO_MIN_SECONDS` | `4` | Minimum video duration |
 | `FACE_VERIFICATION_VIDEO_MAX_SECONDS` | `15` | Maximum video duration |

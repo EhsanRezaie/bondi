@@ -33,14 +33,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     # ============================================
-    # SMS (Kavenegar via OAuth2 gateway)
+    # SMS (Kavenegar via OAuth2 gateway) — values come from .env
     # ============================================
     SMS_ENABLED: bool = False
-    SMS_TOKEN_URL: str = "https://apim.ahuryx.com/oauth2/token"
-    SMS_BASE_URL: str = "https://10.10.40.41:8243/smsapi/0.1.0"
-    SMS_CLIENT_ID: str = ""
-    SMS_CLIENT_SECRET: str = ""
-    SMS_SENDER_LINE: str = ""
+    SMS_TOKEN_URL: str
+    SMS_BASE_URL: str
+    SMS_CLIENT_ID: str
+    SMS_CLIENT_SECRET: str
+    SMS_SENDER_LINE: str
 
     # ============================================
     # Admin
@@ -75,11 +75,11 @@ class Settings(BaseSettings):
     SUBSCRIPTION_YEARLY_DISCOUNT: int = 30
 
     # ============================================
-    # Payment
+    # Payment (ZarinPal) — values come from .env
     # ============================================
-    ZARINPAL_MERCHANT_ID: str = ""
-    ZARINPAL_SANDBOX: bool = True
-    ZARINPAL_CALLBACK_URL: str = ""
+    ZARINPAL_MERCHANT_ID: str
+    ZARINPAL_SANDBOX: bool
+    ZARINPAL_CALLBACK_URL: str
 
     # ============================================
     # File Uploads
@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     FACE_MODELS_DIR: str = "/app/face_models"
     FACE_DET_SCORE_THRESHOLD: float = 0.5
     FACE_MODEL_THREADS: int = 2
-    FACE_MATCH_THRESHOLD: float = 0.35
+    FACE_MATCH_THRESHOLD: float = 0.5
     FACE_VERIFICATION_MAX_SIZE_MB: int = 10
     FACE_VERIFICATION_COOLDOWN_TTL: int = 86400
     FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 10

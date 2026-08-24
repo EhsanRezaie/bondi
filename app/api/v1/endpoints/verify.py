@@ -58,16 +58,13 @@ async def verify_selfie(
     photo, and on success the account is marked verified. The selfie
     embedding is stored as the canonical face reference.
     """
-    # Check if already verified
-    if current_user.profile and current_user.profile.is_verified:
-        # Already verified — return 200 so clients treat this as success and
-        # can show "Finish" instead of failing on a 400.
-        return VerifyResponse(
-            verified=True,
-            message="Profile already verified",
-            similarity_score=None,
-            mismatched_photo_ids=[],
-        )
+    # Check if already verified. Previously this returned verified=True with
+    # no face check, letting a user swap in someone else's photo and stay
+    # "verified" forever. Keep verifying against the CURRENT photos so a
+    # mismatched replacement is caught; the success path below is idempotent.
+    already_verified = bool(
+        current_user.profile and current_user.profile.is_verified
+    )
 
     # Check cooldown
     cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
@@ -159,6 +156,15 @@ async def verify_selfie(
             best_similarity=round(best_similarity, 4),
             threshold=settings.FACE_MATCH_THRESHOLD,
         )
+        # If a previously verified account no longer matches its photos
+        # (e.g. someone swapped in another person's photo), revoke the badge
+        # so the mismatch is actually reflected, not silently kept.
+        if already_verified and current_user.profile is not None:
+            current_user.profile.is_verified = False
+            current_user.profile.verified_at = None
+            await session.commit()
+            await invalidate_auth_user(redis_module.redis_client, current_user.id)
+            await invalidate_user_cache(redis_module.redis_client, current_user.id)
         return VerifyResponse(
             verified=False,
             message=(
