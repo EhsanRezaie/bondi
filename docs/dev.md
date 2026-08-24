@@ -1799,7 +1799,7 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 #### Configuration (in .env)
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `FACE_MATCH_THRESHOLD` | `0.5` | Cosine similarity threshold |
+| `FACE_MATCH_THRESHOLD` | `0.4` | Cosine similarity threshold |
 | `FACE_DET_SCORE_THRESHOLD` | `0.5` | YuNet detection score threshold |
 | `FACE_MODEL_THREADS` | `2` | onnxruntime intra-op threads |
 | `FACE_VERIFICATION_MAX_SIZE_MB` | `10` | Max selfie image size |

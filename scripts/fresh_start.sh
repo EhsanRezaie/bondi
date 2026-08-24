@@ -4,6 +4,8 @@ set -e
 # ── Config ────────────────────────────────────────────────────────────────────
 DB_USER="${POSTGRES_USER:-bondi_admin}"
 DB_NAME="${POSTGRES_DB:-bondi}"
+MINIO_USER="${MINIO_ROOT_USER:-bondi_minio}"
+MINIO_PASS="${MINIO_ROOT_PASSWORD:-}"
 COMPOSE_FILE="docker-compose.yml"
 HEALTH_URL="http://localhost/health/ready"
 
@@ -24,6 +26,7 @@ echo ""
 echo "This will:"
 echo "  - DROP and recreate the PostgreSQL database ($DB_NAME)"
 echo "  - Flush Redis (tokens, cooldowns, caches)"
+echo "  - Wipe MinIO photos (public + private buckets)"
 echo "  - Run migrations + re-seed interests/prompts"
 echo "  - Restart the full stack"
 echo ""
@@ -49,16 +52,25 @@ log "Flushing Redis..."
 docker exec bondi_redis redis-cli FLUSHALL 2>/dev/null || docker exec bondi_redis redis-cli -a "${REDIS_PASSWORD:-}" --no-auth-warning FLUSHALL
 ok "Redis flushed"
 
-# 4. Apply migrations + seeds (entrypoint also seeds interests/prompts on boot)
+# 4. Wipe MinIO photos (both buckets), then re-create them via minio-init
+log "Wiping MinIO buckets..."
+docker run --rm --network bondi_internal minio/mc sh -c "
+    mc alias set local http://minio:9000 '$MINIO_USER' '$MINIO_PASS' &&
+    mc rb --force local/photos-public 2>/dev/null || true &&
+    mc rb --force local/photos-private 2>/dev/null || true
+" 2>/dev/null || true
+ok "MinIO buckets cleared"
+
+# 5. Apply migrations + seeds (entrypoint also seeds interests/prompts on boot)
 log "Applying migrations..."
 docker compose run --rm migrate
 ok "Migrations applied"
 
-# 5. Restart the full stack
+# 6. Restart the full stack (minio-init re-creates the buckets)
 log "Starting stack..."
 docker compose up -d
 
-# 6. Health check
+# 7. Health check
 log "Waiting for health..."
 for i in $(seq 1 24); do
     sleep 5

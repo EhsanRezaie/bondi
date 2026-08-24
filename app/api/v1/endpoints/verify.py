@@ -124,12 +124,20 @@ async def verify_selfie(
             detail=f"Upload at least {settings.FACE_VERIFICATION_MIN_PHOTOS} photo(s) first",
         )
 
-    # Download photos and compare the selfie against EACH one. Collect every
-    # photo that doesn't match so the app can tell the user which ones failed.
+    # Only photos not yet face-verified need checking (e.g. a photo replaced
+    # after the account was verified). Already-verified photos are skipped —
+    # re-checking them on every selfie is wasted work, and swap protection
+    # already lives at upload time (photos.py compares each new photo against
+    # the cached face reference).
+    to_check = [p for p in photos if not p.face_verified]
+
+    # Download photos and compare the selfie against EACH unverified one.
+    # Collect every photo that doesn't match so the app can tell the user
+    # which ones failed.
     mismatched_photo_ids: list[str] = []
-    matched_any = False
+    matched_any = bool(not to_check)  # nothing new to verify → already a match
     best_similarity = 0.0
-    for photo in photos:
+    for photo in to_check:
         try:
             photo_bytes = await PhotoService.download_photo_bytes(photo.url)
         except Exception as e:
@@ -180,13 +188,14 @@ async def verify_selfie(
             mismatched_photo_ids=mismatched_photo_ids,
         )
 
-    # Success — mark user as verified, face-verify every photo, and auto-approve
-    # (publish) any that were still pending so the profile becomes visible.
+    # Success — mark user as verified, face-verify only the photos that were
+    # just checked, and auto-approve (publish) any that were still pending so
+    # the profile becomes visible. Already-verified photos are left untouched.
     now = datetime.now(timezone.utc)
     current_user.profile.is_verified = True
     current_user.profile.verified_at = now
 
-    for photo in photos:
+    for photo in to_check:
         photo.face_verified = True
         if photo.status != "approved":
             photo.status = "approved"
