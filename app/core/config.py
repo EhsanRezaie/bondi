@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     NSFW_THRESHOLD: float = 0.8
 
     # ============================================
-    # Face Verification (lightweight mobile models: YuNet + SFace)
+    # Face Verification (YuNet detection + ArcFace w600k_mbf recognition)
     # ============================================
     FACE_MODELS_DIR: str = "/app/face_models"
     FACE_DET_SCORE_THRESHOLD: float = 0.5

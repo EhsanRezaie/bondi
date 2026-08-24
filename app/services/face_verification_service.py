@@ -1,15 +1,15 @@
 """
 Face Verification Service (lightweight mobile models)
 
-Uses two tiny ONNX models from opencv_zoo, both mobile-grade and run on CPU
-via onnxruntime:
-  - YuNet  (~340 KB)  face detection
-  - SFace  (~9 MB)    face recognition / 128-d embeddings
+Detection uses OpenCV's YuNet (~340 KB, opencv_zoo). Recognition uses the
+InsightFace ArcFace ONNX recognition model `w600k_mbf` (MobileFaceNet trained
+on WebFace600K, ~13 MB) running on CPU via onnxruntime. Both are mobile-grade
+and far more discriminative than the previous SFace 128-d embeddings.
 
-No landmarks, head-pose or eye-openness heuristics. Flow:
+Flow:
   - Detect faces. The image must contain exactly one face.
   - Align the face to a canonical 112x112 crop.
-  - Extract its SFace embedding.
+  - Extract its ArcFace embedding (512-d).
   - Compare embeddings (cosine similarity) against the profile photos.
 
 All heavy computation runs in a thread executor to avoid blocking the loop.
@@ -31,21 +31,24 @@ from app.core.logging import get_logger
 logger = get_logger("face_verification_service")
 
 
-# opencv_zoo model URLs (small, mobile-friendly)
+# Model URLs (small, mobile-friendly)
 YU_NET_URL = (
     "https://github.com/opencv/opencv_zoo/raw/main/models/"
     "face_detection_yunet/face_detection_yunet_2023mar.onnx"
 )
-S_FACE_URL = (
-    "https://github.com/opencv/opencv_zoo/raw/main/models/"
-    "face_recognition_sface/face_recognition_sface_2021dec.onnx"
+# ArcFace MobileFaceNet@WebFace600K (512-d). Mirrors InsightFace's `buffalo_sc`
+# pack recognition model; direct ONNX download from the v0.7 release.
+ARC_FACE_URL = (
+    "https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_mbf.onnx"
 )
 
-# SFace expects 112x112 aligned crops.
+# ArcFace expects 112x112 aligned RGB crops.
 INPUT_SIZE = 112
+# ArcFace input normalization (insightface arcface_onnx.py): mean/std 127.5.
+INPUT_STD = 127.5
 
 # 5-point template (left eye, right eye, nose, left mouth, right mouth)
-# used for the similarity-transform alignment, matching SFace training.
+# used for the similarity-transform alignment, matching ArcFace training.
 ALIGN_TEMPLATE = np.array(
     [
         [38.2946, 51.6963],
@@ -97,7 +100,7 @@ class FaceVerificationService:
                 return
             d = self._model_dir()
             det_path = self._download(YU_NET_URL, d / "face_detection_yunet.onnx")
-            rec_path = self._download(S_FACE_URL, d / "face_recognition_sface.onnx")
+            rec_path = self._download(ARC_FACE_URL, d / "w600k_mbf.onnx")
 
             # YuNet via OpenCV's built-in FaceDetectorYN (handles resize,
             # normalization, box decoding and NMS correctly).
@@ -115,7 +118,7 @@ class FaceVerificationService:
             self._rec = ort.InferenceSession(
                 str(rec_path), sess_options=so, providers=["CPUExecutionProvider"]
             )
-            logger.info("face_model_loaded", models="yunet+sface")
+            logger.info("face_model_loaded", models="yunet+w600k_mbf")
 
     # ------------------------------------------------------------------
     # Detection / alignment / embedding
@@ -130,7 +133,7 @@ class FaceVerificationService:
         return list(faces)
 
     def _align(self, frame: np.ndarray, det) -> Optional[np.ndarray]:
-        """Warp the detected face to the canonical 112x112 SFace crop."""
+        """Warp the detected face to the canonical 112x112 ArcFace crop."""
         # FaceDetectorYN row: [x, y, w, h, l1..l5 (2 each), score]. The
         # landmark order already matches the template:
         #   left eye, right eye, nose, left mouth, right mouth.
@@ -145,10 +148,10 @@ class FaceVerificationService:
         return cv2.warpAffine(frame, tform[0], (INPUT_SIZE, INPUT_SIZE), borderValue=0.0)
 
     def _embed(self, aligned: np.ndarray) -> Optional[np.ndarray]:
-        """Return an L2-normalized SFace embedding, or None."""
+        """Return an L2-normalized ArcFace embedding, or None."""
         blob = cv2.dnn.blobFromImage(
-            aligned, 1.0 / 128.0, (INPUT_SIZE, INPUT_SIZE),
-            (127.5, 127.5, 127.5), swapRB=True, crop=False,
+            aligned, 1.0 / INPUT_STD, (INPUT_SIZE, INPUT_SIZE),
+            (INPUT_STD, INPUT_STD, INPUT_STD), swapRB=True, crop=False,
         )
         out = self._rec.run(None, {self._rec.get_inputs()[0].name: blob})[0]
         emb = out[0].astype(np.float32)

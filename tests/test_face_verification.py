@@ -155,16 +155,69 @@ class TestVerificationStatus:
 class TestSelfieSubmission:
 
     @pytest.mark.asyncio
-    async def test_verify_already_verified(self, client, verified_auth_headers):
-        resp = await client.post(
-            "/api/v1/users/me/verify",
-            headers=verified_auth_headers,
-            files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["verified"] is True
-        assert "already verified" in data["message"].lower()
+    async def test_verify_already_verified_matches_keeps_badge(
+        self, client, db_session, verified_user, patch_redis
+    ):
+        """Already-verified user whose selfie still matches stays verified."""
+        _add_approved_photo(db_session, verified_user.id)
+        await db_session.commit()
+        headers = {
+            "Authorization": f"Bearer {create_access_token(str(verified_user.id), verified_user.token_version)}"
+        }
+        fake_emb = make_fake_embedding()
+        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.9))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
+
+            resp = await client.post(
+                "/api/v1/users/me/verify",
+                headers=headers,
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["verified"] is True
+
+        await db_session.refresh(verified_user)
+        assert verified_user.profile.is_verified is True
+
+    @pytest.mark.asyncio
+    async def test_verify_already_verified_mismatch_revokes_badge(
+        self, client, db_session, verified_user, patch_redis
+    ):
+        """Already-verified user whose photos no longer match loses the badge."""
+        _add_approved_photo(db_session, verified_user.id)
+        await db_session.commit()
+        headers = {
+            "Authorization": f"Bearer {create_access_token(str(verified_user.id), verified_user.token_version)}"
+        }
+        fake_emb = make_fake_embedding()
+        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
+             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
+             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+            mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
+            mock_fvs.compare_embeddings = MagicMock(return_value=(False, 0.1))
+            mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
+            mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
+
+            resp = await client.post(
+                "/api/v1/users/me/verify",
+                headers=headers,
+                files={"file": ("selfie.jpg", make_image_bytes(), "image/jpeg")},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["verified"] is False
+
+        await db_session.refresh(verified_user)
+        assert verified_user.profile.is_verified is False
+        assert verified_user.profile.verified_at is None
 
     @pytest.mark.asyncio
     async def test_verify_image_too_large(self, client, auth_headers, test_user, patch_redis):
