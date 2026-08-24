@@ -366,10 +366,6 @@ class TestSelfieSubmission:
         await db_session.refresh(photo)
         assert photo.face_verified is True
 
-        # Face reference cached in Redis
-        stored = await patch_redis.get(f"face_ref:{test_user.id}")
-        assert stored is not None
-
     @pytest.mark.asyncio
     async def test_verify_success_sets_cooldown(self, client, auth_headers, db_session, test_user, patch_redis):
         _add_approved_photo(db_session, test_user.id)
@@ -456,6 +452,6 @@ class TestFaceVerificationService:
             "FACE_MATCH_THRESHOLD",
             "FACE_VERIFICATION_MAX_SIZE_MB", "FACE_VERIFICATION_COOLDOWN_TTL",
             "FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY",
-            "FACE_VERIFICATION_MIN_PHOTOS", "FACE_REFERENCE_CACHE_TTL",
+            "FACE_VERIFICATION_MIN_PHOTOS",
         ):
             assert hasattr(settings, attr), attr

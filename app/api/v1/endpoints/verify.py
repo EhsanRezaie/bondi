@@ -203,13 +203,6 @@ async def verify_selfie(
 
     await session.commit()
 
-    # Store the selfie embedding as the canonical face reference
-    await redis_module.store_face_reference(
-        str(current_user.id),
-        selfie_embedding.tolist(),
-        ttl=settings.FACE_REFERENCE_CACHE_TTL,
-    )
-
     # Invalidate caches — verification status changed
     await invalidate_auth_user(redis_module.redis_client, current_user.id)
     await invalidate_user_cache(redis_module.redis_client, current_user.id)

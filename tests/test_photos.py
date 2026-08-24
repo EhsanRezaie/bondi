@@ -159,21 +159,6 @@ class TestUploadPhoto:
         assert resp.status_code == 400
         assert "no face" in resp.json()["detail"].lower()
 
-    async def test_upload_rejects_face_mismatch(self, client, auth_headers, test_user, patch_redis):
-        """A photo showing a different person is auto-rejected."""
-        import json as _json
-        fake_ref = [float(x) for x in np.random.randn(512).astype(np.float32)]
-        await patch_redis.set(f"face_ref:{test_user.id}", _json.dumps(fake_ref))
-
-        with patch(
-            "app.api.v1.endpoints.photos.face_verification_service.compare_embeddings",
-            return_value=(False, 0.2),
-        ):
-            files = make_upload_file()
-            resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
-            assert resp.status_code == 400
-            assert "doesn't match" in resp.json()["detail"].lower()
-
     async def test_upload_requires_auth(self, client):
         files = make_upload_file()
         resp = await client.post("/api/v1/users/me/photos", files=files)

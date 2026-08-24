@@ -166,7 +166,6 @@ class Settings(BaseSettings):
     FACE_VERIFICATION_COOLDOWN_TTL: int = 86400
     FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 10
     FACE_VERIFICATION_MIN_PHOTOS: int = 1
-    FACE_REFERENCE_CACHE_TTL: int = 604800  # 7 days
 
     # ============================================
     # CORS

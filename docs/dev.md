@@ -1806,13 +1806,15 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 | `FACE_VERIFICATION_COOLDOWN_TTL` | `86400` | Cooldown between attempts (24h) |
 | `FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY` | `10` | Daily attempt limit |
 | `FACE_VERIFICATION_MIN_PHOTOS` | `1` | Min photos before selfie verify |
-| `FACE_REFERENCE_CACHE_TTL` | `604800` | Cached face embedding TTL (7 days) |
 
 Face verification is image-based: YuNet detects a single face, the face is aligned to a
 canonical 112x112 crop, and the InsightFace `w600k_mbf` ONNX model (MobileFaceNet trained
-on WebFace600K) extracts a 512-d embedding. The selfie embedding is compared by cosine
-similarity against every profile photo; all photos must match. An already-verified account
-is still re-checked against its CURRENT photos — a mismatch revokes the badge.
+on WebFace600K) extracts a 512-d embedding. Photo upload validates the image (NSFW + exactly
+one face) but does NOT compare against a stored reference — identity is confirmed at
+verification time, where a fresh selfie embedding is compared by cosine similarity against
+the profile photos. Only photos not yet face-verified are checked on each verification. An
+already-verified account is still re-checked against its CURRENT photos — a mismatch revokes
+the badge.
 
 #### Tests (28 total)
 | Test Class | Count | Coverage |
