@@ -100,6 +100,24 @@ async def upload_photo(
             detail=f"Photo rejected: {face_error}",
         )
 
+    # Duplicate check: reject the same (or near-identical) image being uploaded
+    # more than once. Compare only active photos (pending/approved) — a rejected
+    # photo may be re-uploaded with fixes.
+    new_phash = PhotoService.compute_phash(file_data)
+    dup_result = await session.execute(
+        select(Photo.phash).where(
+            Photo.user_id == current_user.id,
+            Photo.status.in_(["pending", "approved"]),
+            Photo.phash.isnot(None),
+        )
+    )
+    existing_hashes = [h for (h,) in dup_result.all()]
+    if PhotoService.is_duplicate(existing_hashes, new_phash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo rejected: this photo is already uploaded.",
+        )
+
     # Check photo limit atomically — FOR UPDATE locks existing rows so
     # a concurrent upload cannot read the same count and both pass the check.
     result = await session.execute(
@@ -122,6 +140,7 @@ async def upload_photo(
         is_main=len(photos) == 0,  # First photo becomes main
         status="pending",
         nsfw_score=nsfw_score,
+        phash=new_phash,
     )
     session.add(new_photo)
     await session.flush()  # Get ID

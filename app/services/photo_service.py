@@ -1,7 +1,8 @@
 import io
 import uuid
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
+import numpy as np
 from PIL import Image
 from botocore.exceptions import ClientError
 
@@ -97,6 +98,43 @@ class PhotoService:
         buffer = io.BytesIO()
         clean.save(buffer, "JPEG", quality=85, optimize=True)
         return buffer.getvalue()
+
+    @staticmethod
+    def compute_phash(file_data: bytes) -> str:
+        """Return a 64-bit dHash hex string for duplicate detection.
+
+        dHash (difference hash) is robust to re-encoding, resizing and small
+        crops: identical/near-identical images produce hashes whose Hamming
+        distance is tiny, while genuinely different images are far apart.
+        """
+        img = Image.open(io.BytesIO(file_data))
+        # Greyscale + 9x8 so each pixel yields one bit (8 columns of diffs).
+        gray = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+        arr = np.asarray(gray, dtype=np.int16)
+        diff = arr[:, 1:] > arr[:, :-1]  # (8, 8) booleans
+        bits = diff.flatten()
+        # Pack 64 bits into a 16-char hex string.
+        val = 0
+        for b in bits:
+            val = (val << 1) | int(b)
+        return format(val, "016x")
+
+    @staticmethod
+    def hamming(a: str, b: str) -> int:
+        """Hamming distance between two hex dHash strings."""
+        ia, ib = int(a, 16), int(b, 16)
+        return bin(ia ^ ib).count("1")
+
+    @staticmethod
+    def is_duplicate(existing_hashes: List[str], new_hash: str) -> bool:
+        """True if new_hash is within threshold of any existing photo hash."""
+        threshold = settings.PHASH_DUPLICATE_THRESHOLD
+        for h in existing_hashes:
+            if not h:
+                continue
+            if PhotoService.hamming(h, new_hash) <= threshold:
+                return True
+        return False
 
     @staticmethod
     async def save_photo(user_id: str, photo_id: str, file_data: bytes) -> str:

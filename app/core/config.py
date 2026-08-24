@@ -82,10 +82,14 @@ class Settings(BaseSettings):
     ZARINPAL_CALLBACK_URL: str
 
     # ============================================
-    # File Uploads
+    # Upload Limits
     # ============================================
     MAX_PHOTO_SIZE_MB: int = 10
     MAX_PHOTOS_PER_USER: int = 9
+    # Hamming distance threshold for duplicate-photo detection (dHash).
+    # Same image re-encoded/cropped stays well below this; a different photo
+    # of the same person is far above it.
+    PHASH_DUPLICATE_THRESHOLD: int = 6
     
     # ============================================
     # Chat Media Settings
@@ -164,7 +168,7 @@ class Settings(BaseSettings):
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_VERIFICATION_MAX_SIZE_MB: int = 10
     FACE_VERIFICATION_COOLDOWN_TTL: int = 86400
-    FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 10
+    FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY: int = 20
     FACE_VERIFICATION_MIN_PHOTOS: int = 1
 
     # ============================================

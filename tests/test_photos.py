@@ -164,6 +164,39 @@ class TestUploadPhoto:
         resp = await client.post("/api/v1/users/me/photos", files=files)
         assert resp.status_code == 401
 
+    async def test_upload_rejects_duplicate_image(self, client, auth_headers):
+        """The same image cannot be uploaded twice (dHash duplicate check)."""
+        first = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(),
+        )
+        assert first.status_code == 201, first.text
+
+        second = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(),
+        )
+        assert second.status_code == 400
+        assert "already uploaded" in second.json()["detail"].lower()
+
+    async def test_upload_allows_different_image(self, client, auth_headers):
+        """A genuinely different image uploads fine after a previous one."""
+        first = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(),
+        )
+        assert first.status_code == 201, first.text
+
+        second = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(width=801, height=801, filename="other.jpg"),
+        )
+        assert second.status_code == 201, second.text
+
     async def test_upload_rejects_too_small_image(self, client, auth_headers):
         files = make_upload_file(width=50, height=50)
         resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
