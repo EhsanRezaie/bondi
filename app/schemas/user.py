@@ -218,11 +218,11 @@ class UserProfileResponse(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     location_manual: bool = False
-    is_premium: bool
+    is_premium: bool = False
     premium_until: Optional[datetime] = None
     is_verified: bool = False
     is_active: bool
-    is_profile_complete: bool
+    is_profile_complete: bool = False
     profile_completion: int = 0
     created_at: datetime
     last_seen_at: Optional[datetime] = None

@@ -110,6 +110,20 @@ class TestAdminMessageUser:
 class TestAdminAnnouncements:
     """Test admin announcements to all users"""
 
+    @pytest.fixture(autouse=True)
+    def _mock_announcement_push(self):
+        """Mock the FCM push path so announcement tests never open a DB session
+        (AsyncSessionLocal) on the test's event loop — that trips the
+        'Future attached to a different loop' error when tests run in sequence."""
+        from unittest.mock import AsyncMock, patch
+        with (patch("app.api.v1.endpoints.admin_announcements.websocket_manager") as mock_ws,
+              patch("app.services.push_service.PushService.send_to_users",
+                    new_callable=AsyncMock) as mock_push,
+              patch("app.services.push_service.PushService.send_to_user",
+                    new_callable=AsyncMock)):
+            mock_ws.send_personal_message = AsyncMock()
+            yield mock_push
+
     async def test_admin_announcement_to_all_users(self, client: AsyncClient, mock_verification_code):
         """Admin should send announcement to all active users"""
         # Create multiple users
