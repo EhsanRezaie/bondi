@@ -11,6 +11,7 @@ class Photo(Base):
         Index('idx_photos_user_main', 'user_id', 'is_main', postgresql_where=text("is_main = true")),
         Index('idx_photos_user_id', 'user_id', 'created_at'),
         Index('idx_photos_status', 'status', 'created_at'),
+        Index('idx_photos_phash', 'user_id', 'phash'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -26,6 +27,9 @@ class Photo(Base):
 
     # Face verification
     face_verified = Column(Boolean, default=False)
+
+    # Perceptual hash (dHash hex) for duplicate-upload detection
+    phash = Column(String(64), nullable=True)
     
     # Add created_at if missing
     created_at = Column(DateTime(timezone=True), server_default=func.now())

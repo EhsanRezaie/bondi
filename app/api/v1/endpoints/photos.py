@@ -89,10 +89,10 @@ async def upload_photo(
             detail="Photo rejected: content policy violation.",
         )
 
-    # Face check + same-person consistency
-    # The uploaded photo must contain exactly one face, and that face must
-    # match the user's canonical face reference (selfie anchor) or the
-    # average of their existing approved photos.
+    # Face check: the uploaded photo must contain exactly one face. Same-person
+    # identity is confirmed later by selfie verification (POST /users/me/verify),
+    # which compares a fresh selfie against the profile photos — so no face
+    # reference is stored or consulted at upload time.
     new_embedding, face_error = await face_verification_service.extract_single_photo_embedding(file_data)
     if face_error:
         raise HTTPException(
@@ -100,49 +100,23 @@ async def upload_photo(
             detail=f"Photo rejected: {face_error}",
         )
 
-    # Resolve the user's reference embedding (cached) or build it from approved photos.
-    reference_embedding = await redis_module.get_face_reference(str(current_user.id))
-    if reference_embedding is not None:
-        import numpy as np
-        ref_np = np.asarray(reference_embedding, dtype=np.float64)
-        matched, _ = face_verification_service.compare_embeddings(new_embedding, ref_np)
-        if not matched:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Photo rejected: this photo doesn't match your other photos.",
-            )
-    else:
-        # Build reference from existing approved photos (if any).
-        approved_result = await session.execute(
-            select(Photo).where(
-                Photo.user_id == current_user.id,
-                Photo.status == "approved",
-            )
+    # Duplicate check: reject the same (or near-identical) image being uploaded
+    # more than once. Compare only active photos (pending/approved) — a rejected
+    # photo may be re-uploaded with fixes.
+    new_phash = PhotoService.compute_phash(file_data)
+    dup_result = await session.execute(
+        select(Photo.phash).where(
+            Photo.user_id == current_user.id,
+            Photo.status.in_(["pending", "approved"]),
+            Photo.phash.isnot(None),
         )
-        approved_photos = approved_result.scalars().all()
-
-        if approved_photos:
-            photo_bytes_list = []
-            for photo in approved_photos:
-                try:
-                    photo_bytes_list.append(await PhotoService.download_photo_bytes(photo.url))
-                except Exception:
-                    continue
-
-            if photo_bytes_list:
-                ref_embedding, _ = await face_verification_service.extract_photo_embeddings(photo_bytes_list)
-                if ref_embedding is not None:
-                    matched, _ = face_verification_service.compare_embeddings(new_embedding, ref_embedding)
-                    if not matched:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Photo rejected: this photo doesn't match your other photos.",
-                        )
-                    await redis_module.store_face_reference(
-                        str(current_user.id),
-                        ref_embedding.tolist(),
-                        ttl=settings.FACE_REFERENCE_CACHE_TTL,
-                    )
+    )
+    existing_hashes = [h for (h,) in dup_result.all()]
+    if PhotoService.is_duplicate(existing_hashes, new_phash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo rejected: this photo is already uploaded.",
+        )
 
     # Check photo limit atomically — FOR UPDATE locks existing rows so
     # a concurrent upload cannot read the same count and both pass the check.
@@ -166,6 +140,7 @@ async def upload_photo(
         is_main=len(photos) == 0,  # First photo becomes main
         status="pending",
         nsfw_score=nsfw_score,
+        phash=new_phash,
     )
     session.add(new_photo)
     await session.flush()  # Get ID
@@ -270,7 +245,6 @@ async def delete_photo(
     await session.commit()
 
     await invalidate_user_cache(redis_client, current_user.id)
-    await redis_module.delete_face_reference(str(current_user.id))
 
 
 @router.put("/{photo_id}/main", response_model=PhotoResponse)

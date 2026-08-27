@@ -1792,22 +1792,29 @@ Opens at `http://localhost:8081` — separate database and Redis namespace.
 #### New Endpoints
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/users/me/verify/challenge` | POST | User | Generate random liveness challenge |
-| `/users/me/verify` | POST | User | Submit selfie video for verification |
+| `/users/me/verify` | POST | User | Submit selfie image for verification |
 | `/users/me/verify/status` | GET | User | Check verification status + cooldown |
 | `/admin/face-verification/test` | POST | Admin | Test full pipeline with debug output |
 
 #### Configuration (in .env)
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `FACE_VERIFICATION_MODEL` | `buffalo_l` | InsightFace model name |
-| `FACE_MATCH_THRESHOLD` | `0.45` | Cosine similarity threshold |
-| `FACE_VERIFICATION_FRAME_RATE` | `2` | Frames per second to sample |
-| `FACE_VERIFICATION_VIDEO_MIN_SECONDS` | `4` | Minimum video duration |
-| `FACE_VERIFICATION_VIDEO_MAX_SECONDS` | `15` | Maximum video duration |
-| `FACE_VERIFICATION_CHALLENGE_TTL` | `600` | Challenge expiry (10 min) |
+| `FACE_MATCH_THRESHOLD` | `0.4` | Cosine similarity threshold |
+| `FACE_DET_SCORE_THRESHOLD` | `0.5` | YuNet detection score threshold |
+| `FACE_MODEL_THREADS` | `2` | onnxruntime intra-op threads |
+| `FACE_VERIFICATION_MAX_SIZE_MB` | `10` | Max selfie image size |
 | `FACE_VERIFICATION_COOLDOWN_TTL` | `86400` | Cooldown between attempts (24h) |
-| `FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY` | `3` | Daily attempt limit |
+| `FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY` | `10` | Daily attempt limit |
+| `FACE_VERIFICATION_MIN_PHOTOS` | `1` | Min photos before selfie verify |
+
+Face verification is image-based: YuNet detects a single face, the face is aligned to a
+canonical 112x112 crop, and the InsightFace `w600k_mbf` ONNX model (MobileFaceNet trained
+on WebFace600K) extracts a 512-d embedding. Photo upload validates the image (NSFW + exactly
+one face) but does NOT compare against a stored reference — identity is confirmed at
+verification time, where a fresh selfie embedding is compared by cosine similarity against
+the profile photos. Only photos not yet face-verified are checked on each verification. An
+already-verified account is still re-checked against its CURRENT photos — a mismatch revokes
+the badge.
 
 #### Tests (28 total)
 | Test Class | Count | Coverage |

@@ -42,15 +42,32 @@ ADMIN_HEADERS = {"X-Admin-Key": settings.ADMIN_SECRET_KEY}
 # Image helpers
 # ---------------------------------------------------------------------------
 
-def make_image_bytes(width=800, height=800, fmt="JPEG") -> bytes:
-    img = Image.new("RGB", (width, height), color=(100, 150, 200))
+_img_counter = 0
+
+
+def make_image_bytes(width=800, height=800, fmt="JPEG", color=None) -> bytes:
+    """Create a test image with random noise. Colors vary per call so
+    consecutive uploads are NOT treated as duplicates by the dHash check; pass
+    an explicit color to force two uploads to be byte-identical (the noise is
+    seeded from the color)."""
+    global _img_counter
+    if color is None:
+        color = (50 + (_img_counter * 37) % 200,
+                 100 + (_img_counter * 61) % 155,
+                 150 + (_img_counter * 17) % 105)
+        _img_counter += 1
+    rng = np.random.default_rng(
+        (color[0] << 16) | (color[1] << 8) | color[2]
+    )
+    noise = rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
+    img = Image.fromarray(noise, mode="RGB")
     buf = io.BytesIO()
     img.save(buf, fmt)
     return buf.getvalue()
 
 
-def make_upload_file(width=800, height=800, fmt="JPEG", filename="photo.jpg"):
-    data = make_image_bytes(width, height, fmt)
+def make_upload_file(width=800, height=800, fmt="JPEG", filename="photo.jpg", color=None):
+    data = make_image_bytes(width, height, fmt, color=color)
     content_type = f"image/{fmt.lower()}"
     return {"file": (filename, data, content_type)}
 
@@ -159,25 +176,43 @@ class TestUploadPhoto:
         assert resp.status_code == 400
         assert "no face" in resp.json()["detail"].lower()
 
-    async def test_upload_rejects_face_mismatch(self, client, auth_headers, test_user, patch_redis):
-        """A photo showing a different person is auto-rejected."""
-        import json as _json
-        fake_ref = [float(x) for x in np.random.randn(512).astype(np.float32)]
-        await patch_redis.set(f"face_ref:{test_user.id}", _json.dumps(fake_ref))
-
-        with patch(
-            "app.api.v1.endpoints.photos.face_verification_service.compare_embeddings",
-            return_value=(False, 0.2),
-        ):
-            files = make_upload_file()
-            resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
-            assert resp.status_code == 400
-            assert "doesn't match" in resp.json()["detail"].lower()
-
     async def test_upload_requires_auth(self, client):
         files = make_upload_file()
         resp = await client.post("/api/v1/users/me/photos", files=files)
         assert resp.status_code == 401
+
+    async def test_upload_rejects_duplicate_image(self, client, auth_headers):
+        """The same image cannot be uploaded twice (dHash duplicate check)."""
+        first = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(color=(100, 150, 200)),
+        )
+        assert first.status_code == 201, first.text
+
+        second = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(color=(100, 150, 200)),
+        )
+        assert second.status_code == 400
+        assert "already uploaded" in second.json()["detail"].lower()
+
+    async def test_upload_allows_different_image(self, client, auth_headers):
+        """A genuinely different image uploads fine after a previous one."""
+        first = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(),
+        )
+        assert first.status_code == 201, first.text
+
+        second = await client.post(
+            "/api/v1/users/me/photos",
+            headers=auth_headers,
+            files=make_upload_file(),
+        )
+        assert second.status_code == 201, second.text
 
     async def test_upload_rejects_too_small_image(self, client, auth_headers):
         files = make_upload_file(width=50, height=50)

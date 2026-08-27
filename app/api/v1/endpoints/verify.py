@@ -54,32 +54,38 @@ async def verify_selfie(
     Verify identity with a clear frontal selfie.
 
     The selfie image is checked (single face, frontal, eyes open, not too
-    small), its face embedding is compared against every approved profile
-    photo, and on success the account is marked verified. The selfie
-    embedding is stored as the canonical face reference.
+    small), its face embedding is compared against the user's not-yet-verified
+    profile photos, and on success those photos are marked verified and the
+    account is marked verified. Nothing is persisted to Redis.
     """
-    # Check if already verified
-    if current_user.profile and current_user.profile.is_verified:
-        raise HTTPException(status_code=400, detail="Profile already verified")
+    # A verified account is STILL re-checked against its current photos: the
+    # old unconditional fast path let someone swap in another person's photo
+    # and stay "verified" forever. Cooldown/daily-attempt limits only gate
+    # fresh verification attempts, so an already-verified user can always
+    # re-confirm (and a mismatch below revokes the stale badge).
+    already_verified = bool(
+        current_user.profile and current_user.profile.is_verified
+    )
 
-    # Check cooldown
-    cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
-    cooldown_ttl = await redis_module.redis_client.ttl(cooldown_key)
-    if cooldown_ttl > 0:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Please wait {cooldown_ttl // 3600} hours before retrying verification",
-        )
+    if not already_verified:
+        # Check cooldown
+        cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
+        cooldown_ttl = await redis_module.redis_client.ttl(cooldown_key)
+        if cooldown_ttl > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {cooldown_ttl // 3600} hours before retrying verification",
+            )
 
-    # Check daily attempts
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
-    attempts = await redis_module.redis_client.get(attempts_key)
-    if attempts and int(attempts) >= settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Maximum {settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY} attempts per day",
-        )
+        # Check daily attempts
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
+        attempts = await redis_module.redis_client.get(attempts_key)
+        if attempts and int(attempts) >= settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Maximum {settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY} attempts per day",
+            )
 
     # Read image
     image_bytes = await file.read()
@@ -118,12 +124,18 @@ async def verify_selfie(
             detail=f"Upload at least {settings.FACE_VERIFICATION_MIN_PHOTOS} photo(s) first",
         )
 
-    # Download photos and compare the selfie against EACH one. Collect every
-    # photo that doesn't match so the app can tell the user which ones failed.
+    # Only photos not yet face-verified need checking (e.g. a photo replaced
+    # after the account was verified). Already-verified photos are skipped —
+    # re-checking them on every selfie is wasted work.
+    to_check = [p for p in photos if not p.face_verified]
+
+    # Download photos and compare the selfie against EACH unverified one.
+    # Collect every photo that doesn't match so the app can tell the user
+    # which ones failed.
     mismatched_photo_ids: list[str] = []
-    matched_any = False
+    matched_any = bool(not to_check)  # nothing new to verify → already a match
     best_similarity = 0.0
-    for photo in photos:
+    for photo in to_check:
         try:
             photo_bytes = await PhotoService.download_photo_bytes(photo.url)
         except Exception as e:
@@ -144,7 +156,17 @@ async def verify_selfie(
             mismatched_photo_ids.append(str(photo.id))
 
     if not matched_any or mismatched_photo_ids:
-        await _increment_attempts(str(current_user.id)).execute()
+        if not already_verified:
+            await _increment_attempts(str(current_user.id)).execute()
+        # A previously verified account whose photos no longer match the
+        # selfie has been tampered with — revoke the badge so the mismatch is
+        # actually reflected instead of silently kept.
+        if already_verified and current_user.profile is not None:
+            current_user.profile.is_verified = False
+            current_user.profile.verified_at = None
+            await session.commit()
+            await invalidate_auth_user(redis_module.redis_client, current_user.id)
+            await invalidate_user_cache(redis_module.redis_client, current_user.id)
         logger.warning(
             "face_match_failed",
             user_id=str(current_user.id),
@@ -164,13 +186,14 @@ async def verify_selfie(
             mismatched_photo_ids=mismatched_photo_ids,
         )
 
-    # Success — mark user as verified, face-verify every photo, and auto-approve
-    # (publish) any that were still pending so the profile becomes visible.
+    # Success — mark user as verified, face-verify only the photos that were
+    # just checked, and auto-approve (publish) any that were still pending so
+    # the profile becomes visible. Already-verified photos are left untouched.
     now = datetime.now(timezone.utc)
     current_user.profile.is_verified = True
     current_user.profile.verified_at = now
 
-    for photo in photos:
+    for photo in to_check:
         photo.face_verified = True
         if photo.status != "approved":
             photo.status = "approved"
@@ -178,23 +201,15 @@ async def verify_selfie(
 
     await session.commit()
 
-    # Store the selfie embedding as the canonical face reference
-    await redis_module.store_face_reference(
-        str(current_user.id),
-        selfie_embedding.tolist(),
-        ttl=settings.FACE_REFERENCE_CACHE_TTL,
-    )
-
     # Invalidate caches — verification status changed
     await invalidate_auth_user(redis_module.redis_client, current_user.id)
     await invalidate_user_cache(redis_module.redis_client, current_user.id)
 
-    # Set cooldown
-    cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
-    await redis_module.redis_client.set(cooldown_key, "1", ex=settings.FACE_VERIFICATION_COOLDOWN_TTL)
-
-    # Increment attempt counter
-    await _increment_attempts(str(current_user.id)).execute()
+    # Cooldown + attempt counter only apply to fresh verification attempts.
+    if not already_verified:
+        cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
+        await redis_module.redis_client.set(cooldown_key, "1", ex=settings.FACE_VERIFICATION_COOLDOWN_TTL)
+        await _increment_attempts(str(current_user.id)).execute()
 
     logger.info(
         "verification_success",

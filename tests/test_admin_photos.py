@@ -56,9 +56,19 @@ class TestAdminPhotos:
     """Test admin photo moderation"""
 
     async def create_test_photo(self, client, headers):
-        """Helper to create a test photo"""
-        # Create a simple test image
-        img = Image.new('RGB', (200, 200), color='red')
+        """Helper to create a test photo. Color varies per call and the image is
+        random noise seeded from that color, so consecutive uploads are NOT
+        flagged as duplicates by the dHash check."""
+        n = getattr(self, "_n", 0)
+        self._n = n + 1
+        color = (30 + n * 41 % 225, 80 + n * 53 % 175, 130 + n * 29 % 125)
+        rng = np.random.default_rng(
+            (color[0] << 16) | (color[1] << 8) | color[2]
+        )
+        img = Image.fromarray(
+            rng.integers(0, 256, size=(200, 200, 3), dtype=np.uint8),
+            mode="RGB",
+        )
         img_bytes = io.BytesIO()
         img.save(img_bytes, format='JPEG')
         img_bytes.seek(0)

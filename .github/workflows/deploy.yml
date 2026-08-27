@@ -48,6 +48,15 @@ jobs:
           export S3_PRIVATE_BUCKET=photos-private-test
           export S3_PUBLIC_BASE_URL=http://localhost:9090/photos-public-test
           export S3_SIGNED_URL_EXPIRE_SECONDS=900
+          export SMS_ENABLED=false
+          export SMS_TOKEN_URL=https://example.com/token
+          export SMS_BASE_URL=https://example.com/sms
+          export SMS_CLIENT_ID=ci
+          export SMS_CLIENT_SECRET=ci
+          export SMS_SENDER_LINE=ci
+          export ZARINPAL_MERCHANT_ID=ci
+          export ZARINPAL_SANDBOX=true
+          export ZARINPAL_CALLBACK_URL=https://example.com/callback
           alembic upgrade head
           alembic check
 
