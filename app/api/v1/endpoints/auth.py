@@ -90,30 +90,28 @@ async def build_login_response(
     
     await redis.store_refresh_token(refresh_token, str(user.id))
     
-    # Always load profile fresh from database
-    profile = await get_user_profile(session, str(user.id))
+    # Always load full user (with relationships) fresh from the database so the
+    # response matches GET /users/me — including profile_completion, interests,
+    # prompts, settings, photos, etc. A hand-built partial response would leave
+    # those fields at their defaults until the client refreshes /users/me.
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.user_interests).selectinload(UserInterest.interest),
+            selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
+        )
+        .where(User.id == user.id)
+    )
+    full_user = result.scalar_one_or_none() or user
     
     return AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        user=UserProfileResponse(
-            id=user.id,
-            phone=user.phone,
-            email=user.email,
-            name=profile.name if profile else None,
-            age=profile.age if profile else None,
-            gender=profile.gender if profile else None,
-            is_premium=profile.is_premium if profile else False,
-            is_active=user.is_active,
-            is_profile_complete=profile.is_profile_complete if profile else False,
-            created_at=user.created_at,
-            last_seen_at=user.last_seen_at,
-            height=profile.height if profile else None,
-            weight=profile.weight if profile else None,
-            body_type=profile.body_type if profile else None,
-            relationship_status=profile.relationship_status if profile else None,
-        )
+        user=UserProfileResponse.model_validate(full_user),
     )
 
 
@@ -277,29 +275,27 @@ async def verify_code(
     refresh_token = create_refresh_token(str(user.id), user.token_version)
     await redis.store_refresh_token(refresh_token, str(user.id))
 
-    profile = await get_user_profile(session, str(user.id))
+    # Load full user (with relationships) so the login response matches
+    # GET /users/me — including profile_completion, interests, prompts,
+    # settings, photos, etc.
+    result = await session.execute(
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.user_interests).selectinload(UserInterest.interest),
+            selectinload(User.prompts).selectinload(UserPrompt.prompt),
+            selectinload(User.photos),
+        )
+        .where(User.id == user.id)
+    )
+    full_user = result.scalar_one_or_none() or user
 
     return VerifyCodeResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        user=UserProfileResponse(
-            id=user.id,
-            phone=user.phone,
-            email=user.email,
-            name=profile.name if profile else None,
-            age=profile.age if profile else None,
-            gender=profile.gender if profile else None,
-            is_premium=profile.is_premium if profile else False,
-            is_active=user.is_active,
-            is_profile_complete=profile.is_profile_complete if profile else False,
-            created_at=user.created_at,
-            last_seen_at=user.last_seen_at,
-            height=profile.height if profile else None,
-            weight=profile.weight if profile else None,
-            body_type=profile.body_type if profile else None,
-            relationship_status=profile.relationship_status if profile else None,
-        ),
+        user=UserProfileResponse.model_validate(full_user),
         is_new_user=is_new_user,
     )
 
