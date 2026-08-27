@@ -75,7 +75,7 @@ async def update_me(
     request: Request,
     update_data: UserUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> UserProfileResponse:
     """
     Update current user's profile.
@@ -165,7 +165,7 @@ async def update_settings(
     request: Request,
     update_data: UserSettingsUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     """
     Update current user's settings.
@@ -326,7 +326,7 @@ async def update_interests(
     request: Request,
     update_data: InterestUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> UserProfileResponse:
     """
     Update current user's interests.
@@ -400,7 +400,7 @@ async def update_prompts(
     request: Request,
     update_data: PromptUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ) -> UserProfileResponse:
     """
     Update current user's prompts.
