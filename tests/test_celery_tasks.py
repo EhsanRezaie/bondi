@@ -15,12 +15,14 @@ class TestCeleryRegistration:
         assert "app.tasks.cleanup.expire_lapsed_premium" in names
         assert "app.tasks.cleanup.cleanup_stale_onlines" in names
         assert "app.tasks.cleanup.inactive_user_nudge" in names
+        assert "app.tasks.cleanup.purge_deleted_accounts" in names
 
     def test_beat_schedule_set(self):
         schedule = celery_app.conf.beat_schedule
         assert "premium-expiry-sweep-daily" in schedule
         assert "stale-session-cleanup-daily" in schedule
         assert "inactive-nudge-daily" in schedule
+        assert "purge-deleted-accounts-daily" in schedule
 
     def test_push_task_autoretry_config(self):
         task = celery_app.tasks["app.tasks.notifications.send_push"]

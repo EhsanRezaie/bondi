@@ -33,6 +33,10 @@ celery_app.conf.update(
             "task": "app.tasks.cleanup.inactive_user_nudge",
             "schedule": 3600.0 * 24,
         },
+        "purge-deleted-accounts-daily": {
+            "task": "app.tasks.cleanup.purge_deleted_accounts",
+            "schedule": 3600.0 * 24,
+        },
     },
 )
 

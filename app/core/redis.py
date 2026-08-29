@@ -351,6 +351,71 @@ async def get_otp_cooldown(identifier: str) -> int:
         return 0
 
 
+# ============ Delete-Account Confirmation Code Functions ============
+# Separate key namespace from login verification codes: keyed by user_id (not
+# phone) so the authenticated delete flow can't collide with a login OTP.
+
+DELETE_CODE_PREFIX = "delete_verify:"
+DELETE_CODE_TTL = 300  # 5 minutes
+
+
+async def store_delete_code(user_id: str, code: str, ttl: int = DELETE_CODE_TTL) -> bool:
+    """Store a delete-account confirmation code with an attempt counter."""
+    key = f"{DELETE_CODE_PREFIX}{user_id}"
+    data = json.dumps({"code": code, "attempts": 0})
+    try:
+        await redis_client.set(key, data, ex=ttl)
+        return True
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to store delete code", error=str(e))
+        return False
+
+
+async def verify_delete_code(user_id: str, submitted_code: str) -> bool:
+    """
+    Verify a delete-account confirmation code (brute-force protected, max 5
+    attempts). Raises HTTPException on failure, deletes the code on success.
+    """
+    key = f"{DELETE_CODE_PREFIX}{user_id}"
+    try:
+        raw = await redis_client.get(key)
+    except (RedisError, RedisTimeoutError) as e:
+        logger.error("Failed to get delete code", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error.",
+        )
+
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code.",
+        )
+
+    data = json.loads(raw)
+
+    if data["attempts"] >= MAX_OTP_ATTEMPTS:
+        await redis_client.delete(key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Request a new code.",
+        )
+
+    if data["code"] != submitted_code:
+        data["attempts"] += 1
+        ttl = await redis_client.ttl(key)
+        if ttl > 0:
+            await redis_client.set(key, json.dumps(data), ex=ttl)
+        remaining = MAX_OTP_ATTEMPTS - data["attempts"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid code. {remaining} attempt{'s' if remaining != 1 else ''} left.",
+        )
+
+    await redis_client.delete(key)
+    return True
+
+
 async def get_redis():
     """FastAPI dependency that yields the Redis client."""
     yield redis_client

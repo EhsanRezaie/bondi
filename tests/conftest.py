@@ -351,6 +351,16 @@ async def mock_verification_code():
     return _store_code
 
 
+@pytest_asyncio.fixture
+async def mock_delete_code():
+    """Helper fixture to store a delete-account confirmation code in Redis."""
+    async def _store_code(user_id: str, code: str = "123456"):
+        r = redis_module.redis_client
+        await r.setex(f"delete_verify:{user_id}", 300, json.dumps({"code": code, "attempts": 0}))
+        return code
+    return _store_code
+
+
 # ---------------------------------------------------------------------------
 # HTTP client
 # ---------------------------------------------------------------------------

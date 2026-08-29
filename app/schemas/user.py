@@ -448,9 +448,17 @@ class LocationTextUpdateResponse(BaseModel):
     location_manual: bool
 
 
+class DeleteAccountRequest(BaseModel):
+    """Body for DELETE /users/me — requires an SMS confirmation code."""
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit SMS code sent via POST /users/me/delete-code")
+    reason: Optional[str] = Field(None, max_length=255, description="Optional reason for leaving")
+
+
 class DeleteAccountResponse(BaseModel):
-    """Response for account deletion."""
-    message: str = "Account deleted successfully"
+    """Response for account deletion — account is deactivated immediately and
+    hard-deleted by a Celery sweep after the grace period."""
+    message: str = "Account deletion scheduled"
+    deletion_scheduled_for: datetime
 
 
 class UserInterestResponse(BaseModel):

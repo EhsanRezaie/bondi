@@ -66,6 +66,60 @@ def cleanup_stale_onlines(self):
         return None
 
 
+async def _purge_deleted_accounts() -> dict:
+    """Async core of the purge sweep — testable without the Celery wrapper."""
+    from sqlalchemy import select
+    from app.db.session import AsyncSessionLocal
+    from app.models.user import User
+    from app.models.photo import Photo
+    from app.services.photo_service import PhotoService
+    from app.core.timezone import utcnow
+
+    cutoff = utcnow() - timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
+    purged = 0
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(
+                User.is_active.is_(False),
+                User.deleted_at.is_not(None),
+                User.deleted_at < cutoff,
+            ).limit(100)
+        )
+        for user in result.scalars().all():
+            photos = await session.execute(select(Photo).where(Photo.user_id == user.id))
+            for photo in photos.scalars().all():
+                try:
+                    await PhotoService.delete_photo(str(user.id), str(photo.id))
+                except Exception:
+                    logger.exception(
+                        "purge_photo_delete_failed",
+                        user_id=str(user.id),
+                        photo_id=str(photo.id),
+                    )
+            await session.delete(user)
+            purged += 1
+        await session.commit()
+        return {"purged": purged}
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.cleanup.purge_deleted_accounts",
+)
+def purge_deleted_accounts(self):
+    """Hard-delete accounts whose grace period (DELETE_ACCOUNT_GRACE_DAYS) has
+    fully elapsed since the delete request. MinIO photo objects are removed
+    first, then the user row is deleted — DB-level ON DELETE CASCADE clears all
+    related data (profile, settings, photos, swipes, matches, chats, messages,
+    notifications, reports, tickets, blocks, subscriptions, interests, prompts,
+    device tokens, etc.), freeing the phone for a fresh signup."""
+    try:
+        return asyncio.run(_purge_deleted_accounts())
+    except Exception:
+        logger.exception("purge_deleted_accounts_failed")
+        return None
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.cleanup.inactive_user_nudge",
@@ -108,4 +162,4 @@ def inactive_user_nudge(self):
         return None
 
 
-__all__ = ["expire_lapsed_premium", "cleanup_stale_onlines", "inactive_user_nudge"]
+__all__ = ["expire_lapsed_premium", "cleanup_stale_onlines", "purge_deleted_accounts", "inactive_user_nudge"]

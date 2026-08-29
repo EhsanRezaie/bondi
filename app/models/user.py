@@ -12,6 +12,7 @@ class User(Base):
         Index('idx_users_is_active', 'is_active', postgresql_where=text("is_active = true")),
         Index('idx_users_registration_status', 'registration_status'),
         Index('idx_users_last_seen', 'last_seen_at'),
+        Index('idx_users_deleted_at', 'deleted_at'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -22,6 +23,11 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     token_version = Column(Integer, default=1, nullable=False)
     registration_status = Column(String(20), default="phone_pending", nullable=False)
+
+    # Account deletion: set on DELETE /users/me, cleared on restore within the
+    # grace window. A Celery sweep hard-deletes the row once past the grace period.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_reason = Column(String(255), nullable=True)
 
     referral_code = Column(String(20), unique=True, nullable=True)
     referred_by = Column(UUID(as_uuid=True), nullable=True)

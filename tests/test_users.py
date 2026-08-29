@@ -1,7 +1,10 @@
 
 import pytest
 from httpx import AsyncClient
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
+from unittest.mock import patch, AsyncMock
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
@@ -12,6 +15,7 @@ def _phone(key: str) -> str:
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
 USERS_ME_URL = "/api/v1/users/me"
+USERS_ME_DELETE_CODE_URL = "/api/v1/users/me/delete-code"
 USERS_ME_LOCATION_URL = "/api/v1/users/me/location"
 USERS_ME_LOCATION_TEXT_URL = "/api/v1/users/me/location-text"
 
@@ -132,6 +136,13 @@ def assert_profile_fields(data: dict, expected: dict):
             actual = data.get(field)
             expected_val = expected[field]
             assert actual == expected_val, f"Field {field} mismatch: expected {expected_val}, got {actual}"
+
+
+async def _delete_me(client: AsyncClient, headers: dict, payload: dict = None):
+    """httpx's AsyncClient.delete() doesn't forward `json=` in this version."""
+    return await client.request(
+        "DELETE", USERS_ME_URL, headers=headers, json=payload or {}
+    )
 
 
 # =============================================================================
@@ -708,35 +719,193 @@ class TestUpdateMe:
 
 
 # =============================================================================
-# DELETE /api/v1/users/me
+# DELETE /api/v1/users/me  (account deletion with OTP + 30-day grace)
 # =============================================================================
 
 class TestDeleteMe:
 
-    async def test_delete_me_success(self, client: AsyncClient, mock_verification_code):
-        """Should soft delete user account."""
+    async def test_delete_me_success(self, client: AsyncClient, mock_verification_code, mock_delete_code):
+        """Should soft-delete: deactivate, set deleted_at, lock the phone."""
         result = await register_user_full_custom(
             client,
             mock_verification_code,
             phone=_phone("delete_test@example.com"),
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
 
-        res = await client.delete(USERS_ME_URL, headers=headers)
-        assert res.status_code == 204
+        await mock_delete_code(user_id)
+        res = await _delete_me(client, headers, {"code": "123456", "reason": "found a partner"})
+        assert res.status_code == 200, res.text
+        data = res.json()
+        assert data["message"] == "Account deletion scheduled"
+        assert "deletion_scheduled_for" in data
 
-        # A deactivated account cannot log in again via phone OTP.
-        await mock_verification_code(_phone("delete_test@example.com"), VALID_CODE)
-        login_res = await client.post(
-            VERIFY_CODE_URL,
-            json={"phone": _phone("delete_test@example.com"), "code": VALID_CODE},
+        # Account is deactivated — old token no longer grants access.
+        get_res = await client.get(USERS_ME_URL, headers=headers)
+        assert get_res.status_code == 403
+
+    async def test_request_delete_code_sends_sms(self, client: AsyncClient, mock_verification_code):
+        """POST /users/me/delete-code should send an SMS and store a code."""
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("delete_code_sms@example.com"),
         )
-        assert login_res.status_code == 403
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        with patch("app.api.v1.endpoints.users.send_verification_code", new_callable=AsyncMock) as mock_send:
+            res = await client.post(USERS_ME_DELETE_CODE_URL, headers=headers)
+            assert res.status_code == 204
+            assert mock_send.await_count == 1
+
+    async def test_delete_full_flow_uses_real_code(self, client: AsyncClient, mock_verification_code):
+        """End-to-end: request code → delete with the actual stored code."""
+        import json
+        import app.core.redis as redis_module
+
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("delete_full_flow@example.com"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
+
+        with patch("app.api.v1.endpoints.users.send_verification_code", new_callable=AsyncMock):
+            await client.post(USERS_ME_DELETE_CODE_URL, headers=headers)
+
+        raw = await redis_module.redis_client.get(f"delete_verify:{user_id}")
+        assert raw is not None
+        code = json.loads(raw)["code"]
+
+        res = await _delete_me(client, headers, {"code": code})
+        assert res.status_code == 200
+
+    async def test_delete_requires_code(self, client: AsyncClient, mock_verification_code):
+        """DELETE without a confirmation code should be rejected."""
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("delete_req_code@example.com"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        res = await _delete_me(client, headers, {})
+        assert res.status_code == 422
+
+    async def test_delete_wrong_code(self, client: AsyncClient, mock_verification_code):
+        """DELETE with an invalid code should be rejected and not delete."""
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("delete_wrong_code@example.com"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
+
+        # No code stored in Redis → wrong/expired.
+        res = await _delete_me(client, headers, {"code": "999999"})
+        assert res.status_code == 400
+
+        get_res = await client.get(USERS_ME_URL, headers=headers)
+        assert get_res.status_code == 200
+        assert get_res.json()["is_active"] is True
 
     async def test_delete_me_requires_auth(self, client: AsyncClient):
         """Should return 401 without token."""
-        res = await client.delete(USERS_ME_URL)
+        res = await _delete_me(client, headers={})
         assert res.status_code == 401
+
+
+# =============================================================================
+# Deletion grace window: restore / purge
+# =============================================================================
+
+class TestAccountDeletionGrace:
+
+    async def test_deleted_account_restored_within_grace(self, client, mock_verification_code, mock_delete_code):
+        """Logging in within the 30-day grace window restores the account."""
+        phone = _phone("restore_test@example.com")
+        result = await register_user_full_custom(client, mock_verification_code, phone=phone)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
+
+        await mock_delete_code(user_id)
+        res = await _delete_me(client, headers, {"code": "123456"})
+        assert res.status_code == 200
+
+        # Same-phone login → restored, not a new account.
+        await mock_verification_code(phone, VALID_CODE)
+        login_res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
+        assert login_res.status_code == 200, login_res.text
+        data = login_res.json()
+        assert data["is_new_user"] is False
+        assert data["user"]["is_active"] is True
+
+        # New tokens work on /users/me.
+        new_headers = {"Authorization": f"Bearer {data['access_token']}"}
+        get_res = await client.get(USERS_ME_URL, headers=new_headers)
+        assert get_res.status_code == 200
+
+    async def test_deleted_account_past_grace_blocked(self, client, db_session, mock_verification_code, mock_delete_code):
+        """Logging in after the grace window (before the sweep runs) is blocked."""
+        from sqlalchemy import select
+        from app.models.user import User
+
+        phone = _phone("past_grace@example.com")
+        result = await register_user_full_custom(client, mock_verification_code, phone=phone)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
+
+        await mock_delete_code(user_id)
+        res = await _delete_me(client, headers, {"code": "123456"})
+        assert res.status_code == 200
+
+        # Backdate deleted_at past the grace window.
+        user = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one()
+        user.deleted_at = datetime.now(timezone.utc) - timedelta(days=40)
+        await db_session.commit()
+
+        await mock_verification_code(phone, VALID_CODE)
+        login_res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
+        assert login_res.status_code == 403
+        assert "finalized" in login_res.json()["detail"]
+
+    async def test_purge_deleted_accounts(self, client, db_session, mock_verification_code, mock_delete_code):
+        """Past-grace accounts are hard-deleted by the purge task (incl. cascade)."""
+        from sqlalchemy import select
+        from app.models.user import User
+        from app.models.user_profile import UserProfile
+
+        phone = _phone("purge_test@example.com")
+        result = await register_user_full_custom(client, mock_verification_code, phone=phone)
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
+
+        await mock_delete_code(user_id)
+        res = await _delete_me(client, headers, {"code": "123456"})
+        assert res.status_code == 200
+
+        # Backdate past the grace window.
+        user = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one()
+        user.deleted_at = datetime.now(timezone.utc) - timedelta(days=40)
+        await db_session.commit()
+
+        from app.tasks.cleanup import _purge_deleted_accounts
+        with patch("app.services.photo_service.PhotoService.delete_photo", new_callable=AsyncMock) as mock_del:
+            result = await _purge_deleted_accounts()
+        assert result == {"purged": 1}
+
+        # User + cascade-deleted profile are gone.
+        assert (await db_session.execute(select(User).where(User.id == user_id))).scalar_one_or_none() is None
+        assert (await db_session.execute(select(UserProfile).where(UserProfile.user_id == user_id))).scalar_one_or_none() is None
+
+        # The phone is free again → brand-new account.
+        await mock_verification_code(phone, VALID_CODE)
+        res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
+        assert res.status_code == 200
+        assert res.json()["is_new_user"] is True
 
 
 # =============================================================================
@@ -1026,8 +1195,8 @@ class TestEdgeCases:
 
 class TestAccountReactivation:
 
-    async def test_deleted_account_cannot_login(self, client: AsyncClient, mock_verification_code):
-        """Should prevent login of a deactivated account."""
+    async def test_deleted_account_restores_via_login(self, client: AsyncClient, mock_verification_code, mock_delete_code):
+        """Logging in within the grace window restores a deleted account."""
         phone = _phone("delete_test2@example.com")
 
         result = await register_user_full_custom(
@@ -1036,13 +1205,16 @@ class TestAccountReactivation:
             phone=phone,
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
+        user_id = result["user"]["id"]
 
-        res = await client.delete(USERS_ME_URL, headers=headers)
-        assert res.status_code == 204
+        await mock_delete_code(user_id)
+        res = await _delete_me(client, headers, {"code": VALID_CODE})
+        assert res.status_code == 200
 
         await mock_verification_code(phone, VALID_CODE)
         login_res = await client.post(
             VERIFY_CODE_URL,
             json={"phone": phone, "code": VALID_CODE},
         )
-        assert login_res.status_code == 403
+        assert login_res.status_code == 200
+        assert login_res.json()["is_new_user"] is False

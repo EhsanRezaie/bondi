@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     # Same image re-encoded/cropped stays well below this; a different photo
     # of the same person is far above it.
     PHASH_DUPLICATE_THRESHOLD: int = 6
+
+    # ============================================
+    # Account Deletion
+    # ============================================
+    # Days a deleted account is kept before permanent purge. During this window
+    # the phone is locked (no re-registration) and the user can restore the
+    # account by logging in again.
+    DELETE_ACCOUNT_GRACE_DAYS: int = 30
     
     # ============================================
     # Chat Media Settings

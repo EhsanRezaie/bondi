@@ -24,7 +24,7 @@ from app.core.security import (
     decode_refresh_token,
     decode_token,
 )
-from app.core.cache import invalidate_auth_user
+from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.services.sms_service import send_verification_code
 
 from app.schemas.auth import (
@@ -221,12 +221,36 @@ async def verify_code(
     existing = await get_user_by_phone(session, body.phone)
     is_new_user = False
 
-    if existing:
-        if not existing.is_active:
+    if existing and not existing.is_active:
+        # Deleted-account handling: restore within the grace window, otherwise
+        # let the purge sweep clear it and keep the phone locked in the interim.
+        if existing.deleted_at is not None:
+            grace_end = existing.deleted_at + timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
+            if datetime.now(timezone.utc) < grace_end:
+                # Within the grace window → restore the account (user changed their mind).
+                existing.is_active = True
+                existing.deleted_at = None
+                existing.deleted_reason = None
+                existing.token_version += 1
+                existing.last_seen_at = datetime.now(timezone.utc)
+                await session.flush()
+                await invalidate_user_cache(redis.redis_client, existing.id)
+                await invalidate_auth_user(redis.redis_client, existing.id)
+            else:
+                # Grace expired but the purge sweep hasn't run yet (≤24h window).
+                # Keep the phone locked and point the user at retrying shortly.
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Account deletion is being finalized. This number will become available shortly.",
+                )
+        else:
+            # Deactivated for another reason (e.g. admin ban) — not restorable.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This account has been deactivated.",
             )
+
+    if existing:
         user = existing
         user.last_seen_at = datetime.now(timezone.utc)
     else:

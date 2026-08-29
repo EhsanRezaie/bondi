@@ -1,5 +1,7 @@
 # app/api/v1/endpoints/users.py
 import uuid
+import random
+import string
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select ,delete 
@@ -8,20 +10,22 @@ from app.models.user_prompt import UserPrompt
 from app.models.user_profile import UserProfile
 from app.models.block import Block
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timezone  
+from datetime import datetime, timedelta, timezone  
 from app.models.interest import Interest
 from app.db.session import get_session
 from app.models.user import User
 from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
+from app.core.config import settings
 from app.services.location_service import LocationService
-from app.schemas.user import UserProfileResponse, UserUpdateRequest, LocationTextUpdateRequest, LocationTextUpdateResponse,InterestUpdateRequest,PromptUpdateRequest
+from app.schemas.user import UserProfileResponse, UserUpdateRequest, LocationTextUpdateRequest, LocationTextUpdateResponse,InterestUpdateRequest,PromptUpdateRequest, DeleteAccountRequest, DeleteAccountResponse
 from app.schemas.settings import UserSettingsUpdateRequest, UserSettingsResponse
 from app.models.user_settings import UserSettings
 from app.core.redis import redis_client
 from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, key_public_profile, TTL_PUBLIC_PROFILE, invalidate_user_cache, invalidate_auth_user
 from app.schemas.discover import ProfileResponse
 from app.services.profile_service import serialize_profile, haversine_km
+from app.services.sms_service import send_verification_code
 import app.core.redis as redis_module
 
 from app.core.logging import get_logger
@@ -29,6 +33,8 @@ from app.core.logging import get_logger
 logger = get_logger("users")
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+DELETE_CODE_COOLDOWN_TTL = 60  # seconds between delete-code resends
 
 
 @router.get("/me", response_model=UserProfileResponse)
@@ -205,21 +211,66 @@ async def update_settings(
     return settings
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/me/delete-code", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("5/minute")
-async def delete_me(
+async def request_delete_code(
     request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user_db),
 ) -> None:
+    """Send an SMS confirmation code required to delete the account.
+
+    Re-auth is required for destructive account deletion. The code is stored
+    keyed by user_id (separate from login OTPs) and consumed by DELETE /users/me.
     """
-    Soft delete current user account.
-    Sets is_active to False instead of hard delete.
+    cooldown_key = f"delete:{current_user.id}"
+    if await redis_module.is_in_otp_cooldown(cooldown_key):
+        remaining = await redis_module.get_otp_cooldown(cooldown_key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {remaining} seconds before requesting a new code.",
+        )
+
+    code = ''.join(random.choices(string.digits, k=6))
+    await redis_module.store_delete_code(str(current_user.id), code)
+    await redis_module.store_otp_cooldown(cooldown_key, DELETE_CODE_COOLDOWN_TTL)
+    await send_verification_code(current_user.phone, code)
+
+
+@router.delete("/me", response_model=DeleteAccountResponse)
+@limiter.limit("5/minute")
+async def delete_me(
+    request: Request,
+    body: DeleteAccountRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user_db),
+) -> DeleteAccountResponse:
     """
+    Schedule the current user's account for deletion (soft delete with grace).
+
+    Requires an SMS confirmation code (sent via POST /users/me/delete-code).
+    The account is immediately deactivated — invisible in discover/search,
+    public profile 404, no login, no push. The phone stays locked until the
+    account is either restored (login again within the grace window) or hard-
+    deleted by the Celery purge task after DELETE_ACCOUNT_GRACE_DAYS.
+    """
+    await redis_module.verify_delete_code(str(current_user.id), body.code)
+
+    deleted_at = datetime.now(timezone.utc)
     current_user.is_active = False
+    current_user.deleted_at = deleted_at
+    current_user.deleted_reason = body.reason
+    current_user.token_version += 1
     await session.commit()
+
+    await redis_module.revoke_all_user_tokens(str(current_user.id))
     await invalidate_user_cache(redis_client, current_user.id)
     await invalidate_auth_user(redis_client, current_user.id)
+
+    return DeleteAccountResponse(
+        message="Account deletion scheduled",
+        deletion_scheduled_for=deleted_at + timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS),
+    )
 
 
 @router.post("/me/location", status_code=status.HTTP_204_NO_CONTENT)
