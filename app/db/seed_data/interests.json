@@ -2,791 +2,2371 @@
   {
     "name": "football",
     "category": "sports_fitness",
-    "icon": "🏈"
+    "icon": "🏈",
+    "translations": {
+      "fa": {
+        "name": "فوتبال",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Football",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "basketball",
     "category": "sports_fitness",
-    "icon": "🏀"
+    "icon": "🏀",
+    "translations": {
+      "fa": {
+        "name": "بسکتبال",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Basketball",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "volleyball",
     "category": "sports_fitness",
-    "icon": "🏐"
+    "icon": "🏐",
+    "translations": {
+      "fa": {
+        "name": "والیبال",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Volleyball",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "futsal",
     "category": "sports_fitness",
-    "icon": "🥅"
+    "icon": "🥅",
+    "translations": {
+      "fa": {
+        "name": "فوتسال",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Futsal",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "swimming",
     "category": "sports_fitness",
-    "icon": "🏊"
+    "icon": "🏊",
+    "translations": {
+      "fa": {
+        "name": "شنا",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Swimming",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "running",
     "category": "sports_fitness",
-    "icon": "🏃"
+    "icon": "🏃",
+    "translations": {
+      "fa": {
+        "name": "دویدن",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Running",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "marathon",
     "category": "sports_fitness",
-    "icon": "🏅"
+    "icon": "🏅",
+    "translations": {
+      "fa": {
+        "name": "ماراتن",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Marathon",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "cycling",
     "category": "sports_fitness",
-    "icon": "🚴"
+    "icon": "🚴",
+    "translations": {
+      "fa": {
+        "name": "دوچرخه‌سواری",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Cycling",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "gym",
     "category": "sports_fitness",
-    "icon": "🏋️"
+    "icon": "🏋️",
+    "translations": {
+      "fa": {
+        "name": "باشگاه و بدنسازی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Gym",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "crossfit",
     "category": "sports_fitness",
-    "icon": "🏋️‍♀️"
+    "icon": "🏋️‍♀️",
+    "translations": {
+      "fa": {
+        "name": "کراس‌فیت",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Crossfit",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "yoga",
     "category": "sports_fitness",
-    "icon": "🧘"
+    "icon": "🧘",
+    "translations": {
+      "fa": {
+        "name": "یوگا",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Yoga",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "pilates",
     "category": "sports_fitness",
-    "icon": "🤸"
+    "icon": "🤸",
+    "translations": {
+      "fa": {
+        "name": "پیلاتس",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Pilates",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "martial arts",
     "category": "sports_fitness",
-    "icon": "🥋"
+    "icon": "🥋",
+    "translations": {
+      "fa": {
+        "name": "هنرهای رزمی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Martial Arts",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "wrestling",
     "category": "sports_fitness",
-    "icon": "🤼"
+    "icon": "🤼",
+    "translations": {
+      "fa": {
+        "name": "کشتی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Wrestling",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "boxing",
     "category": "sports_fitness",
-    "icon": "🥊"
+    "icon": "🥊",
+    "translations": {
+      "fa": {
+        "name": "بوکس",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Boxing",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "hiking",
     "category": "sports_fitness",
-    "icon": "🥾"
+    "icon": "🥾",
+    "translations": {
+      "fa": {
+        "name": "کوهنوردی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Hiking",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "rock climbing",
     "category": "sports_fitness",
-    "icon": "🧗"
+    "icon": "🧗",
+    "translations": {
+      "fa": {
+        "name": "صخره‌نوردی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Rock Climbing",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "skiing",
     "category": "sports_fitness",
-    "icon": "⛷️"
+    "icon": "⛷️",
+    "translations": {
+      "fa": {
+        "name": "اسکی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Skiing",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "snowboarding",
     "category": "sports_fitness",
-    "icon": "🏂"
+    "icon": "🏂",
+    "translations": {
+      "fa": {
+        "name": "اسنوبرد",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Snowboarding",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "skateboarding",
     "category": "sports_fitness",
-    "icon": "🛹"
+    "icon": "🛹",
+    "translations": {
+      "fa": {
+        "name": "اسکیت‌برد",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Skateboarding",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "surfing",
     "category": "sports_fitness",
-    "icon": "🏄"
+    "icon": "🏄",
+    "translations": {
+      "fa": {
+        "name": "موج‌سواری",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Surfing",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "tennis",
     "category": "sports_fitness",
-    "icon": "🎾"
+    "icon": "🎾",
+    "translations": {
+      "fa": {
+        "name": "تنیس",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Tennis",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "badminton",
     "category": "sports_fitness",
-    "icon": "🏸"
+    "icon": "🏸",
+    "translations": {
+      "fa": {
+        "name": "بدمینتون",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Badminton",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "table tennis",
     "category": "sports_fitness",
-    "icon": "🏓"
+    "icon": "🏓",
+    "translations": {
+      "fa": {
+        "name": "تنیس روی میز",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Table Tennis",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "golf",
     "category": "sports_fitness",
-    "icon": "⛳"
+    "icon": "⛳",
+    "translations": {
+      "fa": {
+        "name": "گلف",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Golf",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "horseback riding",
     "category": "sports_fitness",
-    "icon": "🏇"
+    "icon": "🏇",
+    "translations": {
+      "fa": {
+        "name": "سوارکاری",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Horseback Riding",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "archery",
     "category": "sports_fitness",
-    "icon": "🏹"
+    "icon": "🏹",
+    "translations": {
+      "fa": {
+        "name": "تیراندازی با کمان",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Archery",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "bodybuilding",
     "category": "sports_fitness",
-    "icon": "💪"
+    "icon": "💪",
+    "translations": {
+      "fa": {
+        "name": "بدنسازی",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Bodybuilding",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "dancing",
     "category": "sports_fitness",
-    "icon": "💃"
+    "icon": "💃",
+    "translations": {
+      "fa": {
+        "name": "رقص",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Dancing",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "parkour",
     "category": "sports_fitness",
-    "icon": "🤾"
+    "icon": "🤾",
+    "translations": {
+      "fa": {
+        "name": "پارکور",
+        "category": "ورزش و تناسب اندام"
+      },
+      "en": {
+        "name": "Parkour",
+        "category": "Sports & Fitness"
+      }
+    }
   },
   {
     "name": "pop music",
     "category": "music",
-    "icon": "🎤"
+    "icon": "🎤",
+    "translations": {
+      "fa": {
+        "name": "موسیقی پاپ",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Pop Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "rock music",
     "category": "music",
-    "icon": "🎸"
+    "icon": "🎸",
+    "translations": {
+      "fa": {
+        "name": "موسیقی راک",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Rock Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "traditional persian music",
     "category": "music",
-    "icon": "🪕"
+    "icon": "🪕",
+    "translations": {
+      "fa": {
+        "name": "موسیقی سنتی ایرانی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Traditional Persian Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "classical music",
     "category": "music",
-    "icon": "🎻"
+    "icon": "🎻",
+    "translations": {
+      "fa": {
+        "name": "موسیقی کلاسیک",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Classical Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "jazz",
     "category": "music",
-    "icon": "🎷"
+    "icon": "🎷",
+    "translations": {
+      "fa": {
+        "name": "جاز",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Jazz",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "electronic music",
     "category": "music",
-    "icon": "🎧"
+    "icon": "🎧",
+    "translations": {
+      "fa": {
+        "name": "موسیقی الکترونیک",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Electronic Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "rap hiphop",
     "category": "music",
-    "icon": "🎙️"
+    "icon": "🎙️",
+    "translations": {
+      "fa": {
+        "name": "رپ و هیپ‌هاپ",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Rap & Hip-Hop",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "metal",
     "category": "music",
-    "icon": "🤘"
+    "icon": "🤘",
+    "translations": {
+      "fa": {
+        "name": "متال",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Metal",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "indie music",
     "category": "music",
-    "icon": "🎶"
+    "icon": "🎶",
+    "translations": {
+      "fa": {
+        "name": "موسیقی ایندی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Indie Music",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "playing guitar",
     "category": "music",
-    "icon": "🎸"
+    "icon": "🎸",
+    "translations": {
+      "fa": {
+        "name": "نواختن گیتار",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Playing Guitar",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "playing piano",
     "category": "music",
-    "icon": "🎹"
+    "icon": "🎹",
+    "translations": {
+      "fa": {
+        "name": "نواختن پیانو",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Playing Piano",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "playing drums",
     "category": "music",
-    "icon": "🥁"
+    "icon": "🥁",
+    "translations": {
+      "fa": {
+        "name": "نواختن درام",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Playing Drums",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "singing",
     "category": "music",
-    "icon": "🎤"
+    "icon": "🎤",
+    "translations": {
+      "fa": {
+        "name": "خوانندگی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Singing",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "songwriting",
     "category": "music",
-    "icon": "📝"
+    "icon": "📝",
+    "translations": {
+      "fa": {
+        "name": "ترانه‌سرایی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Songwriting",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "dj ing",
     "category": "music",
-    "icon": "🎚️"
+    "icon": "🎚️",
+    "translations": {
+      "fa": {
+        "name": "دیجی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "DJing",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "concerts",
     "category": "music",
-    "icon": "🎫"
+    "icon": "🎫",
+    "translations": {
+      "fa": {
+        "name": "کنسرت",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Concerts",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "music festivals",
     "category": "music",
-    "icon": "🎪"
+    "icon": "🎪",
+    "translations": {
+      "fa": {
+        "name": "فستیوال موسیقی",
+        "category": "موسیقی"
+      },
+      "en": {
+        "name": "Music Festivals",
+        "category": "Music"
+      }
+    }
   },
   {
     "name": "cooking",
     "category": "food_drink",
-    "icon": "🍳"
+    "icon": "🍳",
+    "translations": {
+      "fa": {
+        "name": "آشپزی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Cooking",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "baking",
     "category": "food_drink",
-    "icon": "🍰"
+    "icon": "🍰",
+    "translations": {
+      "fa": {
+        "name": "کیک و شیرینی‌پزی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Baking",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "street food",
     "category": "food_drink",
-    "icon": "🌭"
+    "icon": "🌭",
+    "translations": {
+      "fa": {
+        "name": "غذای خیابانی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Street Food",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "persian cuisine",
     "category": "food_drink",
-    "icon": "🍲"
+    "icon": "🍲",
+    "translations": {
+      "fa": {
+        "name": "غذاهای ایرانی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Persian Cuisine",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "sushi",
     "category": "food_drink",
-    "icon": "🍣"
+    "icon": "🍣",
+    "translations": {
+      "fa": {
+        "name": "سوشی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Sushi",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "coffee",
     "category": "food_drink",
-    "icon": "☕"
+    "icon": "☕",
+    "translations": {
+      "fa": {
+        "name": "قهوه",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Coffee",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "tea culture",
     "category": "food_drink",
-    "icon": "🍵"
+    "icon": "🍵",
+    "translations": {
+      "fa": {
+        "name": "فرهنگ چای",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Tea Culture",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "fine dining",
     "category": "food_drink",
-    "icon": "🍽️"
+    "icon": "🍽️",
+    "translations": {
+      "fa": {
+        "name": "رستوران‌های مجلل",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Fine Dining",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "vegan vegetarian",
     "category": "food_drink",
-    "icon": "🥗"
+    "icon": "🥗",
+    "translations": {
+      "fa": {
+        "name": "گیاه‌خواری",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Vegan & Vegetarian",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "barbecue",
     "category": "food_drink",
-    "icon": "🍖"
+    "icon": "🍖",
+    "translations": {
+      "fa": {
+        "name": "کباب و باربیکیو",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Barbecue",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "desserts sweets",
     "category": "food_drink",
-    "icon": "🍮"
+    "icon": "🍮",
+    "translations": {
+      "fa": {
+        "name": "دسر و شیرینی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Desserts & Sweets",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "wine tasting",
     "category": "food_drink",
-    "icon": "🍷"
+    "icon": "🍷",
+    "translations": {
+      "fa": {
+        "name": "مزه‌کردن شراب",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Wine Tasting",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "mocktails",
     "category": "food_drink",
-    "icon": "🍹"
+    "icon": "🍹",
+    "translations": {
+      "fa": {
+        "name": "موکتیل",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Mocktails",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "food blogging",
     "category": "food_drink",
-    "icon": "📸"
+    "icon": "📸",
+    "translations": {
+      "fa": {
+        "name": "وبلاگ‌نویسی غذا",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Food Blogging",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "restaurant hopping",
     "category": "food_drink",
-    "icon": "🍴"
+    "icon": "🍴",
+    "translations": {
+      "fa": {
+        "name": "رستوران‌گردی",
+        "category": "غذا و نوشیدنی"
+      },
+      "en": {
+        "name": "Restaurant Hopping",
+        "category": "Food & Drink"
+      }
+    }
   },
   {
     "name": "movies",
     "category": "movies_tv",
-    "icon": "🎬"
+    "icon": "🎬",
+    "translations": {
+      "fa": {
+        "name": "سینما",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Movies",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "tv series",
     "category": "movies_tv",
-    "icon": "📺"
+    "icon": "📺",
+    "translations": {
+      "fa": {
+        "name": "سریال",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "TV Series",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "anime",
     "category": "movies_tv",
-    "icon": "🎴"
+    "icon": "🎴",
+    "translations": {
+      "fa": {
+        "name": "انیمه",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Anime",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "documentaries",
     "category": "movies_tv",
-    "icon": "🎥"
+    "icon": "🎥",
+    "translations": {
+      "fa": {
+        "name": "مستند",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Documentaries",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "stand up comedy",
     "category": "movies_tv",
-    "icon": "🎙️"
+    "icon": "🎙️",
+    "translations": {
+      "fa": {
+        "name": "استندآپ کمدی",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Stand-Up Comedy",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "k drama",
     "category": "movies_tv",
-    "icon": "🇰🇷"
+    "icon": "🇰🇷",
+    "translations": {
+      "fa": {
+        "name": "درام کرهای",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "K-Drama",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "sci fi fantasy",
     "category": "movies_tv",
-    "icon": "🚀"
+    "icon": "🚀",
+    "translations": {
+      "fa": {
+        "name": "علمی تخیلی و فانتزی",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Sci-Fi & Fantasy",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "horror movies",
     "category": "movies_tv",
-    "icon": "👻"
+    "icon": "👻",
+    "translations": {
+      "fa": {
+        "name": "فیلم ترسناک",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Horror Movies",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "classic cinema",
     "category": "movies_tv",
-    "icon": "🎞️"
+    "icon": "🎞️",
+    "translations": {
+      "fa": {
+        "name": "سینمای کلاسیک",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Classic Cinema",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "reality tv",
     "category": "movies_tv",
-    "icon": "📹"
+    "icon": "📹",
+    "translations": {
+      "fa": {
+        "name": "تلویزیون واقع‌نما",
+        "category": "فیلم و سریال"
+      },
+      "en": {
+        "name": "Reality TV",
+        "category": "Movies & TV"
+      }
+    }
   },
   {
     "name": "painting",
     "category": "arts_creative",
-    "icon": "🎨"
+    "icon": "🎨",
+    "translations": {
+      "fa": {
+        "name": "نقاشی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Painting",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "drawing sketching",
     "category": "arts_creative",
-    "icon": "✏️"
+    "icon": "✏️",
+    "translations": {
+      "fa": {
+        "name": "طراحی و اسکیس",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Drawing & Sketching",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "photography",
     "category": "arts_creative",
-    "icon": "📷"
+    "icon": "📷",
+    "translations": {
+      "fa": {
+        "name": "عکاسی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Photography",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "videography",
     "category": "arts_creative",
-    "icon": "🎥"
+    "icon": "🎥",
+    "translations": {
+      "fa": {
+        "name": "فیلمبرداری",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Videography",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "writing",
     "category": "arts_creative",
-    "icon": "✍️"
+    "icon": "✍️",
+    "translations": {
+      "fa": {
+        "name": "نویسندگی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Writing",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "poetry",
     "category": "arts_creative",
-    "icon": "📜"
+    "icon": "📜",
+    "translations": {
+      "fa": {
+        "name": "شعر",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Poetry",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "calligraphy",
     "category": "arts_creative",
-    "icon": "🖋️"
+    "icon": "🖋️",
+    "translations": {
+      "fa": {
+        "name": "خوشنویسی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Calligraphy",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "graphic design",
     "category": "arts_creative",
-    "icon": "🖌️"
+    "icon": "🖌️",
+    "translations": {
+      "fa": {
+        "name": "طراحی گرافیک",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Graphic Design",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "theatre",
     "category": "arts_creative",
-    "icon": "🎭"
+    "icon": "🎭",
+    "translations": {
+      "fa": {
+        "name": "تئاتر",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Theatre",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "sculpture",
     "category": "arts_creative",
-    "icon": "🗿"
+    "icon": "🗿",
+    "translations": {
+      "fa": {
+        "name": "مجسمه‌سازی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Sculpture",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "pottery ceramics",
     "category": "arts_creative",
-    "icon": "🏺"
+    "icon": "🏺",
+    "translations": {
+      "fa": {
+        "name": "سفالگری و سرامیک",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Pottery & Ceramics",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "fashion design",
     "category": "arts_creative",
-    "icon": "🧵"
+    "icon": "🧵",
+    "translations": {
+      "fa": {
+        "name": "طراحی لباس",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Fashion Design",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "animation",
     "category": "arts_creative",
-    "icon": "🎞️"
+    "icon": "🎞️",
+    "translations": {
+      "fa": {
+        "name": "انیمیشن",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Animation",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "crafts diy",
     "category": "arts_creative",
-    "icon": "✂️"
+    "icon": "✂️",
+    "translations": {
+      "fa": {
+        "name": "صنایع دستی و کاردستی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Crafts & DIY",
+        "category": "Arts & Creative"
+      }
+    }
   },
   {
     "name": "camping",
     "category": "outdoors_nature",
-    "icon": "⛺"
+    "icon": "⛺",
+    "translations": {
+      "fa": {
+        "name": "کمپینگ",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Camping",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "fishing",
     "category": "outdoors_nature",
-    "icon": "🎣"
+    "icon": "🎣",
+    "translations": {
+      "fa": {
+        "name": "ماهیگیری",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Fishing",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "gardening",
     "category": "outdoors_nature",
-    "icon": "🌱"
+    "icon": "🌱",
+    "translations": {
+      "fa": {
+        "name": "باغبانی",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Gardening",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "beach",
     "category": "outdoors_nature",
-    "icon": "🏖️"
+    "icon": "🏖️",
+    "translations": {
+      "fa": {
+        "name": "ساحل",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Beach",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "astronomy",
     "category": "outdoors_nature",
-    "icon": "🔭"
+    "icon": "🔭",
+    "translations": {
+      "fa": {
+        "name": "نجوم",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Astronomy",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "nature walks",
     "category": "outdoors_nature",
-    "icon": "🌿"
+    "icon": "🌿",
+    "translations": {
+      "fa": {
+        "name": "قدم زدن در طبیعت",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Nature Walks",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "road trips",
     "category": "outdoors_nature",
-    "icon": "🚗"
+    "icon": "🚗",
+    "translations": {
+      "fa": {
+        "name": "سفر جاده‌ای",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Road Trips",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "birdwatching",
     "category": "outdoors_nature",
-    "icon": "🦅"
+    "icon": "🦅",
+    "translations": {
+      "fa": {
+        "name": "پرنده‌نگری",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Birdwatching",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "national parks",
     "category": "outdoors_nature",
-    "icon": "🏞️"
+    "icon": "🏞️",
+    "translations": {
+      "fa": {
+        "name": "پارک‌های ملی",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "National Parks",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "off roading",
     "category": "outdoors_nature",
-    "icon": "🚙"
+    "icon": "🚙",
+    "translations": {
+      "fa": {
+        "name": "آفرود",
+        "category": "طبیعت و فضای باز"
+      },
+      "en": {
+        "name": "Off-Roading",
+        "category": "Outdoors & Nature"
+      }
+    }
   },
   {
     "name": "video gaming",
     "category": "gaming_tech",
-    "icon": "🎮"
+    "icon": "🎮",
+    "translations": {
+      "fa": {
+        "name": "بازی ویدیویی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Video Gaming",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "pc gaming",
     "category": "gaming_tech",
-    "icon": "🖥️"
+    "icon": "🖥️",
+    "translations": {
+      "fa": {
+        "name": "بازی کامپیوتری",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "PC Gaming",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "mobile gaming",
     "category": "gaming_tech",
-    "icon": "📱"
+    "icon": "📱",
+    "translations": {
+      "fa": {
+        "name": "بازی موبایل",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Mobile Gaming",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "board games",
     "category": "gaming_tech",
-    "icon": "🎲"
+    "icon": "🎲",
+    "translations": {
+      "fa": {
+        "name": "بازی‌های رومیزی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Board Games",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "chess",
     "category": "gaming_tech",
-    "icon": "♟️"
+    "icon": "♟️",
+    "translations": {
+      "fa": {
+        "name": "شطرنج",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Chess",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "card games",
     "category": "gaming_tech",
-    "icon": "🃏"
+    "icon": "🃏",
+    "translations": {
+      "fa": {
+        "name": "بازی‌های کارتی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Card Games",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "technology",
     "category": "gaming_tech",
-    "icon": "💻"
+    "icon": "💻",
+    "translations": {
+      "fa": {
+        "name": "تکنولوژی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Technology",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "programming",
     "category": "gaming_tech",
-    "icon": "👨‍💻"
+    "icon": "👨‍💻",
+    "translations": {
+      "fa": {
+        "name": "برنامه‌نویسی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Programming",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "ai machine learning",
     "category": "gaming_tech",
-    "icon": "🤖"
+    "icon": "🤖",
+    "translations": {
+      "fa": {
+        "name": "هوش مصنوعی و یادگیری ماشین",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "AI & Machine Learning",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "gadgets",
     "category": "gaming_tech",
-    "icon": "📲"
+    "icon": "📲",
+    "translations": {
+      "fa": {
+        "name": "گجت‌ها",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Gadgets",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "vr gaming",
     "category": "gaming_tech",
-    "icon": "🥽"
+    "icon": "🥽",
+    "translations": {
+      "fa": {
+        "name": "بازی واقعیت مجازی",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "VR Gaming",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "esports",
     "category": "gaming_tech",
-    "icon": "🏆"
+    "icon": "🏆",
+    "translations": {
+      "fa": {
+        "name": "ورزش‌های الکترونیک",
+        "category": "گیم و تکنولوژی"
+      },
+      "en": {
+        "name": "Esports",
+        "category": "Gaming & Tech"
+      }
+    }
   },
   {
     "name": "meditation",
     "category": "lifestyle",
-    "icon": "🧘‍♀️"
+    "icon": "🧘‍♀️",
+    "translations": {
+      "fa": {
+        "name": "مدیتیشن",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Meditation",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "mindfulness",
     "category": "lifestyle",
-    "icon": "🌸"
+    "icon": "🌸",
+    "translations": {
+      "fa": {
+        "name": "ذهن‌آگاهی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Mindfulness",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "journaling",
     "category": "lifestyle",
-    "icon": "📓"
+    "icon": "📓",
+    "translations": {
+      "fa": {
+        "name": "یادداشت روزانه",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Journaling",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "minimalism",
     "category": "lifestyle",
-    "icon": "🪴"
+    "icon": "🪴",
+    "translations": {
+      "fa": {
+        "name": "مینیمالیسم",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Minimalism",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "self improvement",
     "category": "lifestyle",
-    "icon": "📈"
+    "icon": "📈",
+    "translations": {
+      "fa": {
+        "name": "توسعه فردی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Self-Improvement",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "entrepreneurship",
     "category": "lifestyle",
-    "icon": "💼"
+    "icon": "💼",
+    "translations": {
+      "fa": {
+        "name": "کارآفرینی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Entrepreneurship",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "investing finance",
     "category": "lifestyle",
-    "icon": "💹"
+    "icon": "💹",
+    "translations": {
+      "fa": {
+        "name": "سرمایه‌گذاری و مالی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Investing & Finance",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "cars",
     "category": "lifestyle",
-    "icon": "🚗"
+    "icon": "🚗",
+    "translations": {
+      "fa": {
+        "name": "ماشین",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Cars",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "motorcycles",
     "category": "lifestyle",
-    "icon": "🏍️"
+    "icon": "🏍️",
+    "translations": {
+      "fa": {
+        "name": "موتورسیکلت",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Motorcycles",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "interior design",
     "category": "lifestyle",
-    "icon": "🛋️"
+    "icon": "🛋️",
+    "translations": {
+      "fa": {
+        "name": "طراحی داخلی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Interior Design",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "nightlife",
     "category": "lifestyle",
-    "icon": "🌃"
+    "icon": "🌃",
+    "translations": {
+      "fa": {
+        "name": "زندگی شبانه",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Nightlife",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "home cooking",
     "category": "lifestyle",
-    "icon": "🍳"
+    "icon": "🍳",
+    "translations": {
+      "fa": {
+        "name": "آشپزی خانگی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Home Cooking",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "podcasts",
     "category": "lifestyle",
-    "icon": "🎧"
+    "icon": "🎧",
+    "translations": {
+      "fa": {
+        "name": "پادکست",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Podcasts",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "public speaking",
     "category": "lifestyle",
-    "icon": "🎤"
+    "icon": "🎤",
+    "translations": {
+      "fa": {
+        "name": "سخنرانی عمومی",
+        "category": "سبک زندگی"
+      },
+      "en": {
+        "name": "Public Speaking",
+        "category": "Lifestyle"
+      }
+    }
   },
   {
     "name": "traveling",
     "category": "travel",
-    "icon": "✈️"
+    "icon": "✈️",
+    "translations": {
+      "fa": {
+        "name": "سفر کردن",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Traveling",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "backpacking",
     "category": "travel",
-    "icon": "🎒"
+    "icon": "🎒",
+    "translations": {
+      "fa": {
+        "name": "بک‌پکینگ",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Backpacking",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "solo travel",
     "category": "travel",
-    "icon": "🧳"
+    "icon": "🧳",
+    "translations": {
+      "fa": {
+        "name": "سفر انفرادی",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Solo Travel",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "road travel",
     "category": "travel",
-    "icon": "🚐"
+    "icon": "🚐",
+    "translations": {
+      "fa": {
+        "name": "سفر با ماشین",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Road Travel",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "cultural exploration",
     "category": "travel",
-    "icon": "🗺️"
+    "icon": "🗺️",
+    "translations": {
+      "fa": {
+        "name": "کشف فرهنگ‌ها",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Cultural Exploration",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "island hopping",
     "category": "travel",
-    "icon": "🏝️"
+    "icon": "🏝️",
+    "translations": {
+      "fa": {
+        "name": "سفر جزیره‌نوردی",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Island Hopping",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "mountain trips",
     "category": "travel",
-    "icon": "⛰️"
+    "icon": "⛰️",
+    "translations": {
+      "fa": {
+        "name": "سفرهای کوهستانی",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Mountain Trips",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "historical sites",
     "category": "travel",
-    "icon": "🏛️"
+    "icon": "🏛️",
+    "translations": {
+      "fa": {
+        "name": "مکان‌های تاریخی",
+        "category": "سفر"
+      },
+      "en": {
+        "name": "Historical Sites",
+        "category": "Travel"
+      }
+    }
   },
   {
     "name": "volunteering",
     "category": "social_causes",
-    "icon": "🤝"
+    "icon": "🤝",
+    "translations": {
+      "fa": {
+        "name": "داوطلبی",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Volunteering",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "environmentalism",
     "category": "social_causes",
-    "icon": "🌍"
+    "icon": "🌍",
+    "translations": {
+      "fa": {
+        "name": "محیط‌زیست",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Environmentalism",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "animal welfare",
     "category": "social_causes",
-    "icon": "🐾"
+    "icon": "🐾",
+    "translations": {
+      "fa": {
+        "name": "حقوق حیوانات",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Animal Welfare",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "human rights",
     "category": "social_causes",
-    "icon": "✊"
+    "icon": "✊",
+    "translations": {
+      "fa": {
+        "name": "حقوق بشر",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Human Rights",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "community service",
     "category": "social_causes",
-    "icon": "🏘️"
+    "icon": "🏘️",
+    "translations": {
+      "fa": {
+        "name": "خدمات اجتماعی",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Community Service",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "charity work",
     "category": "social_causes",
-    "icon": "❤️"
+    "icon": "❤️",
+    "translations": {
+      "fa": {
+        "name": "کار خیریه",
+        "category": "فعالیت‌های اجتماعی"
+      },
+      "en": {
+        "name": "Charity Work",
+        "category": "Social Causes"
+      }
+    }
   },
   {
     "name": "reading",
     "category": "learning",
-    "icon": "📚"
+    "icon": "📚",
+    "translations": {
+      "fa": {
+        "name": "کتابخوانی",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Reading",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "languages",
     "category": "learning",
-    "icon": "🗣️"
+    "icon": "🗣️",
+    "translations": {
+      "fa": {
+        "name": "زبان‌های خارجی",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Languages",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "history",
     "category": "learning",
-    "icon": "📖"
+    "icon": "📖",
+    "translations": {
+      "fa": {
+        "name": "تاریخ",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "History",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "philosophy",
     "category": "learning",
-    "icon": "🤔"
+    "icon": "🤔",
+    "translations": {
+      "fa": {
+        "name": "فلسفه",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Philosophy",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "psychology",
     "category": "learning",
-    "icon": "🧠"
+    "icon": "🧠",
+    "translations": {
+      "fa": {
+        "name": "روانشناسی",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Psychology",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "science",
     "category": "learning",
-    "icon": "🔬"
+    "icon": "🔬",
+    "translations": {
+      "fa": {
+        "name": "علم",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Science",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "politics",
     "category": "learning",
-    "icon": "🏛️"
+    "icon": "🏛️",
+    "translations": {
+      "fa": {
+        "name": "سیاست",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Politics",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "economics",
     "category": "learning",
-    "icon": "💰"
+    "icon": "💰",
+    "translations": {
+      "fa": {
+        "name": "اقتصاد",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Economics",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "online courses",
     "category": "learning",
-    "icon": "🎓"
+    "icon": "🎓",
+    "translations": {
+      "fa": {
+        "name": "دوره‌های آنلاین",
+        "category": "یادگیری"
+      },
+      "en": {
+        "name": "Online Courses",
+        "category": "Learning"
+      }
+    }
   },
   {
     "name": "dogs",
     "category": "pets_animals",
-    "icon": "🐶"
+    "icon": "🐶",
+    "translations": {
+      "fa": {
+        "name": "سگ",
+        "category": "حیوانات خانگی"
+      },
+      "en": {
+        "name": "Dogs",
+        "category": "Pets & Animals"
+      }
+    }
   },
   {
     "name": "cats",
     "category": "pets_animals",
-    "icon": "🐱"
+    "icon": "🐱",
+    "translations": {
+      "fa": {
+        "name": "گربه",
+        "category": "حیوانات خانگی"
+      },
+      "en": {
+        "name": "Cats",
+        "category": "Pets & Animals"
+      }
+    }
   },
   {
     "name": "birds",
     "category": "pets_animals",
-    "icon": "🦜"
+    "icon": "🦜",
+    "translations": {
+      "fa": {
+        "name": "پرندگان",
+        "category": "حیوانات خانگی"
+      },
+      "en": {
+        "name": "Birds",
+        "category": "Pets & Animals"
+      }
+    }
   },
   {
     "name": "aquariums fish",
     "category": "pets_animals",
-    "icon": "🐠"
+    "icon": "🐠",
+    "translations": {
+      "fa": {
+        "name": "آکواریوم و ماهی",
+        "category": "حیوانات خانگی"
+      },
+      "en": {
+        "name": "Aquariums & Fish",
+        "category": "Pets & Animals"
+      }
+    }
   },
   {
     "name": "horses",
     "category": "pets_animals",
-    "icon": "🐴"
+    "icon": "🐴",
+    "translations": {
+      "fa": {
+        "name": "اسب",
+        "category": "حیوانات خانگی"
+      },
+      "en": {
+        "name": "Horses",
+        "category": "Pets & Animals"
+      }
+    }
   },
   {
     "name": "fashion",
     "category": "fashion_beauty",
-    "icon": "👗"
+    "icon": "👗",
+    "translations": {
+      "fa": {
+        "name": "مد",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Fashion",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "streetwear",
     "category": "fashion_beauty",
-    "icon": "👟"
+    "icon": "👟",
+    "translations": {
+      "fa": {
+        "name": "استریت‌ویر",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Streetwear",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "makeup",
     "category": "fashion_beauty",
-    "icon": "💄"
+    "icon": "💄",
+    "translations": {
+      "fa": {
+        "name": "آرایش",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Makeup",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "skincare",
     "category": "fashion_beauty",
-    "icon": "🧴"
+    "icon": "🧴",
+    "translations": {
+      "fa": {
+        "name": "مراقبت از پوست",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Skincare",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "shopping",
     "category": "fashion_beauty",
-    "icon": "🛍️"
+    "icon": "🛍️",
+    "translations": {
+      "fa": {
+        "name": "خرید",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Shopping",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "jewelry accessories",
     "category": "fashion_beauty",
-    "icon": "💍"
+    "icon": "💍",
+    "translations": {
+      "fa": {
+        "name": "زیورآلات و اکسسوری",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Jewelry & Accessories",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "hairstyling",
     "category": "fashion_beauty",
-    "icon": "💇"
+    "icon": "💇",
+    "translations": {
+      "fa": {
+        "name": "آرایشگری مو",
+        "category": "مد و زیبایی"
+      },
+      "en": {
+        "name": "Hairstyling",
+        "category": "Fashion & Beauty"
+      }
+    }
   },
   {
     "name": "persian calligraphy art",
     "category": "arts_creative",
-    "icon": "🖋️"
+    "icon": "🖋️",
+    "translations": {
+      "fa": {
+        "name": "هنر خوشنویسی ایرانی",
+        "category": "هنر و خلاقیت"
+      },
+      "en": {
+        "name": "Persian Calligraphy",
+        "category": "Arts & Creative"
+      }
+    }
   }
 ]

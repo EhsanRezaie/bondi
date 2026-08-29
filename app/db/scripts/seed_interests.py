@@ -69,6 +69,7 @@ async def seed_interests() -> None:
             set_={
                 "category": stmt.excluded.category,
                 "icon": stmt.excluded.icon,
+                "translations": stmt.excluded.translations,
             },
         )
 

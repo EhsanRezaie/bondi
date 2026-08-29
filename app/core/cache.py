@@ -24,8 +24,8 @@ TTL_DAILY_LIMITS    = None       # dynamic — until midnight
 
 
 # ── Cache Keys ────────────────────────────────────────────────────────────────
-def key_interests() -> str:
-    return "cache:interests:all"
+def key_interests(language: str = "en") -> str:
+    return f"cache:interests:{language.lower()}"
 
 def key_prompts(language: str) -> str:
     return f"cache:prompts:{language}"

@@ -140,13 +140,14 @@ async def seed_interests(conn):
     for item in interests_data:
         await conn.execute(
             text("""
-                INSERT INTO interests (id, name, category, icon)
-                VALUES (gen_random_uuid(), :name, :category, :icon)
+                INSERT INTO interests (id, name, category, icon, translations)
+                VALUES (gen_random_uuid(), :name, :category, :icon, :translations)
             """),
             {
                 "name": item["name"],
                 "category": item["category"],
                 "icon": item.get("icon"),
+                "translations": json.dumps(item.get("translations")),
             }
         )
 

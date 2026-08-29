@@ -26,6 +26,7 @@ async def seed_interests(db_session: AsyncSession, rows: list[dict]) -> list[Int
             name=row["name"],
             category=row.get("category"),
             icon=row.get("icon"),
+            translations=row.get("translations"),
         )
         for row in rows
     ]
@@ -36,8 +37,24 @@ async def seed_interests(db_session: AsyncSession, rows: list[dict]) -> list[Int
 
 # ✅ Simple names - reset_state re-seeds interests after each test
 SAMPLE_INTERESTS = [
-    {"name": "test_football", "category": "sports_fitness", "icon": "⚽"},
-    {"name": "test_coffee", "category": "food_drink", "icon": "☕"},
+    {
+        "name": "test_football",
+        "category": "sports_fitness",
+        "icon": "⚽",
+        "translations": {
+            "fa": {"name": "فوتبال تست", "category": "ورزش"},
+            "en": {"name": "Test Football", "category": "Sports"},
+        },
+    },
+    {
+        "name": "test_coffee",
+        "category": "food_drink",
+        "icon": "☕",
+        "translations": {
+            "fa": {"name": "قهوه تست", "category": "نوشیدنی"},
+            "en": {"name": "Test Coffee", "category": "Drinks"},
+        },
+    },
     {"name": "test_painting", "category": "arts_creative", "icon": "🎨"},
     {"name": "test_yoga", "category": "sports_fitness", "icon": "🧘"},
     {"name": "test_cooking", "category": "food_drink", "icon": "🍳"},
@@ -236,10 +253,78 @@ class TestInterestsAccessControl:
         assert res.status_code == 200
 
     async def test_no_query_params_accepted(self, client: AsyncClient, db_session: AsyncSession):
-        """The interests endpoint takes no query params."""
+        """The interests endpoint accepts a language param; unknown params are ignored."""
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
         res = await client.get(INTERESTS_URL, params={"language": "fa", "page": 1})
         assert res.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Localization — language param + translated labels
+# ---------------------------------------------------------------------------
+
+class TestInterestsLocalization:
+
+    async def test_default_language_is_english(self, client: AsyncClient, db_session: AsyncSession):
+        await seed_interests(db_session, SAMPLE_INTERESTS[:2])
+        res = await client.get(INTERESTS_URL)
+        items = res.json()
+        football = next(i for i in items if i["name"] == "test_football")
+        assert football["name_localized"] == "Test Football"
+        assert football["category_localized"] == "Sports"
+
+    async def test_language_fa_returns_persian(self, client: AsyncClient, db_session: AsyncSession):
+        await seed_interests(db_session, SAMPLE_INTERESTS[:2])
+        res = await client.get(INTERESTS_URL, params={"language": "fa"})
+        items = res.json()
+        football = next(i for i in items if i["name"] == "test_football")
+        assert football["name_localized"] == "فوتبال تست"
+        assert football["category_localized"] == "ورزش"
+        # The stable key is untouched regardless of language.
+        assert football["name"] == "test_football"
+        assert football["category"] == "sports_fitness"
+
+    async def test_localized_cache_per_language(self, client: AsyncClient, db_session: AsyncSession):
+        """fa and en responses are cached separately."""
+        await seed_interests(db_session, SAMPLE_INTERESTS[:1])
+        res_fa = await client.get(INTERESTS_URL, params={"language": "fa"})
+        res_en = await client.get(INTERESTS_URL, params={"language": "en"})
+        fa_item = next(i for i in res_fa.json() if i["name"] == "test_football")
+        en_item = next(i for i in res_en.json() if i["name"] == "test_football")
+        assert fa_item["name_localized"] == "فوتبال تست"
+        assert en_item["name_localized"] == "Test Football"
+
+    async def test_missing_translation_falls_back_to_key(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """An interest without a translation returns its stable key as the label."""
+        await seed_interests(db_session, [SAMPLE_INTERESTS[2]])  # test_painting, no translations
+        res = await client.get(INTERESTS_URL, params={"language": "fa"})
+        items = res.json()
+        painting = next(i for i in items if i["name"] == "test_painting")
+        assert painting["name_localized"] == "test_painting"
+        assert painting["category_localized"] == "arts_creative"
+
+    async def test_unknown_language_falls_back_to_english(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        await seed_interests(db_session, SAMPLE_INTERESTS[:1])
+        res = await client.get(INTERESTS_URL, params={"language": "xx"})
+        items = res.json()
+        football = next(i for i in items if i["name"] == "test_football")
+        assert football["name_localized"] == "Test Football"
+
+    async def test_real_seed_has_fa_and_en_translations(self, client: AsyncClient):
+        """The 158 seeded interests all carry fa + en translations."""
+        res_fa = await client.get(INTERESTS_URL, params={"language": "fa"})
+        res_en = await client.get(INTERESTS_URL, params={"language": "en"})
+        fa_items = {i["name"]: i["name_localized"] for i in res_fa.json()}
+        en_items = {i["name"]: i["name_localized"] for i in res_en.json()}
+        assert len(fa_items) >= 158
+        assert len(en_items) >= 158
+        # No seeded interest should fall back to its raw key (all translated).
+        assert all(v != k for k, v in fa_items.items())
+        assert all(v != k for k, v in en_items.items())
 
 
 # ---------------------------------------------------------------------------
