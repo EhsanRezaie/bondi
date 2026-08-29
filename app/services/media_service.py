@@ -1,10 +1,12 @@
 # app/services/media_service.py
 import io
 from typing import Tuple, Optional
+from urllib.parse import urlparse
 from PIL import Image
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.redis import redis_client
 from app.services.storage import s3_client
 
 logger = get_logger("media_service")
@@ -63,16 +65,12 @@ class MediaService:
                     ContentType="image/jpeg",
                 )
 
-            # Generate signed URL
-            async with s3_client() as s3:
-                url = await s3.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
-                    ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
-                )
-
+            # NOTE: we store the object KEY, not a presigned URL. URLs are
+            # signed fresh (and cached) at read time via resolve_media_url() —
+            # a stored presigned URL would expire after ~15 min and make old
+            # messages unopenable.
             logger.info("Uploaded chat photo to MinIO", key=key)
-            return True, url, None
+            return True, key, None
 
         except Exception as e:
             logger.error("Failed to save photo", error=str(e), exc_info=True)
@@ -104,16 +102,9 @@ class MediaService:
                     ContentType="audio/mpeg",
                 )
 
-            # Generate signed URL
-            async with s3_client() as s3:
-                url = await s3.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
-                    ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
-                )
-
+            # Store the object KEY (see save_photo note) — sign at read time.
             logger.info("Uploaded chat voice to MinIO", key=key)
-            return True, url, None
+            return True, key, None
 
         except Exception as e:
             logger.error("Failed to save voice", error=str(e), exc_info=True)
@@ -148,3 +139,57 @@ class MediaService:
         except Exception as e:
             logger.error("Failed to delete media", error=str(e), exc_info=True)
             return False
+
+    @staticmethod
+    async def resolve_media_url(media_ref: Optional[str]) -> Optional[str]:
+        """
+        Resolve a stored chat-media reference into a fresh, short-lived
+        presigned URL for the client to load.
+
+        `media_ref` is the object key (new rows) OR a legacy full URL left over
+        from before keys were stored. URLs are signed at read time and cached
+        in Redis (~5 min, well under the 15-min expiry) so consecutive loads
+        reuse the same URL and the client's image cache keeps hitting.
+        """
+        if not media_ref:
+            return None
+
+        ref = str(media_ref)
+        key = ref
+
+        if ref.startswith("http://") or ref.startswith("https://"):
+            # Legacy row: media_ref is a full presigned URL whose path encodes
+            # the object key: /{bucket}/{key}. Extract the key and re-sign.
+            path = urlparse(ref).path.lstrip("/")
+            parts = path.split("/", 1)
+            key = parts[1] if len(parts) > 1 and parts[1] else parts[0]
+
+        if not key.startswith("chat/"):
+            # Not a chat-media key — return as-is (nothing to sign).
+            return ref
+
+        cache_key = f"chat_media:{key}"
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return cached
+        except Exception as e:
+            logger.warning("chat_media_cache_get_failed", key=cache_key, error=str(e))
+
+        try:
+            async with s3_client() as s3:
+                url = await s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
+                    ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
+                )
+        except Exception as e:
+            logger.error("chat_media_presign_failed", key=key, error=str(e), exc_info=True)
+            return ref
+
+        try:
+            await redis_client.setex(cache_key, 300, url)
+        except Exception as e:
+            logger.warning("chat_media_cache_set_failed", key=cache_key, error=str(e))
+
+        return url

@@ -1056,3 +1056,234 @@ class TestChatListRealTime:
         assert len(calls) == 2
         last = calls[-1].args[1]["data"]
         assert last["unread_count"] == 3
+
+# =============================================================================
+# client_id round-trip (optimistic-send dedup)
+# =============================================================================
+
+class TestClientIdRoundTrip:
+
+    async def test_text_send_echoes_client_id(self, client, mock_verification_code, db_session):
+        import uuid
+        from app.models.message import Message
+
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("cid_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, _phone("cid_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        cid = uuid.uuid4()
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "dedup me", "client_id": str(cid)},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["message"]["client_id"] == str(cid)
+
+        hist = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
+        row = next(
+            m for m in hist.json()["messages"]
+            if m["message_type"] == "text" and m["content"] == "dedup me"
+        )
+        assert row["client_id"] == str(cid)
+
+        db_row = (
+            await db_session.execute(
+                select(Message).where(
+                    Message.chat_id == chat_id, Message.client_id == cid
+                )
+            )
+        ).scalars().first()
+        assert db_row is not None
+        assert str(db_row.client_id) == str(cid)
+
+    async def test_photo_send_echoes_client_id(self, client, mock_verification_code, db_session):
+        import uuid
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("cidp_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, _phone("cidp_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        cid = uuid.uuid4()
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
+            data={"caption": "x", "client_id": str(cid)},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["message"]["client_id"] == str(cid)
+
+
+# =============================================================================
+# Chat media: store key, re-sign at read time
+# =============================================================================
+
+class TestMediaReSign:
+
+    async def test_photo_stores_key_returns_signed_url(self, client, mock_verification_code, db_session):
+        from app.models.message import Message
+
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("ms1_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, _phone("ms1_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
+            data={"caption": "photo"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        signed = res.json()["message"]["media_url"]
+        # Response carries a loadable signed URL...
+        assert signed.startswith("http")
+        assert "X-Amz-Signature" in signed or "Signature" in signed
+
+        # ...but the DB row stores the object key (no expiry).
+        db_row = (
+            await db_session.execute(
+                select(Message).where(
+                    Message.chat_id == chat_id, Message.message_type == "photo"
+                )
+            )
+        ).scalars().first()
+        assert db_row is not None
+        assert db_row.media_url.startswith("chat/photos/")
+
+        # History also returns a freshly-signed URL, not the key.
+        hist = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
+        photo = next(m for m in hist.json()["messages"] if m["message_type"] == "photo")
+        assert photo["media_url"].startswith("http")
+
+    async def test_voice_stores_key(self, client, mock_verification_code, db_session):
+        from app.models.message import Message
+
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("ms2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, _phone("ms2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/voice",
+            files={"file": ("v.mp3", create_test_audio(), "audio/mpeg")},
+            data={"duration": 15},
+            headers=male_headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["message"]["media_url"].startswith("http")
+
+        db_row = (
+            await db_session.execute(
+                select(Message).where(
+                    Message.chat_id == chat_id, Message.message_type == "voice"
+                )
+            )
+        ).scalars().first()
+        assert db_row is not None
+        assert db_row.media_url.startswith("chat/voice/")
+
+
+class TestMediaResolve:
+
+    async def test_resolve_key_returns_signed_url(self):
+        from app.services.media_service import MediaService
+        url = await MediaService.resolve_media_url("chat/photos/c1/m1.jpg")
+        assert url.startswith("http")
+        assert "X-Amz-Signature" in url or "Signature" in url
+
+    async def test_resolve_legacy_url_extracts_key_and_resigns(self):
+        from app.services.media_service import MediaService
+        legacy = "http://localhost:9090/photos-private/chat/voice/c1/m1.mp3?X-Amz-Signature=stale"
+        url = await MediaService.resolve_media_url(legacy)
+        assert url.startswith("http")
+        assert url != legacy
+
+    async def test_resolve_none_returns_none(self):
+        from app.services.media_service import MediaService
+        assert await MediaService.resolve_media_url(None) is None
+
+    async def test_resolve_caches_url(self):
+        import app.core.redis as redis_module
+        from app.services.media_service import MediaService
+
+        key = "chat/photos/cachekey/m1.jpg"
+        r = redis_module.redis_client
+        await r.delete(f"chat_media:{key}")
+        url1 = await MediaService.resolve_media_url(key)
+        assert url1.startswith("http")
+        # Second call must hit the Redis cache (same URL, no re-sign).
+        url2 = await MediaService.resolve_media_url(key)
+        assert url2 == url1
+
+
+class TestBackfillMediaUrls:
+
+    async def test_extract_key(self):
+        from scripts.backfill_chat_media_urls import extract_key
+        assert extract_key("http://minio:9000/photos-private/chat/photos/c1/m1.jpg?x=1") == "chat/photos/c1/m1.jpg"
+        assert extract_key("chat/photos/c1/m1.jpg") == "chat/photos/c1/m1.jpg"
+
+    async def test_backfill_converts_legacy_rows(self, client, mock_verification_code, db_session):
+        from app.models.message import Message
+        from scripts.backfill_chat_media_urls import backfill
+
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("bk_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        female_headers, female_id = await register_and_get_headers(
+            client, _phone("bk_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await load_profiles(client, db_session, [male_id, female_id])
+        chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
+
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/photo",
+            files={"file": ("t.jpg", create_test_image(), "image/jpeg")},
+            data={"caption": "x"},
+            headers=male_headers,
+        )
+
+        db_row = (
+            await db_session.execute(
+                select(Message).where(
+                    Message.chat_id == chat_id, Message.message_type == "photo"
+                )
+            )
+        ).scalars().first()
+        key = db_row.media_url
+        assert key.startswith("chat/photos/")
+
+        # Corrupt it back into the old presigned-URL form, then backfill.
+        db_row.media_url = f"http://localhost:9090/photos-private/{key}?X-Amz-Signature=stale"
+        await db_session.commit()
+
+        result = await backfill(dry_run=False)
+        assert result["updated"] >= 1
+
+        fresh = (
+            await db_session.execute(
+                select(Message)
+                .where(Message.id == db_row.id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        assert fresh.media_url == key

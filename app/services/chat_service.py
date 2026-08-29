@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.services.reward_service import RewardService
 from app.services.notification_service import NotificationService
+from app.services.media_service import MediaService
 from app.models.user import User
 from app.models.chat import Chat
 from app.models.message import Message
@@ -258,6 +259,7 @@ async def create_encrypted_message(
     reply_to_id: Optional[UUID] = None,
     media_url: Optional[str] = None,
     media_duration: Optional[int] = None,
+    client_id: Optional[UUID] = None,
 ) -> Message:
     """Create a new message with encrypted content (always encrypted)."""
     new_message = Message(
@@ -269,6 +271,7 @@ async def create_encrypted_message(
         is_sent=True,
         media_url=media_url,
         media_duration=media_duration,
+        client_id=client_id,
     )
     if content:
         new_message.content = content  # encrypted via property setter
@@ -292,12 +295,13 @@ async def get_decrypted_message_for_client(
 
     return {
         "id": str(message.id),
+        "client_id": str(message.client_id) if message.client_id else None,
         "chat_id": str(message.chat_id),
         "sender_id": str(message.sender_id),
         "receiver_id": str(message.receiver_id),
         "message_type": message.message_type,
         "content": decrypted_content,
-        "media_url": message.media_url,
+        "media_url": await MediaService.resolve_media_url(message.media_url),
         "media_duration": message.media_duration,
         "reply_to_id": str(message.reply_to_id) if message.reply_to_id else None,
         "is_sent": message.is_sent,

@@ -111,6 +111,7 @@ def _build_message_response(
     msg: Message,
     decrypted_content: Optional[str] = None,
     reply_to_data: Optional[dict] = None,
+    media_url_override: Optional[str] = None,
 ) -> MessageResponse:
     """Build a full MessageResponse from a Message row."""
     from app.schemas.message import ReplyToResponse
@@ -119,12 +120,13 @@ def _build_message_response(
         reply = ReplyToResponse(**reply_to_data)
     return MessageResponse(
         id=msg.id,
+        client_id=msg.client_id,
         chat_id=msg.chat_id,
         sender_id=msg.sender_id,
         receiver_id=msg.receiver_id,
         message_type=msg.message_type,
         content=decrypted_content if decrypted_content is not None else msg.content,
-        media_url=msg.media_url,
+        media_url=media_url_override if media_url_override is not None else msg.media_url,
         media_duration=msg.media_duration,
         reply_to=reply,
         is_sent=msg.is_sent,
@@ -216,12 +218,13 @@ async def get_chat_history(
 
         message_responses.append(MessageResponse(
             id=msg.id,
+            client_id=msg.client_id,
             chat_id=msg.chat_id,
             sender_id=msg.sender_id,
             receiver_id=msg.receiver_id,
             message_type=msg.message_type,
             content=decrypted_data.get("content"),
-            media_url=msg.media_url,
+            media_url=await MediaService.resolve_media_url(msg.media_url),
             media_duration=msg.media_duration,
             reply_to=reply_to_data,
             is_sent=msg.is_sent,
@@ -290,6 +293,7 @@ async def send_text_message(
         content=body.content,
         message_type="text",
         reply_to_id=body.reply_to_id,
+        client_id=body.client_id,
     )
     chat.updated_at = func.now()
 
@@ -308,6 +312,7 @@ async def send_text_message(
         "type": "new_message",
         "data": {
             "id": str(new_message.id),
+            "client_id": str(new_message.client_id) if new_message.client_id else None,
             "chat_id": str(chat.id),
             "message_type": "text",
             "content": body.content,
@@ -330,6 +335,7 @@ async def send_text_message(
         chat_id=chat.id,
         status=chat.status,
         last_message={
+            "id": str(new_message.id),
             "content": body.content,
             "message_type": "text",
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
@@ -355,6 +361,7 @@ async def send_photo_message(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     caption: str = Form(None),
+    client_id: Optional[UUID] = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> SendMessageResponse:
@@ -384,17 +391,23 @@ async def send_photo_message(
         content=caption or "",
         message_type="photo",
         media_url=media_url,
+        client_id=client_id,
     )
     chat.updated_at = func.now()
     await session.commit()
+
+    # media_url holds the object KEY — resolve to a fresh signed URL for both
+    # the WS echo and the HTTP response so the client can load it immediately.
+    resolved_media_url = await MediaService.resolve_media_url(media_url)
 
     message_data = {
         "type": "new_message",
         "data": {
             "id": str(new_message.id),
+            "client_id": str(new_message.client_id) if new_message.client_id else None,
             "chat_id": str(chat.id),
             "message_type": "photo",
-            "media_url": media_url,
+            "media_url": resolved_media_url,
             "caption": caption or "",
             "sender_id": str(current_user.id),
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
@@ -415,6 +428,7 @@ async def send_photo_message(
         chat_id=chat.id,
         status=chat.status,
         last_message={
+            "id": str(new_message.id),
             "content": caption or "",
             "message_type": "photo",
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
@@ -427,7 +441,7 @@ async def send_photo_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=caption or ""),
+        message=_build_message_response(new_message, decrypted_content=caption or "", media_url_override=resolved_media_url),
     )
 
 
@@ -439,6 +453,7 @@ async def send_voice_message(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     duration: int = Form(...),
+    client_id: Optional[UUID] = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> SendMessageResponse:
@@ -469,17 +484,21 @@ async def send_voice_message(
         message_type="voice",
         media_url=media_url,
         media_duration=duration,
+        client_id=client_id,
     )
     chat.updated_at = func.now()
     await session.commit()
+
+    resolved_media_url = await MediaService.resolve_media_url(media_url)
 
     message_data = {
         "type": "new_message",
         "data": {
             "id": str(new_message.id),
+            "client_id": str(new_message.client_id) if new_message.client_id else None,
             "chat_id": str(chat.id),
             "message_type": "voice",
-            "media_url": media_url,
+            "media_url": resolved_media_url,
             "duration": duration,
             "sender_id": str(current_user.id),
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
@@ -500,6 +519,7 @@ async def send_voice_message(
         chat_id=chat.id,
         status=chat.status,
         last_message={
+            "id": str(new_message.id),
             "content": "",
             "message_type": "voice",
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
@@ -512,7 +532,7 @@ async def send_voice_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=None),
+        message=_build_message_response(new_message, decrypted_content=None, media_url_override=resolved_media_url),
     )
 
 

@@ -21,6 +21,11 @@ class Message(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
+    # Client-generated id echoed from the sender so the app can reconcile its
+    # optimistic send with the server message (dedup) even when the WebSocket
+    # echo races the HTTP response.
+    client_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     chat_id = Column(UUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE", name="fk_messages_chat_id"), nullable=False)
 
     sender_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

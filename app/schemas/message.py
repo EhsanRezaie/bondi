@@ -15,6 +15,7 @@ class ReplyToResponse(BaseModel):
 class MessageResponse(BaseModel):
     """Response for a single message"""
     id: UUID
+    client_id: Optional[UUID] = None
     chat_id: UUID
     sender_id: UUID
     receiver_id: UUID
@@ -47,6 +48,7 @@ class TextMessageRequest(BaseModel):
     """Request for sending text message"""
     content: str = Field(..., min_length=1, max_length=5000)
     reply_to_id: Optional[UUID] = None
+    client_id: Optional[UUID] = None
 
 
 class PhotoMessageRequest(BaseModel):
