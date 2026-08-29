@@ -188,6 +188,38 @@ class TestGetMe:
 
         assert "password_hash" not in data
 
+    async def test_get_me_includes_main_photo_url_when_approved_photo_exists(
+        self, client: AsyncClient, db_session, mock_verification_code
+    ):
+        """GET /users/me exposes the user's main photo (approved) as a public URL."""
+        from app.core.config import settings
+        from tests.photo_visibility_helper import grant_approved_photo
+
+        result = await register_user_full(client, mock_verification_code)
+        token = result["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        user_id = result["user"]["id"]
+
+        # No approved photo yet → null.
+        res = await client.get(USERS_ME_URL, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["main_photo_url"] is None
+
+        await grant_approved_photo(user_id)
+
+        # Bypass the Redis user-profile cache + the shared session's identity map
+        # (photos were loaded as empty during registration).
+        from app.core.cache import key_user_profile
+        import app.core.redis as redis_module
+        db_session.expire_all()
+        await redis_module.redis_client.delete(key_user_profile(user_id))
+
+        res = await client.get(USERS_ME_URL, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["main_photo_url"] == (
+            f"{settings.S3_PUBLIC_BASE_URL}/users/{user_id}/test.jpg"
+        )
+
     async def test_get_me_with_minimal_profile(self, client: AsyncClient, mock_verification_code):
         """Should handle users with minimal profile data."""
         result = await register_user_full_custom(

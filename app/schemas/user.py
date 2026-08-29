@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime, timezone, date
 from uuid import UUID
 
+from app.core.config import settings
+
 
 # ============ Request Schemas ============
 
@@ -297,6 +299,15 @@ class UserProfileResponse(BaseModel):
                     {"prompt_id": str(up.prompt_id), "answer": up.answer}
                     for up in raw_prompts
                 ]
+
+                # main_photo_url: first approved photo, public bucket URL (approved
+                # photos need no signing — matches PhotoService.get_photo_url).
+                approved = sorted(
+                    [p for p in (values.photos or []) if p.status == "approved"],
+                    key=lambda p: p.order,
+                )
+                if approved:
+                    values.main_photo_url = f"{settings.S3_PUBLIC_BASE_URL}/{approved[0].url}"
 
         return values
 
