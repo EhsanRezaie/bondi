@@ -220,6 +220,7 @@ async def verify_code(
 
     existing = await get_user_by_phone(session, body.phone)
     is_new_user = False
+    account_restored = False
 
     if existing and not existing.is_active:
         # Deleted-account handling: restore within the grace window, otherwise
@@ -228,6 +229,7 @@ async def verify_code(
             grace_end = existing.deleted_at + timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
             if datetime.now(timezone.utc) < grace_end:
                 # Within the grace window → restore the account (user changed their mind).
+                account_restored = True
                 existing.is_active = True
                 existing.deleted_at = None
                 existing.deleted_reason = None
@@ -321,6 +323,7 @@ async def verify_code(
         token_type="bearer",
         user=UserProfileResponse.model_validate(full_user),
         is_new_user=is_new_user,
+        account_restored=account_restored,
     )
 
 

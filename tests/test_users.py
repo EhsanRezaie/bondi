@@ -841,6 +841,7 @@ class TestAccountDeletionGrace:
         assert login_res.status_code == 200, login_res.text
         data = login_res.json()
         assert data["is_new_user"] is False
+        assert data["account_restored"] is True
         assert data["user"]["is_active"] is True
 
         # New tokens work on /users/me.

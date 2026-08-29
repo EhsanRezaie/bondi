@@ -167,6 +167,7 @@ class VerifyCodeResponse(BaseModel):
     token_type: str = "bearer"
     user: "UserProfileResponse"
     is_new_user: bool = False
+    account_restored: bool = False
 
 
 # ============ Step 3: Onboarding Complete ============
