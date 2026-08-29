@@ -66,8 +66,13 @@ def cleanup_stale_onlines(self):
         return None
 
 
-async def _purge_deleted_accounts() -> dict:
-    """Async core of the purge sweep — testable without the Celery wrapper."""
+async def _purge_deleted_accounts(session_factory=None) -> dict:
+    """Async core of the purge sweep — testable without the Celery wrapper.
+
+    `session_factory` is injectable so tests can pass a factory bound to their
+    own event-loop-local engine (the global AsyncSessionLocal's engine is created
+    at import time, which mismatches pytest-asyncio's per-test event loops).
+    """
     from sqlalchemy import select
     from app.db.session import AsyncSessionLocal
     from app.models.user import User
@@ -75,9 +80,10 @@ async def _purge_deleted_accounts() -> dict:
     from app.services.photo_service import PhotoService
     from app.core.timezone import utcnow
 
+    session_factory = session_factory or AsyncSessionLocal
     cutoff = utcnow() - timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
     purged = 0
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         result = await session.execute(
             select(User).where(
                 User.is_active.is_(False),

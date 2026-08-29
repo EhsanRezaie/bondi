@@ -894,8 +894,20 @@ class TestAccountDeletionGrace:
         await db_session.commit()
 
         from app.tasks.cleanup import _purge_deleted_accounts
-        with patch("app.services.photo_service.PhotoService.delete_photo", new_callable=AsyncMock) as mock_del:
-            result = await _purge_deleted_accounts()
+        from tests.conftest import make_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+
+        # Build a session factory on a fresh, loop-local engine so the purge
+        # never touches the global AsyncSessionLocal engine (created at import
+        # time on a different event loop — the CI-only "attached to a different
+        # loop" failure).
+        purge_engine = make_engine()
+        purge_factory = async_sessionmaker(purge_engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            with patch("app.services.photo_service.PhotoService.delete_photo", new_callable=AsyncMock) as mock_del:
+                result = await _purge_deleted_accounts(session_factory=purge_factory)
+        finally:
+            await purge_engine.dispose()
         assert result == {"purged": 1}
 
         # User + cascade-deleted profile are gone.
