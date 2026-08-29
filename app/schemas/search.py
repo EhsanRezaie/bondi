@@ -113,7 +113,9 @@ class BlockResponse(BaseModel):
     """Response for block list."""
     id: UUID
     blocked_user_id: UUID
-    blocked_user_name: str
+    blocked_user_name: Optional[str] = None
+    blocked_user_age: Optional[int] = None
+    main_photo_url: Optional[str] = None
     blocked_at: str
     
     class Config:

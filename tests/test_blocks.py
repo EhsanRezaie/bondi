@@ -330,3 +330,80 @@ class TestBlocks:
         )
         assert res.status_code == 403
         assert "cannot start a chat" in res.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Blocked-list response: photo + age (powers the mobile blocked-users screen)
+# ---------------------------------------------------------------------------
+
+def _expected_age(birth_date: str) -> int:
+    from datetime import date
+    today = date.today()
+    birth = date.fromisoformat(birth_date)
+    age = today.year - birth.year
+    if (today.month, today.day) < (birth.month, birth.day):
+        age -= 1
+    return age
+
+
+class TestBlockListResponse:
+
+    async def test_list_blocks_includes_age(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        male_headers, _ = await register_and_get_headers(
+            client, _phone("bl_age_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, _phone("bl_age_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
+
+        res = await client.get(BLOCKS_URL, headers=male_headers)
+        assert res.status_code == 200
+        entry = next(b for b in res.json() if b["blocked_user_id"] == female_id)
+        assert entry["blocked_user_name"] == "Block Female"
+        assert entry["blocked_user_age"] == _expected_age("2000-01-01")
+
+    async def test_list_blocks_includes_main_photo_url(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        from app.core.config import settings
+
+        male_headers, _ = await register_and_get_headers(
+            client, _phone("bl_photo_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, _phone("bl_photo_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+
+        # Give the blocked user an approved photo → public URL must be returned.
+        await grant_approved_photo(female_id)
+
+        await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
+
+        res = await client.get(BLOCKS_URL, headers=male_headers)
+        assert res.status_code == 200
+        entry = next(b for b in res.json() if b["blocked_user_id"] == female_id)
+        assert entry["main_photo_url"] == f"{settings.S3_PUBLIC_BASE_URL}/users/{female_id}/test.jpg"
+
+    async def test_list_blocks_photo_null_without_approved_photo(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        # register_and_get_headers auto-grants a photo — register directly so the
+        # blocked user truly has no photos.
+        male_data = await register_user_full(
+            client, _phone("bl_nophoto_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+        )
+        male_headers = {"Authorization": f"Bearer {male_data['access_token']}"}
+        female_data = await register_user_full(
+            client, _phone("bl_nophoto_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+        )
+        female_id = female_data["user"]["id"]
+
+        await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
+
+        res = await client.get(BLOCKS_URL, headers=male_headers)
+        assert res.status_code == 200
+        entry = next(b for b in res.json() if b["blocked_user_id"] == female_id)
+        assert entry["main_photo_url"] is None

@@ -13,6 +13,7 @@ from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
 from app.schemas.search import BlockResponse
 from app.services.websocket_manager import websocket_manager
+from app.services.photo_service import PhotoService
 import app.core.redis as redis_module
 
 from app.core.logging import get_logger
@@ -186,7 +187,10 @@ async def list_blocks(
     
     result = await session.execute(
         select(Block, User)
-        .options(selectinload(User.profile))
+        .options(
+            selectinload(User.profile),
+            selectinload(User.photos),
+        )
         .join(User, Block.blocked_id == User.id)
         .where(Block.blocker_id == current_user.id)
         .order_by(Block.created_at.desc(), Block.id.desc())
@@ -196,10 +200,26 @@ async def list_blocks(
     
     blocks = []
     for block, user in result:
+        profile = user.profile
+        name = profile.name if profile and profile.name else None
+        age = profile.age if profile else None
+
+        main_photo_url = None
+        if user.photos:
+            approved = sorted(
+                [p for p in user.photos if p.status == "approved"],
+                key=lambda p: p.order,
+            )
+            if approved:
+                first = approved[0]
+                main_photo_url = await PhotoService.get_photo_url(first.url, first.status)
+
         blocks.append(BlockResponse(
             id=block.id,
             blocked_user_id=user.id,
-            blocked_user_name=user.profile.name,
+            blocked_user_name=name,
+            blocked_user_age=age,
+            main_photo_url=main_photo_url,
             blocked_at=block.created_at.isoformat(),
         ))
     
