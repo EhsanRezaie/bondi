@@ -311,26 +311,314 @@ network) and Grafana at Prometheus. The endpoint is `include_in_schema=False`
 
 ---
 
-## 6. Closing loop: domain + HTTPS
+## 6. Closing loop: domain + HTTPS/SSL
 
-### 6.1 (Optional but recommended) real HTTPS
+This section is the complete, step-by-step recipe to put the whole stack behind a
+single TLS entry point on a real domain. It was validated on a live server for
+`bondiapp.ir` (API) + `www.bondiapp.ir` (redirect) + `admin.bondiapp.ir`
+(admin panel) with one Let's Encrypt certificate covering all three names.
+Substitute your own domain everywhere; nothing here is host-specific.
 
-> **Not yet merged in this release** — nginx ships with a commented `server { listen 443 }`
-> block. When you enable HTTPS:
+> **Architecture:** the **backend nginx** container (`bondi_nginx`) is the only
+> TLS terminator. It owns host ports `80`/`443`, and routes by `server_name`:
+>
+> | Hostname | Routes to |
+> |----------|-----------|
+> | `bondiapp.ir`, `www.bondiapp.ir` | FastAPI `app` (API + `/api/v1/ws/`) and `minio` (`/photos-*`) |
+> | `admin.bondiapp.ir` | SPA via `http://bondi_admin:80` for `/` and straight to `app` for `/api/v1/` |
+>
+> The admin container keeps its own plain-HTTP nginx and is joined to the
+> `bondi_frontend` docker network so `bondi_nginx` can reach it. Admin API calls
+> (`/api/v1/…`) are forwarded by `bondi_nginx` **directly to `app`** to avoid an
+> nginx→nginx proxy loop. One certificate, three SANs, one renewal job.
 
-```bash
-# Install certbot (official)
-apt install -y certbot python3-certbot-nginx
-# Obtain a cert (nginx plugin rewrites config for you)
-certbot --nginx -d api.yourdomain.com
-# Auto-renew
-systemctl enable certbot.timer
+### 6.0 DNS records
+
+Create **A records** at your DNS provider (TTL 300 for fast iteration):
+
+```text
+bondiapp.ir.          A  1.2.3.4
+www.bondiapp.ir.      A  1.2.3.4
+admin.bondiapp.ir.    A  1.2.3.4
 ```
 
-### 6.2 Session/validation
+Verify propagation before issuing the certificate (certbot HTTP-01 needs port
+80 to reach the challenge for **every** name in the cert):
 
-- WS connections use `wss://api.yourdomain.com/api/v1/ws/stream?token=...`.
-- Set `CORS_ORIGINS=https://api.yourdomain.com` (or the app origin) when not `*`.
+```bash
+dig +short bondiapp.ir admin.bondiapp.ir www.bondiapp.ir
+```
+
+### 6.1 Backend config changes (in the repo)
+
+All of this is committed to `origin/main` (so the server can `git pull --ff-only`
+without tripping the drift guard — see §8.1).
+
+**`nginx/nginx.conf`** — three changes:
+
+1. In the port-80 `server`, add a webroot block **before** the catch-all so
+   certbot's HTTP-01 challenge is served (this keeps API working on port 80 too,
+   so already-installed builds don't break mid-migration):
+
+   ```nginx
+   location /.well-known/acme-challenge/ {
+       root /var/www/certbot;
+   }
+   ```
+
+2. Add a `listen 443 ssl;` server block for the API names:
+
+   ```nginx
+   server {
+       listen 443 ssl;
+       http2 on;
+       server_name bondiapp.ir www.bondiapp.ir;
+
+       ssl_certificate     /etc/letsencrypt/live/bondiapp.ir/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/bondiapp.ir/privkey.pem;
+       ssl_protocols TLSv1.2 TLSv1.3;
+       ssl_ciphers HIGH:!aNULL:!MD5;
+
+       add_header Strict-Transport-Security "max-age=63072000" always;
+       add_header X-Frame-Options "SAMEORIGIN" always;
+       add_header X-Content-Type-Options "nosniff" always;
+       add_header X-XSS-Protection "1; mode=block" always;
+
+       location ~ ^/api/v1/auth/ { limit_req zone=auth burst=10 nodelay; proxy_pass http://app; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+       location ~ ^/api/v1/ws/  { proxy_pass http://app; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_read_timeout 86400; }
+       location /photos-public { proxy_pass http://minio:9000; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+       location /photos-private{ proxy_pass http://minio:9000; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+       location = /metrics { deny all; return 403; }
+       location /            { limit_req zone=api burst=50 nodelay; proxy_pass http://app; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+   }
+   ```
+
+3. Add a `listen 443 ssl;` server block for the admin panel (API straight to
+   `app`, SPA to the admin container):
+
+   ```nginx
+   server {
+       listen 443 ssl;
+       http2 on;
+       server_name admin.bondiapp.ir;
+
+       ssl_certificate     /etc/letsencrypt/live/bondiapp.ir/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/bondiapp.ir/privkey.pem;
+       ssl_protocols TLSv1.2 TLSv1.3;
+
+       add_header Strict-Transport-Security "max-age=63072000" always;
+       add_header X-Frame-Options "SAMEORIGIN" always;
+       add_header X-Content-Type-Options "nosniff" always;
+
+       location /api/v1/ {
+           proxy_pass http://app;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto https;
+       }
+       location / {
+           proxy_pass http://bondi_admin:80;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       }
+   }
+   ```
+
+**`docker-compose.yml`** — the `nginx` service gets two bind mounts so it can
+serve the ACME challenge and read renewed certs (no copy step on renewal):
+
+```yaml
+    volumes:
+      - nginx_certs:/etc/nginx/certs
+      - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+```
+
+> `nginx_certs` (the old volume) can be removed once nothing references it; it is
+> harmless to keep.
+
+### 6.2 Roll the new config out to the server
+
+```bash
+# on the server, in the backend clone (e.g. /opt/demo-bondi):
+git pull --ff-only
+docker compose config -q                          # validates interpolation
+docker compose up -d nginx                        # recreates nginx (config content-hash changed)
+docker compose exec nginx nginx -t                # test the active config
+```
+
+### 6.3 Issue the certificate (certbot webroot)
+
+```bash
+apt install -y certbot
+mkdir -p /var/www/certbot
+# Run only AFTER §6.2 so nginx serves the challenge on port 80:
+certbot certonly --webroot -w /var/www/certbot \
+  -d bondiapp.ir -d www.bondiapp.ir -d admin.bondiapp.ir \
+  -m you@example.com --agree-tos --no-eff-email
+```
+
+> HTTP-01 needs port 80 open to the internet and all three names resolving. If
+> certbot fails on `admin.bondiapp.ir`, the DNS record isn't propagated yet.
+
+### 6.4 Auto-renewal (reload the *containerized* nginx)
+
+Debian/Ubuntu ship `certbot.timer`; enable it, then add a **deploy hook** so a
+renewed cert is picked up by the container (certs are bind-mounted, so a reload
+is enough — no restart, no copy):
+
+```bash
+systemctl enable --now certbot.timer
+cat > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh <<'EOF'
+#!/bin/sh
+docker compose -f /opt/demo-bondi/docker-compose.yml exec nginx nginx -s reload
+EOF
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
+```
+
+> Adjust `/opt/demo-bondi` to your actual clone path. Verify:
+> `certbot renew --dry-run`.
+
+### 6.5 Backend `.env` — switch everything to HTTPS
+
+The app builds **public** media URLs from these values, so they must be the
+public https origin (not `minio`/`:9000` — clients can never reach those):
+
+```env
+# Used by boto3 for S3 ops AND for signing presigned URLs. Pointing it at the
+# public https host makes signed URLs (pending photos, chat media) loadable by
+# clients; nginx preserves the Host header so SigV4 still validates in MinIO.
+S3_ENDPOINT_URL=https://bondiapp.ir
+S3_PUBLIC_BASE_URL=https://bondiapp.ir/photos-public
+
+# Browser origins allowed to call the API (admin panel is a different origin):
+CORS_ORIGINS=https://admin.bondiapp.ir
+
+# Payments callback must be public + https:
+ZARINPAL_CALLBACK_URL=https://bondiapp.ir/api/v1/subscriptions/zarinpal/callback
+```
+
+Restart the app so the new URLs take effect:
+
+```bash
+docker compose up -d app
+```
+
+> ⚠️ After changing `S3_ENDPOINT_URL`, verify private/chat media — cached
+> presigned URLs in Redis were signed against the old host and will 403 until
+> their 5-min cache expires. Nothing to do; just smoke-test after a few minutes.
+
+### 6.6 Admin panel changes
+
+**`bondi_admin/docker-compose.yml`** — join the shared frontend network (so
+`bondi_nginx` can reach the admin container by name) and stop publishing `8443`
+to the world (localhost only keeps the CI healthcheck working):
+
+```yaml
+services:
+  admin:
+    # ...
+    ports:
+      - "127.0.0.1:8443:80"
+    networks:
+      - default
+      - bondi_frontend
+
+networks:
+  bondi_frontend:
+    external: true
+```
+
+`nginx/nginx.conf.template`, `BACKEND_ORIGIN` and the CI workflow need **no
+change** — the domain path is served through `bondi_nginx`, which proxies
+`/api/v1/` directly to the backend, and the admin nginx never sees those
+requests. (`BACKEND_ORIGIN` only matters for direct `127.0.0.1:8443` access.)
+
+Deploy: `docker compose up -d` in `/opt/bondi-admin` (or push to `main` and let
+the CI SCP step overwrite the files).
+
+### 6.7 Mobile app changes
+
+**`.env`** — point the app at the https origin (WS must be `wss`):
+
+```env
+API_BASE_URL=https://bondiapp.ir/api/v1
+WS_BASE_URL=wss://bondiapp.ir/api/v1
+```
+
+**`android/app/src/main/AndroidManifest.xml`** — once *all* traffic is https,
+drop the cleartext exception (recommended hardening):
+
+```xml
+<application
+    android:label="Bondi"
+    android:name="${applicationName}"
+    android:icon="@mipmap/ic_launcher">
+```
+
+Rebuild the APK. Native Google Sign-In needs no change (it does not use the
+domain); if you ever build a web client, add `https://bondiapp.ir` to the
+Firebase console's authorized domains.
+
+### 6.8 Firewall
+
+```bash
+bash scripts/firewall.sh     # opens 22/80/443 only
+ufw status verbose
+```
+
+The admin panel is now only reachable through `https://admin.bondiapp.ir`;
+`8443` (localhost-only), `8080` (GlitchTip) and `9001` (MinIO console) are not
+exposed externally. Open them only if you truly need remote dashboards.
+
+### 6.9 Verification checklist
+
+```bash
+# API over TLS + valid cert chain
+curl -I https://bondiapp.ir/api/v1/auth/health
+#   expect: HTTP/1.1 200 OK ... Strict-Transport-Security ... 
+
+# www → apex on the same cert
+curl -sI https://www.bondiapp.ir/api/v1/auth/health | head -1
+
+# public media still resolves over https
+curl -sI https://bondiapp.ir/photos-public/<some-object-key>
+
+# admin SPA + its API calls
+curl -sI https://admin.bondiapp.ir/                          # 200, HTML
+curl -s -o /dev/null -w '%{http_code}\n' https://admin.bondiapp.ir/api/v1/auth/health
+
+# WebSocket (token-optional health path)
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: x" -H "Sec-WebSocket-Version: 13" \
+  https://bondiapp.ir/api/v1/ws/... 
+
+# Cert + renewal state
+certbot certificates
+systemctl is-active certbot.timer
+certbot renew --dry-run
+```
+
+In the app: login, upload a photo, open chat media + voice, verify the app is
+now hitting `https://bondiapp.ir`.
+
+### 6.10 Troubleshooting / rollback
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `certbot` can't reach challenge | DNS not propagated / port 80 blocked | `dig +short` each name; `ufw allow 80`; confirm §6.2 applied |
+| nginx won't start after config change | typo in a server block | `docker compose exec nginx nginx -t`; fix and `docker compose up -d nginx` |
+| Media 403 / "minio" host in URLs | `S3_ENDPOINT_URL`/`S3_PUBLIC_BASE_URL` stale | set to public https host (§6.5), `docker compose up -d app` |
+| Presigned URLs 403 right after switch | Redis cached old-host signatures | wait ≤5 min (cache TTL) |
+| Admin loads but API 502 | `bondi_nginx` can't reach admin/api | check `bondi_admin` is on `bondi_frontend` network; `docker compose logs nginx` |
+| Old app builds break after forcing 443-only | clients still on `http://<ip>` | keep port 80 serving API during transition, or rebuild the app |
+| Renewed cert not used | deploy hook missing / wrong path | run hook manually; fix path in `/etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh` |
+
+**Rollback:** revert the repo commits (`git revert`/`git push`), `git pull` on the
+server, `docker compose up -d nginx` (port-80-only config), and restore the
+previous `.env` values (`S3_ENDPOINT_URL`, `S3_PUBLIC_BASE_URL`) + `docker compose up -d app`.
 
 ---
 

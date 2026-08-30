@@ -127,6 +127,8 @@ services:
         target: /etc/nginx/nginx.conf
     volumes:
       - nginx_certs:/etc/nginx/certs
+      - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - app
     networks:
