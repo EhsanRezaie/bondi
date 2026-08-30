@@ -326,6 +326,7 @@ Substitute your own domain everywhere; nothing here is host-specific.
 > |----------|-----------|
 > | `bondiapp.ir`, `www.bondiapp.ir` | FastAPI `app` (API + `/api/v1/ws/`) and `minio` (`/photos-*`) |
 > | `admin.bondiapp.ir` | SPA via `http://bondi_admin:80` for `/` and straight to `app` for `/api/v1/` |
+> | `invite.bondiapp.ir` | static invite site via `http://invite-site:80` (own cert, §6.11) |
 >
 > The admin container keeps its own plain-HTTP nginx and is joined to the
 > `bondi_frontend` docker network so `bondi_nginx` can reach it. Admin API calls
@@ -651,6 +652,71 @@ now hitting `https://bondiapp.ir`.
 **Rollback:** revert the repo commits (`git revert`/`git push`), `git pull` on the
 server, `docker compose up -d nginx` (port-80-only config), and restore the
 previous `.env` values (`S3_ENDPOINT_URL`, `S3_PUBLIC_BASE_URL`) + `docker compose up -d app`.
+
+### 6.11 Adding another subdomain/service (e.g. `invite.bondiapp.ir`)
+
+Extra static sites (side projects, landing pages) ride the same TLS front with
+**their own separate cert** and a `server` block. Verified live for
+`invite.bondiapp.ir` (a tiny nginx container serving a static page):
+
+1. **DNS:** add `A` record `invite.bondiapp.ir → <server ip>`; wait for propagation.
+2. **Serve the site** (if it isn't already): the `invite-site` container runs on
+   the shared frontend network so `bondi_nginx` can reach it by name, and its raw
+   port is bound to localhost only (not public):
+
+   ```bash
+   cd /root/invite-app
+   docker build -t invite-site .
+   docker run -d --name invite-site --restart unless-stopped \
+     --network bondi_frontend -p 127.0.0.1:8143:80 invite-site
+   # from then on it is only reachable as https://invite.bondiapp.ir (and via
+   # http://127.0.0.1:8143 on the host itself)
+   ```
+3. **Issue its own cert** (the port-80 catch-all already serves the webroot for
+   any hostname, so no config change is needed to obtain it):
+   ```bash
+   certbot certonly --webroot -w /var/www/certbot -d invite.bondiapp.ir \
+     --agree-tos --no-eff-email --register-unsafely-without-email
+   ```
+4. **`nginx/nginx.conf`** (committed): add a port-80 redirect block (with the ACME
+   webroot location so renewals keep working) and a `443` block referencing the
+   new cert, proxying `/` to `http://invite-site:80`:
+
+   ```nginx
+   server {
+       listen 80;
+       server_name invite.bondiapp.ir;
+       location /.well-known/acme-challenge/ { root /var/www/certbot; }
+       location / { return 301 https://invite.bondiapp.ir$request_uri; }
+   }
+   server {
+       listen 443 ssl;
+       http2 on;
+       server_name invite.bondiapp.ir;
+       ssl_certificate     /etc/letsencrypt/live/invite.bondiapp.ir/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/invite.bondiapp.ir/privkey.pem;
+       ssl_protocols TLSv1.2 TLSv1.3;
+       location / {
+           proxy_pass http://invite-site:80;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto https;
+       }
+   }
+   ```
+5. **Deploy:** commit + push, then on the server `git fetch origin &&
+   git merge --ff-only origin/main` (fetch matters — a stale local `origin/main`
+   ref deploys nothing) and `docker compose up -d --force-recreate nginx`
+   (compose-config change; `--force-recreate` is required on this compose version).
+
+Renewal needs **no new hook**: the single deploy hook `nginx-reload.sh` reloads
+`bondi_nginx` for any renewed cert, so both the `bondiapp.ir` and
+`invite.bondiapp.ir` certs are picked up automatically.
+
+> ⚠️ A container recreated outside this run command loses its
+> `bondi_frontend` attachment — re-run it (or `docker network connect
+> bondi_frontend invite-site`) after any manual `docker run`.
 
 ---
 
