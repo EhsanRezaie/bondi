@@ -441,12 +441,43 @@ serve the ACME challenge and read renewed certs (no copy step on renewal):
 
 ### 6.2 Roll the new config out to the server
 
+> ⚠️ **First-time ordering (chicken-and-egg).** The committed `nginx.conf`
+> includes the `listen 443 ssl` blocks, which reference
+> `/etc/letsencrypt/live/bondiapp.ir/…` — files that don't exist until step 6.3.
+> nginx **will not start** with a missing certificate file, so on the very first
+> setup you must:
+>
+> 1. Deploy a **bootstrap** config — the committed file with the two `443` server
+>    blocks stripped (keeps the ACME webroot on `:80` so the challenge can be
+>    served), start nginx, and issue the cert (§6.3).
+> 2. Then restore the full committed config and force-recreate nginx.
+>
+> `git checkout -- nginx/nginx.conf` re-keys the tree to `origin/main`, so the
+> drift guard in §8.1 stays happy.
+
 ```bash
 # on the server, in the backend clone (e.g. /opt/demo-bondi):
 git pull --ff-only
 docker compose config -q                          # validates interpolation
-docker compose up -d nginx                        # recreates nginx (config content-hash changed)
+
+# ---- FIRST-TIME ONLY: bootstrap without the 443 blocks ----
+python3 - <<'PY'
+content = open('nginx/nginx.conf').read()
+marker = '# ----- HTTPS (TLS termination'
+prefix = content.split(marker)[0].rstrip() + '\n}\n'
+open('nginx/nginx.conf', 'w').write(prefix)
+PY
+docker compose up -d --force-recreate nginx
+# ... run §6.3 (certbot) now ...
+git checkout -- nginx/nginx.conf                 # restore full config
+# ------------------------------------------------------------
+
+# Recreate with --force-recreate: nginx.conf is mounted as a compose config and
+# some compose versions don't rebuild it on a plain `up -d` (verified on Docker
+# 29.x / Compose v2 — the container kept the old config until forced).
+docker compose up -d --force-recreate nginx
 docker compose exec nginx nginx -t                # test the active config
+docker exec bondi_nginx nginx -T | grep -E 'listen|ssl_certificate '   # confirm 443 present
 ```
 
 ### 6.3 Issue the certificate (certbot webroot)
@@ -454,7 +485,8 @@ docker compose exec nginx nginx -t                # test the active config
 ```bash
 apt install -y certbot
 mkdir -p /var/www/certbot
-# Run only AFTER §6.2 so nginx serves the challenge on port 80:
+# On first setup this runs during §6.2's bootstrap step (nginx is already
+# serving the ACME challenge on port 80 from the stripped config):
 certbot certonly --webroot -w /var/www/certbot \
   -d bondiapp.ir -d www.bondiapp.ir -d admin.bondiapp.ir \
   -m you@example.com --agree-tos --no-eff-email
