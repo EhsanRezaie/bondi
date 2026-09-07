@@ -1,14 +1,14 @@
 """
-SMS service for sending verification codes via Kavenegar through an OAuth2 API gateway.
+SMS service for sending verification codes via the Kavenegar SMS gateway
+(WSO2 APIM front, internal "ahuryx" gateway).
 
 Flow:
   1. Mint an OAuth2 client_credentials token from SMS_TOKEN_URL (cached in Redis).
-  2. POST {SMS_BASE_URL}/send-sms with Bearer token and form body
+  2. POST {SMS_BASE_URL}/send-sms with the Bearer token and form body
      {message, receptor}.
 
-When SMS is not enabled (SMS_ENABLED=false or creds missing) the code is just
-logged/printed — matching the old email_service behaviour — so local dev works
-without an SMS account.
+When SMS is not enabled (SMS_ENABLED=false) the code is only logged/printed so
+local dev and tests keep working without an SMS account.
 """
 from typing import Optional
 
@@ -36,7 +36,7 @@ async def _get_token() -> Optional[str]:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=settings.SMS_VERIFY_SSL) as client:
             response = await client.post(
                 settings.SMS_TOKEN_URL,
                 data={"grant_type": "client_credentials"},
@@ -65,58 +65,54 @@ async def _get_token() -> Optional[str]:
 
 
 def normalize_receptor(phone: str) -> str:
-    """Convert E.164 ('+989379191281') to the gateway's digit format (989379191281)."""
-    return phone.lstrip("+")
+    """Convert an E.164 phone ('+989381072001') to national format ('09381072001')."""
+    digits = phone.lstrip("+").replace(" ", "")
+    if digits.startswith("98") and len(digits) == 12:
+        return "0" + digits[2:]
+    return digits
 
 
 async def send_verification_code(phone: str, code: str) -> bool:
     """
-    Send a 6-digit verification code to `phone`.
+    Send a 6-digit verification code to `phone` through the Kavenegar gateway.
 
     Returns True if the SMS was dispatched (or logged in dev mode).
     """
     receptor = normalize_receptor(phone)
     message = OTP_MESSAGE_TEMPLATE.format(code=code)
 
-    # DEV MODE: SMS credentials are not configured. Commented out the real HTTP
-    # request to the SMS gateway for now — just log/print the code so devs can
-    # log in. Remove this when SMS_CLIENT_ID / SMS_CLIENT_SECRET are available.
-    #
-    # if not settings.SMS_ENABLED:
-    #     logger.info("sms_otp_dev_mode", phone=phone, code=code)
-    #     return True
-    #
-    # if not settings.SMS_CLIENT_ID or not settings.SMS_CLIENT_SECRET:
-    #     logger.info("sms_otp_no_credentials", phone=phone, code=code)
-    #     return True
-    #
-    # token = await _get_token()
-    # if not token:
-    #     logger.error("sms_send_failed_no_token", phone=phone)
-    #     return False
-    #
-    # try:
-    #     async with httpx.AsyncClient(timeout=10) as client:
-    #         response = await client.post(
-    #             f"{settings.SMS_BASE_URL.rstrip('/')}/send-sms",
-    #             data={
-    #                 "message": message,
-    #                 "receptor": receptor,
-    #                 **({"sender": settings.SMS_SENDER_LINE} if settings.SMS_SENDER_LINE else {}),
-    #             },
-    #             headers={
-    #                 "Authorization": f"Bearer {token}",
-    #                 "Accept": "application/json",
-    #                 "Content-Type": "application/x-www-form-urlencoded",
-    #             },
-    #         )
-    #         response.raise_for_status()
-    # except httpx.HTTPError as e:
-    #     logger.error("sms_send_failed", phone=phone, error=str(e), exc_info=True)
-    #     return False
-    #
-    # logger.info("sms_otp_sent", phone=phone)
+    if not settings.SMS_ENABLED:
+        logger.info("sms_otp_dev_mode", phone=phone, code=code)
+        return True
 
-    print(f"[DEV OTP] phone={phone} code={code}")
-    logger.info("sms_otp_dev_mode", phone=phone, code=code)
+    if not settings.SMS_CLIENT_ID or not settings.SMS_CLIENT_SECRET:
+        logger.warning("sms_otp_no_credentials", phone=phone)
+        return False
+
+    token = await _get_token()
+    if not token:
+        logger.error("sms_send_failed_no_token", phone=phone)
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=settings.SMS_VERIFY_SSL) as client:
+            response = await client.post(
+                f"{settings.SMS_BASE_URL.rstrip('/')}/send-sms",
+                data={
+                    "message": message,
+                    "receptor": receptor,
+                    **({"sender": settings.SMS_SENDER_LINE} if settings.SMS_SENDER_LINE else {}),
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.error("sms_send_failed", phone=phone, error=str(e), exc_info=True)
+        return False
+
+    logger.info("sms_otp_sent", phone=phone)
     return True

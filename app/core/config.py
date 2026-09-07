@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     SMS_BASE_URL: str
     SMS_CLIENT_ID: str
     SMS_CLIENT_SECRET: str
-    SMS_SENDER_LINE: str
+    SMS_SENDER_LINE: str = ""
+    # Internal WSO2/Kavenegar gateway uses a self-signed cert — set false when needed.
+    SMS_VERIFY_SSL: bool = True
 
     # ============================================
     # Admin
