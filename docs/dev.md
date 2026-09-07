@@ -88,10 +88,10 @@ iranian-dating-app/
 │   │   │   ├── session.py
 │   │   │   ├── seed_data/
 │   │   │   │   ├── interests.json             # 158 interests, 13 categories
-│   │   │   │   └── dummy_users.json           # 1000 users for local dev
+│   │   │   │   └── prompts.json               # prompt templates
 │   │   │   └── scripts/
 │   │   │       ├── seed_interests.py          # Idempotent upsert seed/sync script
-│   │   │       └── seed_dummy_users.py        # Idempotent seeder (python -m app.db.scripts.seed_dummy_users)
+│   │   │       └── seed_dummy_users.py        # Generates dummy users from current models
 │   │   │
 │   │   ├── models/
 │   │   │   ├── user.py                    # Core user model (auth only)
@@ -1427,13 +1427,10 @@ alembic downgrade -1
 
 | Feature | Status |
 |---------|--------|
-| `app/db/seed_data/dummy_users.json` — 1000 users with full profiles | ✅ |
-| `app/db/scripts/seed_dummy_users.py` — Idempotent seeder | ✅ |
-| Password `12345678` for all dummy accounts | ✅ |
-| `test1@test.com` … `test1000@test.com` naming | ✅ |
-| `python -m app.db.scripts.seed_dummy_users` command | ✅ |
-| README.md updated with seed command | ✅ |
-| `ALTER TABLE photos ADD COLUMN crop JSON` applied to dev DB | ✅ |
+| `app/db/scripts/seed_dummy_users.py` — generates dummy users from current models | ✅ |
+| Generates profiles/settings/photos + swipes, matches, chats, messages, limits | ✅ |
+| `test1@test.com` … `testN@test.com` naming, `+9891…` phones | ✅ |
+| `python -m app.db.scripts.seed_dummy_users [--count N]` command | ✅ |
 
 ### ✅ Session 27 Complete - Performance Phase 1
 
