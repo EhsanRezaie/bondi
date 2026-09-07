@@ -18,8 +18,8 @@ Usage:
     python -m app.db.scripts.seed_dummy_users [--count 1000] [--no-seed]
 
 Re-run safe — existing test%@test.com users are deleted first (FK cascades
-remove their swipes/matches/chats/etc.), and stale dummy/* photos are purged
-from MinIO before re-uploading.
+remove their swipes/matches/chats/etc.). User ids are deterministic per index,
+so the same dummy/* photo objects are simply overwritten on each run.
 """
 
 import argparse
@@ -36,6 +36,7 @@ from PIL import Image, ImageDraw
 from sqlalchemy import delete, select
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.models.chat import Chat
 from app.models.daily_limit import DailyLimit
@@ -68,11 +69,21 @@ from app.schemas.auth import (
     PoliticalOrientation,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger("scripts.seed_dummy_users")
 
 TEHRAN_TZ = timezone(timedelta(hours=3, minutes=30))  # Tehran = UTC+3:30
 
 PHOTOS_PER_USER = 3
+
+# Deterministic namespace so default runs reuse the same user ids / photo keys.
+# Re-running then overwrites the same MinIO objects instead of piling up.
+_DUMMY_NS = uuid_lib.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+
+def _make_uid(index: int, deterministic: bool) -> uuid_lib.UUID:
+    if deterministic:
+        return uuid_lib.uuid5(_DUMMY_NS, f"dummy-user-{index}")
+    return uuid_lib.uuid4()
 
 # ---------------------------------------------------------------------------
 # Value pools (schemas enums are authoritative; the rest are free-text pools)
@@ -133,32 +144,12 @@ def _rand_dt(days_back: float, days_fwd: float = 0) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=seconds - days_back * 86400)
 
 
-async def _purge_dummy_keys(s3) -> None:
-    """Best-effort delete of any leftover dummy/* objects so re-runs don't pile up."""
-    deleted = 0
-    try:
-        while True:
-            resp = await s3.list_objects_v2(
-                Bucket=settings.S3_PUBLIC_BUCKET, Prefix="dummy/", MaxKeys=1000
-            )
-            contents = resp.get("Contents", [])
-            if not contents:
-                break
-            await s3.delete_objects(
-                Bucket=settings.S3_PUBLIC_BUCKET,
-                Delete={"Objects": [{"Key": o["Key"]} for o in contents]},
-            )
-            deleted += len(contents)
-            if not resp.get("IsTruncated"):
-                break
-    except Exception as e:  # never let cleanup block seeding
-        logger.warning("dummy_key_purge_failed", error=str(e), exc_info=True)
-    if deleted:
-        print(f"   🧹  Purged {deleted} leftover dummy photos from MinIO")
-
-
 async def _upload_placeholder_images(photos: list[tuple[str, str]]) -> None:
-    """Upload one pastel image per user (reused for all 3 photo slots)."""
+    """Upload one pastel image per user (reused for all 3 photo slots).
+
+    Photo keys embed the (deterministic) user id, so re-runs overwrite the same
+    objects — no purge/cleanup of MinIO is required.
+    """
     s3_session = aioboto3.Session()
     uploaded = 0
     # stable color + initials per user, re-encoded into each key
@@ -171,8 +162,6 @@ async def _upload_placeholder_images(photos: list[tuple[str, str]]) -> None:
         aws_secret_access_key=settings.S3_SECRET_KEY,
         region_name=settings.S3_REGION,
     ) as s3:
-        await _purge_dummy_keys(s3)
-
         for user_id, key in photos:
             try:
                 await s3.head_object(Bucket=settings.S3_PUBLIC_BUCKET, Key=key)
@@ -208,9 +197,9 @@ async def _upload_placeholder_images(photos: list[tuple[str, str]]) -> None:
 # Builders
 # ---------------------------------------------------------------------------
 
-def build_person(index: int):
-    """Return (user, profile, settings, photo_keys) for one test person."""
-    uid = uuid_lib.uuid4()
+def build_person(index: int, deterministic: bool):
+    """Return (user, profile, settings, photo_keys, premium_days) for one person."""
+    uid = _make_uid(index, deterministic)
     gender = GENDERS[index % 2]
 
     # Location (city + jitter)
@@ -345,7 +334,7 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
         premium_user_ids: set[uuid_lib.UUID] = set()
 
         for i in range(1, count + 1):
-            user, profile, srow, keys, premium_days = build_person(i)
+            user, profile, srow, keys, premium_days = build_person(i, deterministic)
             uid = user.id
             user_ids.append(uid)
             persons.append((uid, profile.gender))
