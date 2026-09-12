@@ -99,12 +99,12 @@ jobs:
             -p 9090:9000 \
             -e MINIO_ROOT_USER=bondi_minio \
             -e MINIO_ROOT_PASSWORD=rKpgfRsEqw9yqavC \
-            minio/minio server /data --console-address ":9091"
+            quay.io/minio/minio server /data --console-address ":9091"
           sleep 5
           docker run --rm \
             --network host \
             --entrypoint sh \
-            minio/mc -c "
+            quay.io/minio/mc -c "
               mc alias set local http://localhost:9090 bondi_minio rKpgfRsEqw9yqavC &&
               mc mb --ignore-existing local/photos-public-test &&
               mc mb --ignore-existing local/photos-private-test &&

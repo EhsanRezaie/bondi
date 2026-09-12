@@ -29,7 +29,7 @@ services:
       retries: 5
 
   minio-test:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: bondi_minio_test
     command: server /data --console-address ":9091"
     environment:
@@ -51,7 +51,7 @@ services:
   # Re-running is safe (mc mb --ignore-existing, mc anonymous set are
   # both idempotent).
   minio-test-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: bondi_minio_test_init
     depends_on:
       minio-test:
