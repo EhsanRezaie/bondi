@@ -185,7 +185,7 @@ async def request_code(
     code = generate_verification_code()
     await redis.store_verification_code(phone, code, ttl=OTP_TTL)
     await redis.store_otp_cooldown(phone, OTP_RESEND_COOLDOWN)
-    await send_verification_code(phone, code)
+    await send_verification_code(phone, code, language=body.language)
 
     # Track registration IP for abuse detection (3+ from same IP in 24h = suspicious)
     client_ip = request.client.host if request.client else "unknown"

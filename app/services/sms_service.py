@@ -22,7 +22,10 @@ logger = get_logger("services.sms_service")
 
 SMS_TOKEN_CACHE_KEY = "sms_access_token"
 
-OTP_MESSAGE_TEMPLATE = "کد تایید باندی: {code}"
+OTP_MESSAGE_TEMPLATES = {
+    "fa": "کد تایید باندی: {code}",
+    "en": "Bondi verification code: {code}",
+}
 
 
 async def _get_token() -> Optional[str]:
@@ -72,14 +75,15 @@ def normalize_receptor(phone: str) -> str:
     return digits
 
 
-async def send_verification_code(phone: str, code: str) -> bool:
+async def send_verification_code(phone: str, code: str, language: str = "fa") -> bool:
     """
     Send a 6-digit verification code to `phone` through the Kavenegar gateway.
 
     Returns True if the SMS was dispatched (or logged in dev mode).
     """
     receptor = normalize_receptor(phone)
-    message = OTP_MESSAGE_TEMPLATE.format(code=code)
+    template = OTP_MESSAGE_TEMPLATES.get(language, OTP_MESSAGE_TEMPLATES["fa"])
+    message = template.format(code=code)
 
     if not settings.SMS_ENABLED:
         logger.info("sms_otp_dev_mode", phone=phone, code=code)
@@ -106,7 +110,6 @@ async def send_verification_code(phone: str, code: str) -> bool:
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
-                    "Content-Type": "application/x-www-form-urlencoded",
                 },
             )
             response.raise_for_status()
@@ -114,5 +117,5 @@ async def send_verification_code(phone: str, code: str) -> bool:
         logger.error("sms_send_failed", phone=phone, error=str(e), exc_info=True)
         return False
 
-    logger.info("sms_otp_sent", phone=phone)
+    logger.info("sms_otp_sent", phone=phone, code=code)
     return True

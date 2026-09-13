@@ -134,11 +134,19 @@ def validate_e164_phone(value: str) -> str:
 
 class RequestCodeRequest(BaseModel):
     phone: str = Field(..., description="E.164 phone number, e.g. +989379191281")
+    language: str = Field(default="fa", description="Language code for SMS message (fa or en)")
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return validate_e164_phone(v)
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: str) -> str:
+        if v not in ("fa", "en"):
+            return "fa"
+        return v
 
 
 class RequestCodeResponse(BaseModel):
