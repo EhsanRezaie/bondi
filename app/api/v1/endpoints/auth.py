@@ -420,6 +420,7 @@ async def register_complete(
     
     await session.commit()
 
+    await invalidate_user_cache(redis.redis_client, current_user.id)
     await invalidate_auth_user(redis.redis_client, current_user.id)
 
     return await build_login_response(current_user, session)
