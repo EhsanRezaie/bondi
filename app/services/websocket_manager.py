@@ -345,6 +345,8 @@ class WebSocketManager:
         redis: Redis,
         target_user: Optional[str] = None,
     ):
+        # Normalize so a raw chat id can never publish to the wrong channel.
+        channel = _chat_channel(_chat_id_from_channel(channel))
         await redis.setex(_typing_key(channel, user_id), TYPING_TTL, "1")
         payload = {
             "type": "typing",
@@ -362,6 +364,8 @@ class WebSocketManager:
         redis: Redis,
         target_user: Optional[str] = None,
     ):
+        # Normalize so a raw chat id can never publish to the wrong channel.
+        channel = _chat_channel(_chat_id_from_channel(channel))
         await redis.delete(_typing_key(channel, user_id))
         payload = {
             "type": "typing_stopped",

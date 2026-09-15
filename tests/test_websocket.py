@@ -448,6 +448,8 @@ class TestWebSocketManagerUnit:
         assert mock_redis.publish.call_count == 1
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
+        # Channel must be the canonical prefixed chat channel.
+        assert channel == "ws:chat:m1"
         assert payload["type"] == "typing"
         assert payload["chat_id"] == match_id
         assert payload["user_id"] == user_id
@@ -464,9 +466,56 @@ class TestWebSocketManagerUnit:
         assert mock_redis.publish.call_count == 1
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
+        assert channel == "ws:chat:m1"
         assert payload["type"] == "typing_stopped"
         assert payload["chat_id"] == match_id
         assert payload["user_id"] == user_id
+
+    async def test_relay_typing_publishes_on_prefixed_channel(self):
+        """The stream handler relays typing on ws:chat:{id}, using the
+        subscribed chat as the fast path."""
+        from app.api.v1.websocket import stream as stream_mod
+        from unittest.mock import AsyncMock, patch
+
+        with patch.object(
+            stream_mod.websocket_manager, "set_typing", new_callable=AsyncMock
+        ) as mock_set:
+            await stream_mod._relay_typing(
+                db=AsyncMock(),
+                user_id="u1",
+                chat_id="c1",
+                active_chat_id="c1",
+                event_type="typing",
+                redis=AsyncMock(),
+            )
+
+        assert mock_set.call_args[0][0] == "ws:chat:c1"
+        assert mock_set.call_args[0][1] == "u1"
+
+    async def test_relay_typing_resolves_chat_when_not_subscribed(self):
+        """Typing still relays when the frame's chat_id must be resolved (no
+        active subscription yet) — guards against the subscribe race."""
+        from app.api.v1.websocket import stream as stream_mod
+        from unittest.mock import AsyncMock, patch
+
+        with patch.object(
+            stream_mod,
+            "_resolve_chat",
+            new_callable=AsyncMock,
+            return_value=("c9", "u2"),
+        ), patch.object(
+            stream_mod.websocket_manager, "clear_typing", new_callable=AsyncMock
+        ) as mock_clear:
+            await stream_mod._relay_typing(
+                db=AsyncMock(),
+                user_id="u1",
+                chat_id="c9",
+                active_chat_id=None,
+                event_type="typing_stopped",
+                redis=AsyncMock(),
+            )
+
+        assert mock_clear.call_args[0][0] == "ws:chat:c9"
 
     async def test_is_typing(self):
         """is_typing checks Redis key existence."""

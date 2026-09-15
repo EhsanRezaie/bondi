@@ -162,8 +162,13 @@ class WsInbound(BaseModel):
         elif self.type == "unsubscribe":
             if self.chat_id is None:
                 raise ValueError("missing_chat_id")
-        elif self.type in ("ping", "typing", "typing_stopped"):
+        elif self.type in ("ping",):
             pass
+        elif self.type in ("typing", "typing_stopped"):
+            # chat_id is required so the server can resolve the chat without
+            # depending on subscribe state.
+            if self.chat_id is None:
+                raise ValueError("missing_chat_id")
         elif self.type == "read":
             ids = self.message_ids or []
             if len(ids) > WS_MAX_READ_IDS:

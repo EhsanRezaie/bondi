@@ -67,6 +67,41 @@ async def _resolve_chat(
     return str(chat_obj.id), other_user_id
 
 
+async def _relay_typing(
+    db: AsyncSession,
+    user_id: str,
+    chat_id,
+    active_chat_id: str | None,
+    event_type: str,
+    redis,
+) -> None:
+    """Relay a typing / typing_stopped frame to the chat's other participant.
+
+    Resolves the chat from the frame's `chat_id` (the client always sends it) so
+    typing never depends on the subscribe timing; the subscribed chat is just a
+    fast path. Always publishes on the canonical `ws:chat:{id}` channel.
+    """
+    channel: str | None = None
+    if active_chat_id and (chat_id is None or str(chat_id) == active_chat_id):
+        channel = active_chat_id
+    elif chat_id:
+        resolved = await _resolve_chat(db, str(chat_id), user_id)
+        if resolved:
+            channel, _ = resolved
+
+    if not channel:
+        return
+
+    publish_channel = websocket_manager.conversation_channel(channel)
+    if event_type == "typing":
+        await websocket_manager.set_typing(publish_channel, user_id, redis)
+    else:
+        await websocket_manager.clear_typing(publish_channel, user_id, redis)
+    logger.debug(
+        "ws_typing_relayed", user_id=user_id, chat_id=channel, frame_type=event_type
+    )
+
+
 async def _presence_snapshot(
     db: AsyncSession, peer_user_id: str, redis, chat_id: str
 ):
@@ -182,23 +217,10 @@ async def stream_websocket(
                         "WS unsubscribed", user_id=user_id, chat_id=chat_id
                     )
 
-            elif msg_type == "typing":
-                if active_chat_id and active_peer_id:
-                    await websocket_manager.set_typing(
-                        websocket_manager.conversation_channel(active_chat_id),
-                        user_id,
-                        redis,
-                        active_peer_id,
-                    )
-
-            elif msg_type == "typing_stopped":
-                if active_chat_id and active_peer_id:
-                    await websocket_manager.clear_typing(
-                        websocket_manager.conversation_channel(active_chat_id),
-                        user_id,
-                        redis,
-                        active_peer_id,
-                    )
+            elif msg_type in ("typing", "typing_stopped"):
+                await _relay_typing(
+                    db, user_id, msg.chat_id, active_chat_id, msg_type, redis
+                )
 
             elif msg_type == "read":
                 message_ids = [str(x) for x in (msg.message_ids or [])]
