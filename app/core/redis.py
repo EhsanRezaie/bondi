@@ -3,7 +3,11 @@ import json
 import redis.asyncio as aioredis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
-from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
+from redis.exceptions import (
+    RedisError,
+    TimeoutError as RedisTimeoutError,
+    ConnectionError as RedisConnectionError,
+)
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -19,8 +23,14 @@ redis_client: aioredis.Redis = aioredis.from_url(
     decode_responses=True,
     socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
     socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+    # Detect/refresh dead connections in the background instead of discovering
+    # them mid-request (which previously surfaced as a cold-reconnect timeout).
+    socket_keepalive=True,
+    health_check_interval=30,
+    max_connections=settings.REDIS_MAX_CONNECTIONS,
     retry=Retry(ExponentialBackoff(), settings.REDIS_MAX_RETRIES),
     retry_on_timeout=settings.REDIS_RETRY_ON_TIMEOUT,
+    retry_on_error=[RedisConnectionError, RedisTimeoutError],
 )
 
 REFRESH_TOKEN_PREFIX = "refresh_token:"

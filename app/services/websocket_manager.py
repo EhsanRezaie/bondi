@@ -12,7 +12,6 @@ logger = get_logger("websocket")
 
 ONLINE_TTL = 60
 HEARTBEAT_INTERVAL = 30
-TYPING_TTL = 5
 
 _USER_PREFIX = "ws:user:"
 _CHAT_PREFIX = "ws:chat:"
@@ -34,10 +33,6 @@ def _chat_id_from_channel(channel: str) -> str:
 
 def _online_key(user_id: str) -> str:
     return f"online:{user_id}"
-
-
-def _typing_key(match_id: str, user_id: str) -> str:
-    return f"typing:{match_id}:{user_id}"
 
 
 class WebSocketManager:
@@ -346,8 +341,10 @@ class WebSocketManager:
         target_user: Optional[str] = None,
     ):
         # Normalize so a raw chat id can never publish to the wrong channel.
+        # NOTE: typing is purely ephemeral — we only PUBLISH (never persisted to
+        # the AOF). Writing a Redis key per keystroke put needless fsync/AOF
+        # pressure on Redis.
         channel = _chat_channel(_chat_id_from_channel(channel))
-        await redis.setex(_typing_key(channel, user_id), TYPING_TTL, "1")
         payload = {
             "type": "typing",
             "chat_id": _chat_id_from_channel(channel),
@@ -364,9 +361,8 @@ class WebSocketManager:
         redis: Redis,
         target_user: Optional[str] = None,
     ):
-        # Normalize so a raw chat id can never publish to the wrong channel.
+        # See set_typing: publish-only, no persisted key.
         channel = _chat_channel(_chat_id_from_channel(channel))
-        await redis.delete(_typing_key(channel, user_id))
         payload = {
             "type": "typing_stopped",
             "chat_id": _chat_id_from_channel(channel),
@@ -375,9 +371,6 @@ class WebSocketManager:
         if target_user:
             payload["_target_user"] = target_user
         await redis.publish(channel, json.dumps(payload))
-
-    async def is_typing(self, channel: str, user_id: str, redis: Redis) -> bool:
-        return bool(await redis.exists(_typing_key(channel, user_id)))
 
 
 websocket_manager = WebSocketManager()

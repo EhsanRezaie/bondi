@@ -377,9 +377,13 @@ class TestPushBatch:
                 data={"type": "system", "is_announcement": True},
             )
 
-            # 1001 tokens -> 3 multicast calls (500/500/1).
+            # 1001 tokens -> 3 multicast calls (500/500/1). Chunks are sent
+            # concurrently (asyncio.to_thread), so compare sizes order-agnostic.
             assert mock_send.call_count == 3
-            sizes = [len(call.args[0].tokens) for call in mock_send.call_args_list]
+            sizes = sorted(
+                (len(call.args[0].tokens) for call in mock_send.call_args_list),
+                reverse=True,
+            )
             assert sizes == [500, 500, 1]
             # Each message carries the announcement payload.
             for call in mock_send.call_args_list:

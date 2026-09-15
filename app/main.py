@@ -1,13 +1,15 @@
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 
 from app.core.config import settings
@@ -21,7 +23,7 @@ from app.core.metrics import (
 )
 from app.core.redis import redis_client
 
-from app.db.session import engine, get_session
+from app.db.session import engine
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.photos import router as photos_router  
@@ -195,7 +197,42 @@ async def health():
 
 
 @app.get("/health/ready")
-async def health_ready(session: AsyncSession = Depends(get_session)):
-    await session.execute(select(1))
-    await redis_client.ping()
-    return {"status": "ready", "db": "ok", "redis": "ok"}
+async def health_ready():
+    """Readiness probe: checks DB + Redis concurrently with short timeouts.
+
+    Deliberately does NOT take a pooled DB session dependency, so a slow
+    dependency can't pin a connection (pool_size=5) and cascade.
+    """
+    from app.core.logging import get_logger
+
+    async def _check_db() -> bool:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return True
+
+    async def _check_redis() -> bool:
+        start = time.perf_counter()
+        await redis_client.ping()
+        elapsed = time.perf_counter() - start
+        if elapsed > 0.25:
+            get_logger("app.main").warning(
+                "redis_ping_slow", elapsed_ms=round(elapsed * 1000, 1)
+            )
+        return True
+
+    db_res, redis_res = await asyncio.gather(
+        asyncio.wait_for(_check_db(), timeout=2.0),
+        asyncio.wait_for(_check_redis(), timeout=2.0),
+        return_exceptions=True,
+    )
+    db_ok = db_res is True
+    redis_ok = redis_res is True
+
+    payload = {
+        "status": "ready" if (db_ok and redis_ok) else "degraded",
+        "db": "ok" if db_ok else "error",
+        "redis": "ok" if redis_ok else "error",
+    }
+    if not (db_ok and redis_ok):
+        return JSONResponse(status_code=503, content=payload)
+    return payload

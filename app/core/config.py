@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     REDIS_SOCKET_CONNECT_TIMEOUT: int = 5
     REDIS_RETRY_ON_TIMEOUT: bool = True
     REDIS_MAX_RETRIES: int = 3
+    REDIS_MAX_CONNECTIONS: int = 50
 
     # ============================================
     # Daily Limits & Rewards

@@ -437,14 +437,15 @@ class TestWebSocketManagerUnit:
         await self.manager.send_personal_message("nonexistent", {"type": "test"}, mock_redis)
 
     async def test_set_typing(self):
-        """set_typing publishes typing event and sets Redis key."""
+        """set_typing publishes a typing event (no persisted Redis key)."""
         mock_redis = AsyncMock()
         match_id = "m1"
         user_id = "u1"
 
         await self.manager.set_typing(match_id, user_id, mock_redis)
 
-        assert mock_redis.setex.call_count == 1
+        # Typing is ephemeral: publish only, no AOF-persisted key write.
+        assert mock_redis.setex.call_count == 0
         assert mock_redis.publish.call_count == 1
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
@@ -455,14 +456,14 @@ class TestWebSocketManagerUnit:
         assert payload["user_id"] == user_id
 
     async def test_clear_typing(self):
-        """clear_typing deletes Redis key and publishes typing_stopped."""
+        """clear_typing publishes typing_stopped (no persisted Redis key)."""
         mock_redis = AsyncMock()
         match_id = "m1"
         user_id = "u1"
 
         await self.manager.clear_typing(match_id, user_id, mock_redis)
 
-        assert mock_redis.delete.call_count == 1
+        assert mock_redis.delete.call_count == 0
         assert mock_redis.publish.call_count == 1
         channel, raw = mock_redis.publish.call_args[0]
         payload = json.loads(raw)
@@ -516,15 +517,6 @@ class TestWebSocketManagerUnit:
             )
 
         assert mock_clear.call_args[0][0] == "ws:chat:c9"
-
-    async def test_is_typing(self):
-        """is_typing checks Redis key existence."""
-        mock_redis = AsyncMock()
-        mock_redis.exists.return_value = 1
-
-        result = await self.manager.is_typing("m1", "u1", mock_redis)
-        assert result is True
-        mock_redis.exists.assert_called_once_with("typing:m1:u1")
 
     async def test_is_online(self):
         """is_online checks Redis key existence."""

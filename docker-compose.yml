@@ -187,7 +187,12 @@ services:
     image: redis:7-alpine
     container_name: bondi_redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD:-} --appendonly yes
+    # `no-appendfsync-on-rewrite yes` stops AOF-rewrite fsync from blocking the
+    # server; keepalive helps detect dead client connections.
+    command: >
+      redis-server --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes --appendfsync everysec --no-appendfsync-on-rewrite yes
+      --tcp-keepalive 60
     volumes:
       - redis_data:/data
     networks:
