@@ -78,6 +78,12 @@ async def _main_photo_url(session: AsyncSession, photo) -> Optional[str]:
     return await PhotoService.get_photo_url(photo.url, photo.status)
 
 
+async def _main_photo_thumb_url(session: AsyncSession, photo) -> Optional[str]:
+    if not photo:
+        return None
+    return await PhotoService.get_photo_thumb_url(photo.url, photo.status)
+
+
 async def _load_user_with_media(session: AsyncSession, user_id: UUID) -> Optional[User]:
     if not user_id:
         return None
@@ -442,6 +448,7 @@ async def list_chats(
             else None
         )
         main_photo_url = await _main_photo_url(session, main_photo)
+        main_photo_thumb_url = await _main_photo_thumb_url(session, main_photo)
 
         rows.append({
             "chat_id": chat.id,
@@ -449,6 +456,7 @@ async def list_chats(
             "initiator_id": chat.initiator_id,
             "other": other,
             "main_photo_url": main_photo_url,
+            "main_photo_thumb_url": main_photo_thumb_url,
             "last_message": last_message,
             "unread_count": unread,
             "updated_at": updated_at,
@@ -515,6 +523,7 @@ async def list_chats(
                     name=other.profile.name if other.profile else "User",
                     age=other.profile.age if other.profile else 0,
                     main_photo_url=r["main_photo_url"],
+                    main_photo_thumb_url=r.get("main_photo_thumb_url"),
                     is_online=online_map.get(str(other.id), False),
                     last_seen_at=None if hide_last_seen else other.last_seen_at,
                 ),
@@ -566,6 +575,7 @@ async def get_chat_detail(
         else None
     )
     main_photo_url = await _main_photo_url(session, main_photo)
+    main_photo_thumb_url = await _main_photo_thumb_url(session, main_photo)
 
     return ChatDetailResponse(
         id=chat.id,
@@ -577,6 +587,7 @@ async def get_chat_detail(
             name=other.profile.name if other.profile else "User",
             age=other.profile.age if other.profile else 0,
             main_photo_url=main_photo_url,
+            main_photo_thumb_url=main_photo_thumb_url,
             is_online=online_map.get(str(other.id), False),
             last_seen_at=(
                 None

@@ -22,6 +22,7 @@ class MessageResponse(BaseModel):
     message_type: str  # text, photo, voice
     content: Optional[str] = None
     media_url: Optional[str] = None
+    media_thumb_url: Optional[str] = None
     media_duration: Optional[int] = None
     reply_to: Optional[ReplyToResponse] = None
     is_sent: bool

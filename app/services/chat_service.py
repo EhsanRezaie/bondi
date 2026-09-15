@@ -399,6 +399,19 @@ async def delete_message(
         message.is_deleted_for_all = True
         message.deleted_at = datetime.now(timezone.utc)
         message._content = "[Message deleted]"  # Store as-is (not encrypted)
+
+        # Remove the stored media object (photo/voice) so deleted media doesn't
+        # linger in MinIO forever. Best-effort — the delete still succeeds if
+        # the object is already gone.
+        if message.message_type in ("photo", "voice") and message.media_url:
+            try:
+                await MediaService.delete_media(
+                    str(message.chat_id), str(message.id), message.message_type
+                )
+            except Exception:
+                logger.exception(
+                    "delete_message_media_failed", message_id=str(message.id)
+                )
     else:
         if message.sender_id == user_id:
             message.is_deleted_for_sender = True

@@ -16,7 +16,11 @@ logger = get_logger("photo_service")
 
 
 class PhotoService:
-    """Handle photo upload, validation, and storage (MinIO / S3-compatible)."""
+    """Handle photo upload, validation, and storage (MinIO / S3-compatible).
+
+    Photos are stored as WebP (smaller than JPEG at equal quality) with a small
+    thumbnail alongside each one for list/card views.
+    """
 
     MAX_FILE_SIZE = settings.MAX_PHOTO_SIZE_MB * 1024 * 1024
     ALLOWED_FORMATS = ["JPEG", "PNG", "WEBP"]
@@ -24,6 +28,12 @@ class PhotoService:
     MIN_HEIGHT = 200
     MAX_WIDTH = 5000
     MAX_HEIGHT = 5000
+
+    # Encoding targets — keep storage small without visible quality loss.
+    FULL_MAX = 1080
+    THUMB_MAX = 320
+    IMAGE_QUALITY = 78
+    THUMB_QUALITY = 75
 
     # Statuses considered "public" — object lives in the public bucket, served via direct URL.
     # Anything else (pending, rejected) lives in the private bucket, served via short-lived signed URL.
@@ -68,36 +78,240 @@ class PhotoService:
 
     @staticmethod
     def _object_key(user_id: str, photo_id: str) -> str:
-        """Object key is identical in both buckets — only the bucket (and therefore
-        the access policy) differs depending on moderation status."""
+        """Current object key (WebP). Object key is identical in both buckets —
+        only the bucket (and therefore the access policy) differs depending on
+        moderation status."""
+        return f"users/{user_id}/{photo_id}.webp"
+
+    @staticmethod
+    def _legacy_object_key(user_id: str, photo_id: str) -> str:
+        """Pre-WebP key still used by already-stored photos."""
         return f"users/{user_id}/{photo_id}.jpg"
 
     @staticmethod
-    def _optimize_image(file_data: bytes) -> bytes:
-        """Resize/convert/compress, returning ready-to-upload JPEG bytes.
-        EXIF metadata is stripped to prevent GPS/device info leakage."""
-        image = Image.open(io.BytesIO(file_data))
+    def _candidate_keys(user_id: str, photo_id: str) -> List[str]:
+        return [
+            PhotoService._object_key(user_id, photo_id),
+            PhotoService._legacy_object_key(user_id, photo_id),
+        ]
 
-        # Convert to RGB if needed (for PNG with transparency)
+    @staticmethod
+    def thumb_key(key: str) -> str:
+        """Derive the thumbnail object key (inserts `_thumb`)."""
+        directory, _, filename = key.rpartition("/")
+        if "." in filename:
+            base, ext = filename.rsplit(".", 1)
+            thumb = f"{base}_thumb.{ext}"
+        else:
+            thumb = f"{filename}_thumb"
+        return f"{directory}/{thumb}" if directory else thumb
+
+    @staticmethod
+    def _to_rgb(image: Image.Image) -> Image.Image:
         if image.mode in ("RGBA", "LA", "P"):
-            rgb_image = Image.new("RGB", image.size, (255, 255, 255))
-            rgb_image.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
-            image = rgb_image
-        elif image.mode != "RGB":
-            image = image.convert("RGB")
+            rgb = Image.new("RGB", image.size, (255, 255, 255))
+            rgb.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
+            return rgb
+        if image.mode != "RGB":
+            return image.convert("RGB")
+        return image
 
-        # Resize if too large (max 1200px)
-        max_size = 1200
-        if image.width > max_size or image.height > max_size:
-            image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-
-        # Strip EXIF by creating a fresh image from pixel data
-        clean = Image.new(image.mode, image.size)
-        clean.putdata(list(image.get_flattened_data()))
-
+    @staticmethod
+    def _encode_webp(image: Image.Image, max_size: int, quality: int) -> bytes:
+        """Resize to fit `max_size` and encode to lossy WebP. EXIF is stripped
+        (not passed to the encoder), preventing GPS/device leakage."""
+        img = image.copy()
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
         buffer = io.BytesIO()
-        clean.save(buffer, "JPEG", quality=85, optimize=True)
+        img.save(buffer, "WEBP", quality=quality, method=4)
         return buffer.getvalue()
+
+    @staticmethod
+    def _optimize_image(file_data: bytes) -> bytes:
+        """Return ready-to-upload full-size WebP bytes."""
+        image = PhotoService._to_rgb(Image.open(io.BytesIO(file_data)))
+        return PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
+
+    @staticmethod
+    async def save_photo(user_id: str, photo_id: str, file_data: bytes) -> str:
+        """
+        Optimize and upload a newly-submitted photo (full + thumbnail) to the
+        PRIVATE bucket (new uploads always start as 'pending', so they're not
+        publicly visible until an admin/automated check approves them).
+
+        Returns the object KEY (not a URL) — store this in Photo.url.
+        Resolve it to an actual loadable URL via get_photo_url() at read time.
+        """
+        image = PhotoService._to_rgb(Image.open(io.BytesIO(file_data)))
+        full = PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
+        thumb = PhotoService._encode_webp(image, PhotoService.THUMB_MAX, PhotoService.THUMB_QUALITY)
+
+        key = PhotoService._object_key(user_id, photo_id)
+        thumb_key = PhotoService.thumb_key(key)
+
+        async with _s3_client() as s3:
+            await s3.put_object(
+                Bucket=settings.S3_PRIVATE_BUCKET,
+                Key=key,
+                Body=full,
+                ContentType="image/webp",
+            )
+            await s3.put_object(
+                Bucket=settings.S3_PRIVATE_BUCKET,
+                Key=thumb_key,
+                Body=thumb,
+                ContentType="image/webp",
+            )
+
+            logger.info("Uploaded photo to private bucket", key=key)
+        return key
+
+    @staticmethod
+    async def _delete_key_from_both(s3, key: str) -> bool:
+        deleted = False
+        for bucket in (settings.S3_PRIVATE_BUCKET, settings.S3_PUBLIC_BUCKET):
+            try:
+                await s3.head_object(Bucket=bucket, Key=key)
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    continue
+                logger.warning("photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True)
+                continue
+            await s3.delete_object(Bucket=bucket, Key=key)
+            deleted = True
+            logger.info("Deleted photo", key=key, bucket=bucket)
+        return deleted
+
+    @staticmethod
+    async def delete_photo(user_id: str, photo_id: str) -> bool:
+        """Delete a photo (full + thumbnail, current + legacy keys) from
+        whichever bucket it currently lives in."""
+        keys: List[str] = []
+        for base in PhotoService._candidate_keys(user_id, photo_id):
+            keys.append(base)
+            keys.append(PhotoService.thumb_key(base))
+
+        deleted = False
+        async with _s3_client() as s3:
+            for key in keys:
+                if await PhotoService._delete_key_from_both(s3, key):
+                    deleted = True
+        return deleted
+
+    @staticmethod
+    async def _move_bucket(s3, src_bucket: str, dst_bucket: str, key: str, public: bool) -> bool:
+        """Copy `key` from src to dst, then delete the source. Returns True if
+        the object existed and was moved."""
+        try:
+            await s3.copy_object(
+                Bucket=dst_bucket,
+                Key=key,
+                CopySource={"Bucket": src_bucket, "Key": key},
+                **({"ACL": "public-read"} if public else {}),
+            )
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+        await s3.delete_object(Bucket=src_bucket, Key=key)
+        return True
+
+    @staticmethod
+    async def publish_photo(user_id: str, photo_id: str) -> None:
+        """
+        Move a photo (full + thumbnail) from the PRIVATE bucket to the PUBLIC
+        bucket. Call this when admin/automated moderation sets status='approved'.
+
+        NOTE: object ACL must be set explicitly to public-read on copy —
+        being in a bucket *named* "public" does not make an object public.
+        """
+        async with _s3_client() as s3:
+            moved = False
+            for key in PhotoService._candidate_keys(user_id, photo_id):
+                if await PhotoService._move_bucket(
+                    s3, settings.S3_PRIVATE_BUCKET, settings.S3_PUBLIC_BUCKET, key, public=True
+                ):
+                    moved = True
+                    # Thumbnail is best-effort (older rows may not have one).
+                    try:
+                        await PhotoService._move_bucket(
+                            s3,
+                            settings.S3_PRIVATE_BUCKET,
+                            settings.S3_PUBLIC_BUCKET,
+                            PhotoService.thumb_key(key),
+                            public=True,
+                        )
+                    except Exception as e:
+                        logger.warning("photo_publish_thumb_failed", key=key, error=str(e), exc_info=True)
+                    break
+            if not moved:
+                logger.warning("photo_publish_missing", user_id=user_id, photo_id=photo_id)
+
+    @staticmethod
+    async def unpublish_photo(user_id: str, photo_id: str) -> None:
+        """
+        Move a photo (full + thumbnail) from the PUBLIC bucket back to PRIVATE.
+        Call this if an approved photo is later rejected/removed.
+        """
+        async with _s3_client() as s3:
+            moved = False
+            for key in PhotoService._candidate_keys(user_id, photo_id):
+                if await PhotoService._move_bucket(
+                    s3, settings.S3_PUBLIC_BUCKET, settings.S3_PRIVATE_BUCKET, key, public=False
+                ):
+                    moved = True
+                    try:
+                        await PhotoService._move_bucket(
+                            s3,
+                            settings.S3_PUBLIC_BUCKET,
+                            settings.S3_PRIVATE_BUCKET,
+                            PhotoService.thumb_key(key),
+                            public=False,
+                        )
+                    except Exception as e:
+                        logger.warning("photo_unpublish_thumb_failed", key=key, error=str(e), exc_info=True)
+                    break
+            if not moved:
+                logger.warning("photo_unpublish_missing", user_id=user_id, photo_id=photo_id)
+
+    @staticmethod
+    async def get_photo_url(key: str, status: str) -> str:
+        """
+        Resolve a stored object key into an actual loadable URL, based on
+        moderation status:
+          - approved  -> public bucket, plain fast URL (no signing cost)
+          - otherwise -> private bucket, short-lived signed URL (cached in
+                         Redis for 5 min to avoid repeated MinIO round-trips)
+        """
+        if status in PhotoService.PUBLIC_STATUSES:
+            return f"{settings.S3_PUBLIC_BASE_URL}/{key}"
+
+        cache_key = f"presign:{key}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return cached
+
+        async with _s3_client() as s3:
+            url = await s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
+                ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
+            )
+
+        await redis_client.setex(cache_key, 300, url)
+        return url
+
+    @staticmethod
+    async def get_photo_thumb_url(key: str, status: str) -> str:
+        """Resolve the thumbnail URL for a stored photo key (same bucket/access
+        rules as the full image). Legacy JPEG photos have no thumbnail, so fall
+        back to the full image."""
+        if not key.endswith(".webp"):
+            return await PhotoService.get_photo_url(key, status)
+        return await PhotoService.get_photo_url(PhotoService.thumb_key(key), status)
 
     @staticmethod
     def compute_phash(file_data: bytes) -> str:
@@ -136,127 +350,6 @@ class PhotoService:
                 return True
         return False
 
-    @staticmethod
-    async def save_photo(user_id: str, photo_id: str, file_data: bytes) -> str:
-        """
-        Optimize and upload a newly-submitted photo to the PRIVATE bucket
-        (new uploads always start as 'pending', so they're not publicly visible
-        until an admin/automated check approves them).
-
-        Returns the object KEY (not a URL) — store this in Photo.url.
-        Resolve it to an actual loadable URL via get_photo_url() at read time.
-        """
-        optimized = PhotoService._optimize_image(file_data)
-        key = PhotoService._object_key(user_id, photo_id)
-
-        async with _s3_client() as s3:
-            await s3.put_object(
-                Bucket=settings.S3_PRIVATE_BUCKET,
-                Key=key,
-                Body=optimized,
-                ContentType="image/jpeg",
-            )
-
-            logger.info("Uploaded photo to private bucket", key=key)
-        return key
-
-    @staticmethod
-    async def delete_photo(user_id: str, photo_id: str) -> bool:
-        """Delete photo from whichever bucket it currently lives in."""
-        key = PhotoService._object_key(user_id, photo_id)
-        deleted = False
-
-        async with _s3_client() as s3:
-            for bucket in (settings.S3_PRIVATE_BUCKET, settings.S3_PUBLIC_BUCKET):
-                try:
-                    await s3.head_object(Bucket=bucket, Key=key)
-                except ClientError as e:
-                    # Object already gone (or never made it to this bucket) —
-                    # normal for deletes; not an error. Other failures (auth,
-                    # network, server errors) still get logged loudly.
-                    code = e.response.get("Error", {}).get("Code", "")
-                    if code in ("404", "NoSuchKey", "NotFound"):
-                        continue
-                    logger.warning("photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True)
-                    continue  # not in this bucket
-                await s3.delete_object(Bucket=bucket, Key=key)
-                deleted = True
-                logger.info("Deleted photo", key=key, bucket=bucket)
-
-        return deleted
-
-    @staticmethod
-    async def publish_photo(user_id: str, photo_id: str) -> None:
-        """
-        Move a photo from the PRIVATE bucket to the PUBLIC bucket.
-        Call this when admin/automated moderation sets status='approved'.
-
-        NOTE: object ACL must be set explicitly to public-read on copy —
-        being in a bucket *named* "public" does not make an object public.
-        For this to actually serve anonymous reads, the S3_PUBLIC_BUCKET
-        also needs a bucket policy allowing public GetObject (see the
-        docker-compose / MinIO setup notes — `mc anonymous set download`).
-        """
-        key = PhotoService._object_key(user_id, photo_id)
-        copy_source = {"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key}
-
-        async with _s3_client() as s3:
-            await s3.copy_object(
-                Bucket=settings.S3_PUBLIC_BUCKET,
-                Key=key,
-                CopySource=copy_source,
-                ACL="public-read",
-            )
-            await s3.delete_object(Bucket=settings.S3_PRIVATE_BUCKET, Key=key)
-
-        logger.info("Published photo to public bucket", key=key)
-
-    @staticmethod
-    async def unpublish_photo(user_id: str, photo_id: str) -> None:
-        """
-        Move a photo from the PUBLIC bucket back to PRIVATE.
-        Call this if an approved photo is later rejected/removed (e.g. a report
-        leads to it being taken down again).
-        """
-        key = PhotoService._object_key(user_id, photo_id)
-        copy_source = {"Bucket": settings.S3_PUBLIC_BUCKET, "Key": key}
-
-        async with _s3_client() as s3:
-            await s3.copy_object(
-                Bucket=settings.S3_PRIVATE_BUCKET,
-                Key=key,
-                CopySource=copy_source,
-            )
-            await s3.delete_object(Bucket=settings.S3_PUBLIC_BUCKET, Key=key)
-
-        logger.info("Unpublished photo back to private bucket", key=key)
-
-    @staticmethod
-    async def get_photo_url(key: str, status: str) -> str:
-        """
-        Resolve a stored object key into an actual loadable URL, based on
-        moderation status:
-          - approved  -> public bucket, plain fast URL (no signing cost)
-          - otherwise -> private bucket, short-lived signed URL (cached in
-                         Redis for 5 min to avoid repeated MinIO round-trips)
-        """
-        if status in PhotoService.PUBLIC_STATUSES:
-            return f"{settings.S3_PUBLIC_BASE_URL}/{key}"
-
-        cache_key = f"presign:{key}"
-        cached = await redis_client.get(cache_key)
-        if cached:
-            return cached
-
-        async with _s3_client() as s3:
-            url = await s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": settings.S3_PRIVATE_BUCKET, "Key": key},
-                ExpiresIn=settings.S3_SIGNED_URL_EXPIRE_SECONDS,
-            )
-
-        await redis_client.setex(cache_key, 300, url)
-        return url
     @staticmethod
     async def download_photo_bytes(key: str) -> bytes:
         """Download raw photo bytes from MinIO (public or private bucket)."""

@@ -229,6 +229,8 @@ services:
       mc mb --ignore-existing local/photos-public &&
       mc mb --ignore-existing local/photos-private &&
       mc anonymous set download local/photos-public &&
+      (mc ilm rule add --expire-days 30 --prefix 'chat/photos/' local/photos-private || true) &&
+      (mc ilm rule add --expire-days 30 --prefix 'chat/voice/' local/photos-private || true) &&
       echo 'MinIO buckets ready'
       "
     networks:

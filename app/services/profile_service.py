@@ -54,6 +54,13 @@ async def serialize_profile(
         for p in approved_photos_raw
     ]
     main_photo_url = approved_photos[0] if approved_photos else None
+    main_photo_thumb_url = (
+        await PhotoService.get_photo_thumb_url(
+            approved_photos_raw[0].url, approved_photos_raw[0].status
+        )
+        if approved_photos_raw
+        else None
+    )
 
     interests = (
         [ui.interest.name for ui in user.user_interests if ui.interest]
@@ -117,6 +124,7 @@ async def serialize_profile(
         city=profile.city,
         distance_km=distance_km,
         main_photo_url=main_photo_url,
+        main_photo_thumb_url=main_photo_thumb_url,
         photos=approved_photos if approved_photos else None,
         interests=interests if interests else None,
         prompts=prompts if prompts else None,
@@ -161,9 +169,11 @@ async def serialize_card(
         else []
     )
     main_photo_url = None
+    main_photo_thumb_url = None
     if approved_photos_raw:
         first = approved_photos_raw[0]
         main_photo_url = await PhotoService.get_photo_url(first.url, first.status)
+        main_photo_thumb_url = await PhotoService.get_photo_thumb_url(first.url, first.status)
 
     return CardProfileResponse(
         id=user.id,
@@ -171,6 +181,7 @@ async def serialize_card(
         age=profile.age,
         gender=profile.gender,
         main_photo_url=main_photo_url,
+        main_photo_thumb_url=main_photo_thumb_url,
         distance_km=distance_km,
         is_premium=profile.is_premium,
         is_verified=bool(is_verified) if is_verified is not None else False,

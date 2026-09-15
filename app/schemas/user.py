@@ -230,6 +230,7 @@ class UserProfileResponse(BaseModel):
     last_seen_at: Optional[datetime] = None
     settings: Optional[UserSettingsResponse] = None
     main_photo_url: Optional[str] = None
+    main_photo_thumb_url: Optional[str] = None
     birth_date: Optional[str] = None
     interests: Optional[List[str]] = None
     prompts: Optional[List[dict]] = None
@@ -307,7 +308,13 @@ class UserProfileResponse(BaseModel):
                     key=lambda p: p.order,
                 )
                 if approved:
-                    values.main_photo_url = f"{settings.S3_PUBLIC_BASE_URL}/{approved[0].url}"
+                    from app.services.photo_service import PhotoService
+
+                    main_key = approved[0].url
+                    values.main_photo_url = f"{settings.S3_PUBLIC_BASE_URL}/{main_key}"
+                    values.main_photo_thumb_url = (
+                        f"{settings.S3_PUBLIC_BASE_URL}/{PhotoService.thumb_key(main_key)}"
+                    )
 
         return values
 

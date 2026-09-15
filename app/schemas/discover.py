@@ -48,6 +48,7 @@ class ProfileResponse(BaseModel):
 
     # Photos
     main_photo_url: Optional[str] = None
+    main_photo_thumb_url: Optional[str] = None
     photos: Optional[List[str]] = None
 
     # Interests & Prompts

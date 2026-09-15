@@ -16,6 +16,7 @@ class CardProfileResponse(BaseModel):
     age: int
     gender: str
     main_photo_url: Optional[str] = None
+    main_photo_thumb_url: Optional[str] = None
     distance_km: Optional[float] = None
     is_premium: bool
     is_verified: bool = False

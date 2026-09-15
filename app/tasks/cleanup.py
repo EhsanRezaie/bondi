@@ -73,11 +73,13 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
     own event-loop-local engine (the global AsyncSessionLocal's engine is created
     at import time, which mismatches pytest-asyncio's per-test event loops).
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
     from app.db.session import AsyncSessionLocal
     from app.models.user import User
     from app.models.photo import Photo
+    from app.models.message import Message
     from app.services.photo_service import PhotoService
+    from app.services.media_service import MediaService
     from app.core.timezone import utcnow
 
     session_factory = session_factory or AsyncSessionLocal
@@ -102,6 +104,28 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
                         user_id=str(user.id),
                         photo_id=str(photo.id),
                     )
+
+            # Chat photos/voice for this user's messages — DB rows cascade on
+            # user delete, so the MinIO objects must be removed here first.
+            messages = await session.execute(
+                select(Message).where(
+                    or_(Message.sender_id == user.id, Message.receiver_id == user.id),
+                    Message.message_type.in_(("photo", "voice")),
+                    Message.media_url.is_not(None),
+                )
+            )
+            for msg in messages.scalars().all():
+                try:
+                    await MediaService.delete_media(
+                        str(msg.chat_id), str(msg.id), msg.message_type
+                    )
+                except Exception:
+                    logger.exception(
+                        "purge_chat_media_delete_failed",
+                        user_id=str(user.id),
+                        message_id=str(msg.id),
+                    )
+
             await session.delete(user)
             purged += 1
         await session.commit()

@@ -112,6 +112,7 @@ def _build_message_response(
     decrypted_content: Optional[str] = None,
     reply_to_data: Optional[dict] = None,
     media_url_override: Optional[str] = None,
+    media_thumb_url_override: Optional[str] = None,
 ) -> MessageResponse:
     """Build a full MessageResponse from a Message row."""
     from app.schemas.message import ReplyToResponse
@@ -127,6 +128,7 @@ def _build_message_response(
         message_type=msg.message_type,
         content=decrypted_content if decrypted_content is not None else msg.content,
         media_url=media_url_override if media_url_override is not None else msg.media_url,
+        media_thumb_url=media_thumb_url_override,
         media_duration=msg.media_duration,
         reply_to=reply,
         is_sent=msg.is_sent,
@@ -225,6 +227,13 @@ async def get_chat_history(
             message_type=msg.message_type,
             content=decrypted_data.get("content"),
             media_url=await MediaService.resolve_media_url(msg.media_url),
+            media_thumb_url=(
+                await MediaService.resolve_media_url(MediaService.thumb_key(msg.media_url))
+                if msg.message_type == "photo"
+                and msg.media_url
+                and msg.media_url.endswith(".webp")
+                else None
+            ),
             media_duration=msg.media_duration,
             reply_to=reply_to_data,
             is_sent=msg.is_sent,
@@ -317,6 +326,7 @@ async def send_text_message(
             "message_type": "text",
             "content": body.content,
             "sender_id": str(current_user.id),
+            "receiver_id": str(other_user_id),
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
         },
     }
@@ -399,6 +409,9 @@ async def send_photo_message(
     # media_url holds the object KEY — resolve to a fresh signed URL for both
     # the WS echo and the HTTP response so the client can load it immediately.
     resolved_media_url = await MediaService.resolve_media_url(media_url)
+    resolved_thumb_url = await MediaService.resolve_media_url(
+        MediaService.thumb_key(media_url)
+    )
 
     message_data = {
         "type": "new_message",
@@ -408,8 +421,10 @@ async def send_photo_message(
             "chat_id": str(chat.id),
             "message_type": "photo",
             "media_url": resolved_media_url,
+            "media_thumb_url": resolved_thumb_url,
             "caption": caption or "",
             "sender_id": str(current_user.id),
+            "receiver_id": str(other_user_id),
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
         },
     }
@@ -441,7 +456,7 @@ async def send_photo_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=caption or "", media_url_override=resolved_media_url),
+        message=_build_message_response(new_message, decrypted_content=caption or "", media_url_override=resolved_media_url, media_thumb_url_override=resolved_thumb_url),
     )
 
 
@@ -499,8 +514,10 @@ async def send_voice_message(
             "chat_id": str(chat.id),
             "message_type": "voice",
             "media_url": resolved_media_url,
+            "media_duration": duration,
             "duration": duration,
             "sender_id": str(current_user.id),
+            "receiver_id": str(other_user_id),
             "sent_at": new_message.sent_at.isoformat() if new_message.sent_at else None,
         },
     }

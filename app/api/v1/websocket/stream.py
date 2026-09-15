@@ -185,20 +185,26 @@ async def stream_websocket(
             elif msg_type == "typing":
                 if active_chat_id and active_peer_id:
                     await websocket_manager.set_typing(
-                        active_chat_id, user_id, redis, active_peer_id
+                        websocket_manager.conversation_channel(active_chat_id),
+                        user_id,
+                        redis,
+                        active_peer_id,
                     )
 
             elif msg_type == "typing_stopped":
                 if active_chat_id and active_peer_id:
                     await websocket_manager.clear_typing(
-                        active_chat_id, user_id, redis, active_peer_id
+                        websocket_manager.conversation_channel(active_chat_id),
+                        user_id,
+                        redis,
+                        active_peer_id,
                     )
 
             elif msg_type == "read":
                 message_ids = [str(x) for x in (msg.message_ids or [])]
                 if active_chat_id and active_peer_id:
                     await websocket_manager.send_to_conversation(
-                        channel=active_chat_id,
+                        channel=websocket_manager.conversation_channel(active_chat_id),
                         sender_id=user_id,
                         message={
                             "type": "messages_read",

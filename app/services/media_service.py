@@ -13,56 +13,94 @@ logger = get_logger("media_service")
 
 
 class MediaService:
-    """Handle media uploads for chat using MinIO"""
+    """Handle media uploads for chat using MinIO.
+
+    Images are stored as WebP (much smaller than JPEG at equal quality) and a
+    small thumbnail is generated alongside each one so list/bubble views can
+    download a tiny file instead of the full-size image.
+    """
 
     MAX_PHOTO_SIZE = settings.MAX_CHAT_PHOTO_SIZE_MB * 1024 * 1024
     MAX_VOICE_SIZE = settings.MAX_CHAT_VOICE_SIZE_MB * 1024 * 1024
     MAX_VOICE_DURATION = settings.MAX_CHAT_VOICE_DURATION
     ALLOWED_IMAGE_FORMATS = [fmt.strip() for fmt in settings.ALLOWED_CHAT_IMAGE_FORMATS.split(",")]
 
+    # Encoding targets — keep storage small without visible quality loss.
+    FULL_MAX = 1080
+    THUMB_MAX = 320
+    IMAGE_QUALITY = 78
+    THUMB_QUALITY = 75
+
+    # ── Helpers ──────────────────────────────────────────────────────────
+    @staticmethod
+    def thumb_key(key: str) -> str:
+        """Derive the thumbnail object key from a media key.
+
+        `chat/photos/c/m.webp` -> `chat/photos/c/m_thumb.webp`
+        """
+        directory, _, filename = key.rpartition("/")
+        if "." in filename:
+            base, ext = filename.rsplit(".", 1)
+            thumb = f"{base}_thumb.{ext}"
+        else:
+            thumb = f"{filename}_thumb"
+        return f"{directory}/{thumb}" if directory else thumb
+
+    @staticmethod
+    def _to_rgb(image: Image.Image) -> Image.Image:
+        if image.mode in ("RGBA", "LA", "P"):
+            rgb = Image.new("RGB", image.size, (255, 255, 255))
+            rgb.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
+            return rgb
+        if image.mode != "RGB":
+            return image.convert("RGB")
+        return image
+
+    @staticmethod
+    def _encode_webp(image: Image.Image, max_size: int, quality: int) -> bytes:
+        """Resize to fit `max_size` and encode to lossy WebP. EXIF is dropped
+        (WebP save does not carry it unless passed explicitly)."""
+        img = image.copy()
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        img.save(buffer, "WEBP", quality=quality, method=4)
+        return buffer.getvalue()
 
     @staticmethod
     async def save_photo(file_data: bytes, chat_id: str, message_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Save photo message to MinIO.
-        Returns: (success, file_url, error_message)
+        Save a chat photo to MinIO as WebP (full + thumbnail).
+        Returns: (success, file_key, error_message)
         """
-        # Check size
         if len(file_data) > MediaService.MAX_PHOTO_SIZE:
             return False, None, f"Photo too large. Max {MediaService.MAX_PHOTO_SIZE // (1024 * 1024)}MB"
 
         try:
-            # Validate image
             image = Image.open(io.BytesIO(file_data))
 
             if image.format not in MediaService.ALLOWED_IMAGE_FORMATS:
                 return False, None, f"Invalid format. Allowed: {', '.join(MediaService.ALLOWED_IMAGE_FORMATS)}"
 
-            # Convert to RGB if needed
-            if image.mode in ('RGBA', 'LA', 'P'):
-                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-                rgb_image.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                image = rgb_image
+            rgb = MediaService._to_rgb(image)
+            full = MediaService._encode_webp(rgb, MediaService.FULL_MAX, MediaService.IMAGE_QUALITY)
+            thumb = MediaService._encode_webp(rgb, MediaService.THUMB_MAX, MediaService.THUMB_QUALITY)
 
-            # Resize if too large (max 1200px)
-            max_size = 1200
-            if image.width > max_size or image.height > max_size:
-                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            key = f"chat/photos/{chat_id}/{message_id}.webp"
+            thumb_key = MediaService.thumb_key(key)
 
-            # Save to bytes
-            output = io.BytesIO()
-            image.save(output, 'JPEG', quality=85, optimize=True)
-            file_data = output.getvalue()
-
-            # Upload to MinIO
-            key = f"chat/photos/{chat_id}/{message_id}.jpg"
-            
             async with s3_client() as s3:
                 await s3.put_object(
                     Bucket=settings.S3_PRIVATE_BUCKET,
                     Key=key,
-                    Body=file_data,
-                    ContentType="image/jpeg",
+                    Body=full,
+                    ContentType="image/webp",
+                )
+                await s3.put_object(
+                    Bucket=settings.S3_PRIVATE_BUCKET,
+                    Key=thumb_key,
+                    Body=thumb,
+                    ContentType="image/webp",
                 )
 
             # NOTE: we store the object KEY, not a presigned URL. URLs are
@@ -79,8 +117,10 @@ class MediaService:
     @staticmethod
     async def save_voice(file_data: bytes, chat_id: str, message_id: str, duration: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Save voice message to MinIO.
-        Returns: (success, file_url, error_message)
+        Save a voice message to MinIO. The client records AAC-LC in an MPEG-4
+        (M4A) container, so it is stored as `.m4a` / `audio/mp4` — the format
+        ExoPlayer (Android) and AVPlayer (iOS) both play natively.
+        Returns: (success, file_key, error_message)
         """
         # Check size
         if len(file_data) > MediaService.MAX_VOICE_SIZE:
@@ -91,15 +131,14 @@ class MediaService:
             return False, None, f"Voice message too long. Max {MediaService.MAX_VOICE_DURATION} seconds"
 
         try:
-            # Upload to MinIO
-            key = f"chat/voice/{chat_id}/{message_id}.mp3"
-            
+            key = f"chat/voice/{chat_id}/{message_id}.m4a"
+
             async with s3_client() as s3:
                 await s3.put_object(
                     Bucket=settings.S3_PRIVATE_BUCKET,
                     Key=key,
                     Body=file_data,
-                    ContentType="audio/mpeg",
+                    ContentType="audio/mp4",
                 )
 
             # Store the object KEY (see save_photo note) — sign at read time.
@@ -112,32 +151,44 @@ class MediaService:
 
     @staticmethod
     async def delete_media(chat_id: str, message_id: str, media_type: str) -> bool:
-        """Delete media file from MinIO"""
+        """Delete a chat media object (full + thumbnail) from both buckets.
+
+        Handles the current WebP/M4A keys and the legacy JPEG/MP3 keys so old
+        messages are cleaned up too.
+        """
         if media_type == "photo":
-            key = f"chat/photos/{chat_id}/{message_id}.jpg"
+            base_keys = [
+                f"chat/photos/{chat_id}/{message_id}.webp",
+                f"chat/photos/{chat_id}/{message_id}.jpg",
+            ]
         elif media_type == "voice":
-            key = f"chat/voice/{chat_id}/{message_id}.mp3"
+            base_keys = [
+                f"chat/voice/{chat_id}/{message_id}.m4a",
+                f"chat/voice/{chat_id}/{message_id}.mp3",
+            ]
         else:
             return False
 
+        keys = list(base_keys) + [MediaService.thumb_key(k) for k in base_keys]
+
         try:
             async with s3_client() as s3:
-                # Delete from private bucket
-                try:
-                    await s3.delete_object(Bucket=settings.S3_PRIVATE_BUCKET, Key=key)
-                except Exception as delete_err:
-                    logger.warning("chat_media_delete_private_failed", key=key, error=str(delete_err), exc_info=True)
-
-                # Delete from public bucket too
-                try:
-                    await s3.delete_object(Bucket=settings.S3_PUBLIC_BUCKET, Key=key)
-                except Exception as delete_err:
-                    logger.warning("chat_media_delete_public_failed", key=key, error=str(delete_err), exc_info=True)
-                
-            logger.info("Deleted chat media", key=key)
+                for bucket in (settings.S3_PRIVATE_BUCKET, settings.S3_PUBLIC_BUCKET):
+                    for key in keys:
+                        try:
+                            await s3.delete_object(Bucket=bucket, Key=key)
+                        except Exception as delete_err:
+                            logger.warning(
+                                "chat_media_delete_failed",
+                                key=key,
+                                bucket=bucket,
+                                error=str(delete_err),
+                                exc_info=True,
+                            )
+            logger.info("Deleted chat media", chat_id=chat_id, message_id=message_id, media_type=media_type)
             return True
         except Exception as e:
-            logger.error("Failed to delete media", error=str(e), exc_info=True)
+            logger.error("Failed to delete chat media", error=str(e), exc_info=True)
             return False
 
     @staticmethod
