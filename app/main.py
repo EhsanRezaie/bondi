@@ -26,7 +26,7 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.photos import router as photos_router  
 from app.api.v1.endpoints.verify import router as verify_router
-from app.api.v1.endpoints.test_face_verification import router as test_face_verification_router
+from app.api.v1.endpoints.face_verification_debug import router as test_face_verification_router
 from app.api.v1.endpoints.discover import router as discover_router
 from app.api.v1.endpoints.swipes import router as swipes_router  
 from app.api.v1.endpoints.search import router as search_router
