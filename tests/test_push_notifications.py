@@ -385,6 +385,10 @@ class TestPushBatch:
                 reverse=True,
             )
             assert sizes == [500, 500, 1]
+            # iOS gets an APNs alert (data-only is unreliable on iOS).
+            first_msg = mock_send.call_args_list[0].args[0]
+            assert first_msg.apns is not None
+            assert first_msg.apns.payload.aps.alert.title == "Announcement"
             # Each message carries the announcement payload.
             for call in mock_send.call_args_list:
                 assert call.args[0].data["type"] == "system"

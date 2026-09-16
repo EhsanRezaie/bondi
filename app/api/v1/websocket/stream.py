@@ -102,6 +102,35 @@ async def _relay_typing(
     )
 
 
+async def _broadcast_presence(
+    db: AsyncSession, user_id: str, payload: dict, redis
+) -> None:
+    """Publish a presence event to every active chat the user participates in.
+
+    Resolved from the DB so it works across workers — the in-memory
+    `user_subscriptions` map only knows about chats opened on this worker, which
+    is why a peer opening the chat on another worker never saw the update.
+    """
+    try:
+        uid = UUID(user_id)
+    except ValueError:
+        return
+    result = await db.execute(
+        select(Chat.id).where(
+            Chat.is_active == True,
+            or_(Chat.initiator_id == uid, Chat.recipient_id == uid),
+        )
+    )
+    for (chat_id,) in result.all():
+        channel = websocket_manager.conversation_channel(str(chat_id))
+        try:
+            await redis.publish(channel, json.dumps(payload))
+        except Exception as e:
+            logger.warning(
+                "ws_presence_publish_failed", chat_id=str(chat_id), error=str(e)
+            )
+
+
 async def _presence_snapshot(
     db: AsyncSession, peer_user_id: str, redis, chat_id: str
 ):
@@ -151,6 +180,12 @@ async def stream_websocket(
         update(User).where(User.id == user_id).values(last_seen_at=datetime.now(timezone.utc))
     )
     await db.commit()
+
+    # Tell peers who have a chat open with this user (on any worker) that they
+    # are online.
+    await _broadcast_presence(
+        db, user_id, {"type": "user_online", "user_id": user_id}, redis
+    )
 
     active_chat_id: str | None = None
     active_peer_id: str | None = None
@@ -270,6 +305,17 @@ async def stream_websocket(
         except Exception as e:
             logger.warning("ws_presence_read_failed", user_id=user_id, error=str(e), exc_info=True)
         await websocket_manager.broadcast_peer_presence(
+            user_id,
+            {
+                "type": "user_offline",
+                "user_id": user_id,
+                "last_seen_at": None if hide_last_seen else last_seen_at.isoformat(),
+            },
+            redis,
+        )
+        # Cross-worker: notify every chat this user is in.
+        await _broadcast_presence(
+            db,
             user_id,
             {
                 "type": "user_offline",

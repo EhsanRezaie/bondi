@@ -118,11 +118,16 @@ class NotificationService:
 
         # Push notification
         from app.tasks.notifications import dispatch_push_to_celery
+        push_data = {
+            "type": "like",
+            "user_id": str(liker_id),
+            "notification_id": str(notification.id),
+        }
         if not dispatch_push_to_celery(
             user_id=liked_user_id,
             title="Someone liked you!",
             body=f"{liker_name} (age {liker_age}) liked your profile",
-            data={"type": "like", "user_id": str(liker_id)},
+            data=push_data,
             image_url=liker_photo_url,
         ):
             from app.services.push_service import PushService
@@ -130,7 +135,7 @@ class NotificationService:
                 user_id=liked_user_id,
                 title="Someone liked you!",
                 body=f"{liker_name} (age {liker_age}) liked your profile",
-                data={"type": "like", "user_id": str(liker_id)},
+                data=push_data,
                 db=self.db,
                 image_url=liker_photo_url,
             )
@@ -168,7 +173,7 @@ class NotificationService:
 
         if user1:
             avatar = await _get_main_photo_url(self.db, user2_id)
-            await self.create(
+            n1 = await self.create(
                 user_id=user1_id,
                 type="match",
                 title="It's a match!",
@@ -181,25 +186,31 @@ class NotificationService:
                 },
             )
             from app.tasks.notifications import dispatch_push_to_celery
+            push_data = {
+                "type": "match",
+                "match_id": str(match_id),
+                "user_id": str(user2_id),
+                "notification_id": str(n1.id),
+            }
             if not dispatch_push_to_celery(
                 user_id=user1_id,
                 title="It's a match!",
                 body=f"You matched with {user2.profile.name}!",
-                data={"type": "match", "match_id": str(match_id), "user_id": str(user2_id)},
+                data=push_data,
                 image_url=avatar,
             ):
                 await PushService.send_to_user(
                     user_id=user1_id,
                     title="It's a match!",
                     body=f"You matched with {user2.profile.name}!",
-                    data={"type": "match", "match_id": str(match_id), "user_id": str(user2_id)},
+                    data=push_data,
                     db=self.db,
                     image_url=avatar,
                 )
 
         if user2:
             avatar = await _get_main_photo_url(self.db, user1_id)
-            await self.create(
+            n2 = await self.create(
                 user_id=user2_id,
                 type="match",
                 title="It's a match!",
@@ -211,18 +222,24 @@ class NotificationService:
                     "avatar_url": avatar,
                 },
             )
+            push_data = {
+                "type": "match",
+                "match_id": str(match_id),
+                "user_id": str(user1_id),
+                "notification_id": str(n2.id),
+            }
             if not dispatch_push_to_celery(
                 user_id=user2_id,
                 title="It's a match!",
                 body=f"You matched with {user1.profile.name}!",
-                data={"type": "match", "match_id": str(match_id), "user_id": str(user1_id)},
+                data=push_data,
                 image_url=avatar,
             ):
                 await PushService.send_to_user(
                     user_id=user2_id,
                     title="It's a match!",
                     body=f"You matched with {user1.profile.name}!",
-                    data={"type": "match", "match_id": str(match_id), "user_id": str(user1_id)},
+                    data=push_data,
                     db=self.db,
                     image_url=avatar,
                 )
@@ -234,7 +251,7 @@ class NotificationService:
         if sender_photo_url is None and sender_id is not None:
             sender_photo_url = await _get_main_photo_url(self.db, sender_id)
 
-        await self.create(
+        notification = await self.create(
             user_id=receiver_id,
             type="message",
             title="New message",
@@ -244,11 +261,17 @@ class NotificationService:
         )
 
         from app.tasks.notifications import dispatch_push_to_celery
+        push_data = {
+            "type": "message",
+            "chat_id": str(chat_id),
+            "sender_name": sender_name,
+            "notification_id": str(notification.id),
+        }
         if not dispatch_push_to_celery(
             user_id=receiver_id,
             title=sender_name,
             body=f"{sender_name} sent you a message",
-            data={"type": "message", "chat_id": str(chat_id), "sender_name": sender_name},
+            data=push_data,
             image_url=sender_photo_url,
         ):
             from app.services.push_service import PushService
@@ -256,7 +279,7 @@ class NotificationService:
                 user_id=receiver_id,
                 title=sender_name,
                 body=f"{sender_name} sent you a message",
-                data={"type": "message", "chat_id": str(chat_id), "sender_name": sender_name},
+                data=push_data,
                 db=self.db,
                 image_url=sender_photo_url,
             )

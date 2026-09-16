@@ -518,6 +518,41 @@ class TestWebSocketManagerUnit:
 
         assert mock_clear.call_args[0][0] == "ws:chat:c9"
 
+    async def test_broadcast_presence_publishes_to_all_user_chats(self):
+        """Presence is published to every chat the user is in (cross-worker),
+        not just chats opened on this worker."""
+        from app.api.v1.websocket import stream as stream_mod
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [
+            ("11111111-1111-1111-1111-111111111111",),
+            ("22222222-2222-2222-2222-222222222222",),
+        ]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        mock_redis = AsyncMock()
+
+        with patch.object(
+            stream_mod.websocket_manager,
+            "conversation_channel",
+            side_effect=lambda cid: f"ws:chat:{cid}",
+        ):
+            await stream_mod._broadcast_presence(
+                mock_db,
+                "33333333-3333-3333-3333-333333333333",
+                {"type": "user_online", "user_id": "33333333-3333-3333-3333-333333333333"},
+                mock_redis,
+            )
+
+        assert mock_redis.publish.call_count == 2
+        channels = [c[0][0] for c in mock_redis.publish.call_args_list]
+        assert channels == [
+            "ws:chat:11111111-1111-1111-1111-111111111111",
+            "ws:chat:22222222-2222-2222-2222-222222222222",
+        ]
+
     async def test_is_online(self):
         """is_online checks Redis key existence."""
         mock_redis = AsyncMock()

@@ -95,6 +95,7 @@ class PushService:
                     tokens=chunk,
                     data=payload,
                     android=android,
+                    apns=PushService._apns(title, body),
                 )
                 try:
                     response = await asyncio.to_thread(
@@ -164,13 +165,14 @@ class PushService:
         if not tokens:
             return
 
-        # Data-only message: the app's native FirebaseMessagingService renders a
-        # compact notification (small circular avatar) from `data`. Sending a
-        # `notification` block makes Android draw a big expandable card instead.
+        # Data-only on Android: the app's background handler renders the
+        # notification. iOS cannot reliably display data-only messages, so we
+        # include an APNs alert for iOS.
         message = messaging.MulticastMessage(
             tokens=tokens,
             data=PushService._build_data(title, body, data, image_url),
             android=messaging.AndroidConfig(priority="high"),
+            apns=PushService._apns(title, body),
         )
 
         try:
@@ -201,6 +203,22 @@ class PushService:
         payload.setdefault("body", body)
         payload.setdefault("image_url", image_url or "")
         return {k: str(v) for k, v in payload.items()}
+
+    @staticmethod
+    def _apns(title: str, body: str) -> "messaging.APNSConfig":
+        """APNs alert so iOS displays the notification (data-only messages are
+        throttled/ignored by iOS). Android ignores this and uses `data`."""
+        return messaging.APNSConfig(
+            headers={"apns-priority": "10", "apns-push-type": "alert"},
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    alert=messaging.ApsAlert(title=title, body=body),
+                    sound="default",
+                    content_available=True,
+                    mutable_content=True,
+                )
+            ),
+        )
 
     @staticmethod
     async def _get_user_tokens(user_id: UUID, db: AsyncSession) -> list[str]:
