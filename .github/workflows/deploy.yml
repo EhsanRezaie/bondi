@@ -144,7 +144,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           password: ${{ secrets.VPS_PASSWORD }}
           command_timeout: 45m
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,FCM_SERVICE_ACCOUNT_JSON
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,FCM_SERVICE_ACCOUNT_JSON,BUGSINK_SECRET_KEY,BUGSINK_BASE_URL,BUGSINK_ALLOWED_HOSTS,BUGSINK_BEHIND_HTTPS_PROXY,BUGSINK_SUPERUSER,BUGSINK_DSN
           script: |
             cd /opt/demo-bondi
 
@@ -174,8 +174,35 @@ jobs:
             else
               echo "WARNING: FCM_SERVICE_ACCOUNT_JSON not set, push notifications will fail"
             fi
+
+            # Bugsink (error tracking): upsert values from CI secrets into .env
+            # when provided. Secrets are optional; empty values are ignored, and
+            # the old GlitchTip keys are removed.
+            set_env() {
+              key="$1"; val="$2"
+              [ -n "$val" ] || return 0
+              if grep -q "^${key}=" .env 2>/dev/null; then
+                sed -i "s|^${key}=.*|${key}=${val}|" .env
+              else
+                printf '\n%s=%s\n' "$key" "$val" >> .env
+              fi
+            }
+            sed -i '/^GLITCHTIP_/d' .env 2>/dev/null || true
+            set_env BUGSINK_SECRET_KEY "$BUGSINK_SECRET_KEY"
+            set_env BUGSINK_BASE_URL "$BUGSINK_BASE_URL"
+            set_env BUGSINK_ALLOWED_HOSTS "$BUGSINK_ALLOWED_HOSTS"
+            set_env BUGSINK_BEHIND_HTTPS_PROXY "$BUGSINK_BEHIND_HTTPS_PROXY"
+            set_env BUGSINK_SUPERUSER "$BUGSINK_SUPERUSER"
+            set_env BUGSINK_DSN "$BUGSINK_DSN"
+
             bash scripts/deploy.sh
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          BUGSINK_SECRET_KEY: ${{ secrets.BUGSINK_SECRET_KEY }}
+          BUGSINK_BASE_URL: ${{ secrets.BUGSINK_BASE_URL }}
+          BUGSINK_ALLOWED_HOSTS: ${{ secrets.BUGSINK_ALLOWED_HOSTS }}
+          BUGSINK_BEHIND_HTTPS_PROXY: ${{ secrets.BUGSINK_BEHIND_HTTPS_PROXY }}
+          BUGSINK_SUPERUSER: ${{ secrets.BUGSINK_SUPERUSER }}
+          BUGSINK_DSN: ${{ secrets.BUGSINK_DSN }}

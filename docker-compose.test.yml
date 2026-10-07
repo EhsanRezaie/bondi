@@ -65,33 +65,32 @@ services:
       echo 'Test MinIO buckets ready'
       "
 
-  glitchtip-test-db-init:
+  bugsink-test-db-init:
     image: postgis/postgis:15-3.3
-    container_name: bondi_glitchtip_test_db_init
+    container_name: bondi_bugsink_test_db_init
     entrypoint: >
       /bin/sh -c "
       psql postgresql://bondi_admin:WqPEfyoNesuS5xky@db_test:5432/postgres -c
-      \"CREATE DATABASE bondi_glitchtip_test OWNER bondi_admin;\" 2>/dev/null; exit 0
+      \"CREATE DATABASE bondi_bugsink_test OWNER bondi_admin;\" 2>/dev/null; exit 0
       "
     depends_on:
       db_test:
         condition: service_healthy
 
-  glitchtip-test:
-    image: glitchtip/glitchtip:latest
-    container_name: bondi_glitchtip_test
+  bugsink-test:
+    image: bugsink/bugsink:2.6.1
+    container_name: bondi_bugsink_test
     ports:
-      - "8081:80"
+      - "8081:8000"
     environment:
-      DATABASE_URL: postgres://bondi_admin:WqPEfyoNesuS5xky@db_test:5432/bondi_glitchtip_test
-      REDIS_URL: redis://:pUIv6vZrFiljc3Pp@redis_test:6379/2
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-to-a-random-string}
-      PORT: 80
+      SECRET_KEY: ${BUGSINK_SECRET_KEY:-change-me-to-a-random-string-of-at-least-50-chars}
+      DATABASE_URL: postgresql://bondi_admin:WqPEfyoNesuS5xky@db_test:5432/bondi_bugsink_test
+      BASE_URL: http://localhost:8081
+      ALLOWED_HOSTS: ${BUGSINK_ALLOWED_HOSTS:-*}
+      PORT: 8000
     depends_on:
-      glitchtip-test-db-init:
+      bugsink-test-db-init:
         condition: service_completed_successfully
-      redis_test:
-        condition: service_healthy
     restart: unless-stopped
 
 volumes:

@@ -241,13 +241,13 @@ services:
     networks:
       - internal
 
-  glitchtip-db-init:
+  bugsink-db-init:
     image: postgis/postgis:15-3.3
-    container_name: bondi_glitchtip_db_init
+    container_name: bondi_bugsink_db_init
     entrypoint: >
       /bin/sh -c "
       psql postgresql://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/postgres -c
-      \"CREATE DATABASE bondi_glitchtip OWNER ${POSTGRES_USER:-bondi_admin};\" 2>/dev/null; exit 0
+      \"CREATE DATABASE bondi_bugsink OWNER ${POSTGRES_USER:-bondi_admin};\" 2>/dev/null; exit 0
       "
     depends_on:
       db:
@@ -255,47 +255,33 @@ services:
     networks:
       - internal
 
-  glitchtip:
-    image: glitchtip/glitchtip:6.2.2
-    container_name: bondi_glitchtip
+  bugsink:
+    image: bugsink/bugsink:2.6.1
+    container_name: bondi_bugsink
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:8000"
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/bondi_glitchtip
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/1
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-to-a-random-string}
-      PORT: 80
+      SECRET_KEY: ${BUGSINK_SECRET_KEY:-change-me-to-a-random-string-of-at-least-50-chars}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/bondi_bugsink
+      BASE_URL: ${BUGSINK_BASE_URL:-http://localhost:8080}
+      ALLOWED_HOSTS: ${BUGSINK_ALLOWED_HOSTS:-*}
+      BEHIND_HTTPS_PROXY: ${BUGSINK_BEHIND_HTTPS_PROXY:-false}
+      CREATE_SUPERUSER: ${BUGSINK_SUPERUSER:-}
+      PORT: 8000
     depends_on:
-      glitchtip-db-init:
+      bugsink-db-init:
         condition: service_completed_successfully
-      redis:
+      db:
         condition: service_healthy
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "python", "manage.py", "showmigrations", "--plan"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 10s
       timeout: 10s
       retries: 12
       start_period: 60s
-
-  glitchtip-worker:
-    image: glitchtip/glitchtip:6.2.2
-    container_name: bondi_glitchtip_worker
-    restart: unless-stopped
-    command: sh -c "python manage.py migrate --noinput && python manage.py runworker --scheduler"
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-bondi_admin}:${POSTGRES_PASSWORD:-}@db:5432/bondi_glitchtip
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/1
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-to-a-random-string}
-    depends_on:
-      glitchtip-db-init:
-        condition: service_completed_successfully
-      glitchtip:
-        condition: service_healthy
-    networks:
-      - internal
 
 networks:
   frontend:

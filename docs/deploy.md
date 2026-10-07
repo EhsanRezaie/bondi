@@ -38,10 +38,10 @@ When running locally without Docker, `REDIS_PASSWORD` can stay empty and
    `redis-server --requirepass ${REDIS_PASSWORD:-} --appendonly yes`.
 2. The app service sets `REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379`,
    so the app authenticates automatically.
-3. GlitchTip and its worker use
-   `redis://:${REDIS_PASSWORD:-}@redis:6379/1` (DB 1, kept separate).
-4. `docker-compose.test.yml` and local `pytest` use `REDIS_URL` directly —
+3. `docker-compose.test.yml` and local `pytest` use `REDIS_URL` directly —
    unauthenticated, which is fine for CI.
+
+> Bugsink (error tracking) talks only to PostgreSQL — it needs no Redis.
 
 > If you change `REDIS_PASSWORD` after the stack is up, restart redis and the
 > app: `docker compose up -d redis app`.

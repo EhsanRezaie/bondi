@@ -232,7 +232,7 @@ iranian-dating-app/
 │   ├── .env
 │   ├── .env.example
 │   ├── .env.test
-│   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, bondi_glitchtip)
+│   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, bondi_bugsink)
 │   ├── docker-compose.test.yml            # Test infrastructure (db_test, redis_test, minio-test)
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -1093,7 +1093,7 @@ Step 3: POST /auth/register/complete (Authenticated)
 | 30 | **Performance Phase 4.2-4.5 — Eager loading, DB Haversine, BackgroundTasks, Cursor pagination** | ✅ |
 | 31 | **Schema audit + Redoc accuracy — all endpoints now declare response_model** | ✅ |
 | 32 | **WebSocket tests — push shape validation + manager unit tests** | ✅ |
-| 33 | **Structured logging + GlitchTip error tracking** | ✅ |
+| 33 | **Structured logging + Bugsink error tracking** | ✅ |
 | 34 | **Push notifications (FCM) + Device tokens + messages fix** | ✅ |
 | 35 | **Auth hardening — token expiry, enumeration fix, OTP brute-force, Swagger lockdown** | ✅ |
 | 36 | **IDOR audit + EXIF stripping + dead code cleanup** | ✅ |
@@ -1601,27 +1601,27 @@ Every endpoint in the app now declares a proper `response_model`, so Redoc shows
 | `app/core/logging.py` rewritten with `structlog` + `JSONRenderer` (ISO timestamps, log level, logger name) | ✅ |
 | File handler (`logs/app.log`) removed — JSON to stdout only | ✅ |
 | `get_logger(name)` interface kept identical — all callers unchanged | ✅ |
-| `GLITCHTIP_DSN=` added to `.env.example` (empty, fill in production) | ✅ |
+| `BUGSINK_DSN=` added to `.env.example` (empty, fill in production) | ✅ |
 | `sentry-sdk[fastapi]` added to `requirements.txt` | ✅ |
-| `bondi_glitchtip` service + init added to `docker-compose.yml` (reuses existing Postgres + Redis) | ✅ |
-| `bondi_glitchtip-test` service + init added to `docker-compose.test.yml` (port 8081, separate DB) | ✅ |
+| `bondi_bugsink` service + init added to `docker-compose.yml` (reuses existing Postgres) | ✅ |
+| `bondi_bugsink-test` service + init added to `docker-compose.test.yml` (port 8081, separate DB) | ✅ |
 | `logger.exception()` added to `app/db/session.py` before rollback + `raise` | ✅ |
 | Logger declarations added to **35 files**: 25 endpoints, 3 services, 6 core, 1 db | ✅ |
 | **42 existing log calls** converted to structured key=value format across 9 files | ✅ |
 | `structlog==26.1.0` added to `requirements.txt` | ✅ |
 | All 547 tests still passing | ✅ |
 
-**Running GlitchTip (dev):**
+**Running Bugsink (dev):**
 ```bash
-docker compose up -d bondi_glitchtip
+docker compose up -d bugsink
 ```
 Opens at `http://localhost:8080` — create account → create project → get DSN.
 
-**Running GlitchTip (test):**
+**Running Bugsink (test):**
 ```bash
-docker compose -f docker-compose.test.yml up -d bondi_glitchtip-test
+docker compose -f docker-compose.test.yml up -d bugsink-test
 ```
-Opens at `http://localhost:8081` — separate database and Redis namespace.
+Opens at `http://localhost:8081` — separate database.
 
 ---
 

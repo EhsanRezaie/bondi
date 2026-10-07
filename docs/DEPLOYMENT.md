@@ -6,7 +6,7 @@ in order the first time; use the section headers as a checklist thereafter.
 
 > **Stack at a glance (post-hardening — `7b2f942`)**
 > Nginx (public) → FastAPI app → PgBouncer → PostgreSQL · Redis (password-auth) ·
-> MinIO (S3) · Celery worker + beat · GlitchTip (error tracking) + worker ·
+> MinIO (S3) · Celery worker + beat · Bugsink (error tracking) ·
 > One-shot migrate service · Prometheus `/metrics` (internal only).
 
 ---
@@ -43,7 +43,7 @@ in order the first time; use the section headers as a checklist thereafter.
              │  │ celery-  │  │ celery-   │      │
              │  │ worker   │  │ beat      │      │
              │  └──────────┘  └───────────┘      │
-             │  bondi_glitchtip (live on :8080)        │
+             │  bondi_bugsink (live on :8080)          │
              └───────────────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@ in order the first time; use the section headers as a checklist thereafter.
 | Network | Name | Visibility | Attached to |
 |---------|------|-----------|-------------|
 | `frontend` | `bondi_frontend` | Public bridge | `nginx`, `app`, `celery-worker`, `celery-beat` (outbound egress for FCM) |
-| `internal` | `bondi_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, bondi_glitchtip*, migrate, plus nginx/app/workers (media proxy + DB/Redis) |
+| `internal` | `bondi_internal` | **internal (no internet)** | db, pgbouncer, redis, minio, minio-init, bondi_bugsink*, migrate, plus nginx/app/workers (media proxy + DB/Redis) |
 
 - The `internal` network is created with `internal: true` — containers on it can
   only reach each other; nothing there is reachable from the host or internet.
@@ -60,7 +60,7 @@ in order the first time; use the section headers as a checklist thereafter.
   attaching to `internal` is what lets it proxy `/photos-*` to `minio:9000`.
 - `celery-worker`/`celery-beat` also join both: `internal` for DB (via pgbouncer)
   + Redis, `frontend` so FCM push calls can reach Google.
-- Only `nginx` (80/443) and `bondi_glitchtip` (8080) publish host ports.
+- Only `nginx` (80/443) and `bondi_bugsink` (8080) publish host ports.
 - **db / redis / minio do NOT publish ports** — never expose them directly.
 
 ---
@@ -135,7 +135,7 @@ openssl rand -hex 24    # MINIO_ROOT_PASSWORD
 openssl rand -hex 32    # SECRET_KEY
 openssl rand -hex 16    # ENCRYPTION_SECRET (must be 32 bytes UTF-8 / or 32 chars)
 openssl rand -hex 16    # ADMIN_SECRET_KEY
-openssl rand -hex 32    # GLITCHTIP_SECRET_KEY
+openssl rand -hex 32    # BUGSINK_SECRET_KEY
 ```
 
 ### 3.3 Build the `.env`
@@ -188,9 +188,12 @@ CELERY_ENABLED=true
 # --- Firebase push ---
 FCM_SERVICE_ACCOUNT_PATH=firebase-service-account.json
 
-# --- GlitchTip ---
-GLITCHTIP_SECRET_KEY=<openssl rand -hex 32>
-GLITCHTIP_DSN=http://public-key@bondi_glitchtip:80/2      # from step 5.6
+# --- Bugsink ---
+BUGSINK_SECRET_KEY=<openssl rand -hex 32>
+BUGSINK_BASE_URL=https://bugsink.yourdomain.com
+BUGSINK_ALLOWED_HOSTS=bugsink.yourdomain.com
+BUGSINK_SUPERUSER=admin@yourdomain.com:<strong-password>
+BUGSINK_DSN=http://public-key@bugsink:8000/1      # from step 5.6
 
 # --- Payments (only when you get a merchant ID) ---
 ZARINPAL_MERCHANT_ID=
@@ -290,10 +293,11 @@ docker compose logs celery-worker | tail     # "connected/side ... ready."
 docker compose logs celery-beat   | tail     # heartbeats / beat: Starting...
 ```
 
-### 5.6 GlitchTip (error tracking)
+### 5.6 Bugsink (error tracking)
 
-Follow the Quick Start in `docs/server_setup.md:step-7` to create the superuser,
-org, project and **DSN**. Backport the DSN value into `.env` `GLITCHTIP_DSN`, then:
+On first boot Bugsink runs migrations and creates the superuser from
+`BUGSINK_SUPERUSER`. Log in at `http://<server>:8080`, create an org and project,
+copy the **DSN**, then backport it into `.env` `BUGSINK_DSN` and run
 `docker compose restart app`.
 
 ### 5.7 `/metrics` — internal only
@@ -325,7 +329,8 @@ Substitute your own domain everywhere; nothing here is host-specific.
 > | Hostname | Routes to |
 > |----------|-----------|
 > | `bondiapp.ir`, `www.bondiapp.ir` | FastAPI `app` (API + `/api/v1/ws/`) and `minio` (`/photos-*`) |
-> | `admin.bondiapp.ir` | SPA via `http://bondi_admin:80` for `/` and straight to `app` for `/api/v1/` |
+> | `admin.bondiapp.ir` | SPA via `http://bondi_admin:80` for `/` and straight to `app` for `/api/v1/` (VPN-only) |
+> | `log.bondiapp.ir` | Bugsink error tracker via `http://bugsink:8000` (own cert, VPN-only) |
 > | `invite.bondiapp.ir` | static invite site via `http://invite-site:80` (own cert, §6.11) |
 >
 > The admin container keeps its own plain-HTTP nginx and is joined to the
@@ -603,7 +608,7 @@ ufw status verbose
 ```
 
 The admin panel is now only reachable through `https://admin.bondiapp.ir`;
-`8443` (localhost-only), `8080` (GlitchTip) and `9001` (MinIO console) are not
+`8443` (localhost-only), `8080` (Bugsink) and `9001` (MinIO console) are not
 exposed externally. Open them only if you truly need remote dashboards.
 
 ### 6.9 Verification checklist
@@ -792,7 +797,7 @@ cd /opt/demo-bondi && bash scripts/deploy.sh
   first, then push again. Sync is a strict `git merge --ff-only origin/main` —
   no `reset --hard`, no `git clean`.
 - `docker compose up -d` is idempotent: containers whose image/config changed are
-  recreated; unchanged services (db, redis, minio, bondi_glitchtip) stay up. It also
+  recreated; unchanged services (db, redis, minio, bondi_bugsink) stay up. It also
   creates new services/volumes/networks on first boot, so a fresh box needs no
   separate `up -d` step.
 - `firebase-service-account.json` and `.env` are gitignored → they never appear
@@ -844,7 +849,7 @@ It stops `app`, drops+recreates `bondi`, re-plays the dump, starts `app`.
 
 ## 10. Firewall
 
-> Share `scripts/firewall.sh` — ports 22/80/443 only. `8080` (GlitchTip) is
+> Share `scripts/firewall.sh` — ports 22/80/443 only. `8080` (Bugsink) is
 > **not** opened by default; open it **only** if you want remote dashboards.
 
 ```bash

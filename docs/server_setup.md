@@ -1,7 +1,7 @@
 # Server Setup Guide
 
 > 📖 **The canonical, up-to-date guide lives at [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).**
-> This older doc is retained for the GlitchTip walkthrough and seed-data commands;
+> This older doc is retained for the Bugsink walkthrough and seed-data commands;
 > refer to the canonical guide first.
 
 Full deployment guide for the dating app on Ubuntu 24.04 LTS with Docker.
@@ -32,7 +32,7 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment "SSH"
 ufw allow 80/tcp comment "HTTP"
-ufw allow 8080/tcp comment "GlitchTip"
+ufw allow 8080/tcp comment "Bugsink"
 ufw --force enable
 
 # 4. Clone and deploy
@@ -48,35 +48,15 @@ nano .env   # fill in secrets (see below)
 docker compose up -d --build
 docker compose logs -f   # wait for "Application startup complete"
 
-# 7. Setup GlitchTip
+# 7. Setup Bugsink
 sleep 15
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.contrib.auth import get_user_model
-User = get_user_model()
-User.objects.create_superuser(email='admin@bondi_glitchtip.dev', password='admin123')
-print('Admin created')
-"
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.apps import apps
-from django.contrib.auth import get_user_model
-User = get_user_model()
-OrgModel = apps.get_model('organizations_ext', 'Organization')
-OrgUser = apps.get_model('organizations_ext', 'OrganizationUser')
-OrgOwner = apps.get_model('organizations_ext', 'OrganizationOwner')
-ProjectModel = apps.get_model('projects', 'Project')
-KeyModel = apps.get_model('projects', 'ProjectKey')
-user = User.objects.get(email='admin@bondi_glitchtip.dev')
-org = OrgModel.objects.create(name='DatingApp', slug='datingapp')
-org_user = OrgUser.objects.create(user=user, organization=org, role=0)
-OrgOwner.objects.create(organization_user=org_user, organization=org)
-project = ProjectModel.objects.create(name='DatingApp', slug='datingapp', organization=org, platform='python')
-key = KeyModel.objects.create(project=project, name='Default')
-print(f'DSN: {key.get_dsn()}')
-"
+# The superuser is created automatically on first boot from BUGSINK_SUPERUSER
+# (set in .env as email:password). Log in at http://YOUR_SERVER_IP:8080, then
+# create an organization + project and copy the generated DSN.
 
-# 8. Add GlitchTip DSN to .env
+# 8. Add Bugsink DSN to .env
 nano .env
-# Set: GLITCHTIP_DSN=http://<public_key>@bondi_glitchtip:80/2
+# Set: BUGSINK_DSN=http://<public_key>@bugsink:8000/1
 docker compose restart app
 ```
 
@@ -90,7 +70,7 @@ Generate these before editing `.env`:
 openssl rand -hex 32   # SECRET_KEY
 openssl rand -hex 16   # ENCRYPTION_SECRET
 openssl rand -hex 16   # ADMIN_SECRET_KEY
-openssl rand -hex 32   # GLITCHTIP_SECRET_KEY
+openssl rand -hex 32   # BUGSINK_SECRET_KEY
 ```
 
 Required `.env` values:
@@ -101,8 +81,11 @@ REDIS_URL=redis://localhost:6379
 SECRET_KEY=<openssl rand -hex 32>
 ADMIN_SECRET_KEY=<openssl rand -hex 16>
 ENCRYPTION_SECRET=<openssl rand -hex 16>
-GLITCHTIP_SECRET_KEY=<openssl rand -hex 32>
-GLITCHTIP_DSN=http://<public_key>@bondi_glitchtip:80/2
+BUGSINK_SECRET_KEY=<openssl rand -hex 32>
+BUGSINK_DSN=http://<public_key>@bugsink:8000/1
+BUGSINK_BASE_URL=http://YOUR_SERVER_IP:8080
+BUGSINK_ALLOWED_HOSTS=*
+BUGSINK_SUPERUSER=admin@bondi.local:admin123
 ENVIRONMENT=production
 DEBUG=False
 CORS_ORIGINS=*
@@ -131,8 +114,7 @@ NSFW_THRESHOLD=0.8
 | Redis | 6379 (internal) | Cache + realtime |
 | MinIO | 9000 (internal) | Photo storage |
 | MinIO Console | 9001 (internal) | MinIO web UI |
-| GlitchTip | 8080 (exposed) | Error tracking |
-| GlitchTip Worker | — | Event processing |
+| Bugsink | 8080 (exposed) | Error tracking |
 
 ---
 
@@ -150,14 +132,14 @@ docker compose restart app
 sed -i 's/ENVIRONMENT=development/ENVIRONMENT=production/' .env
 docker compose restart app
 
-# GlitchTip dashboard
+# Bugsink dashboard
 # Open: http://YOUR_SERVER_IP:8080
-# Login: admin@bondi_glitchtip.dev / admin123
+# Login: BUGSINK_SUPERUSER from .env
 
-# Test GlitchTip error reporting
+# Test Bugsink error reporting
 docker exec bondi_app python -c "
 import sentry_sdk
-sentry_sdk.init(dsn='$(grep GLITCHTIP_DSN .env | cut -d= -f2-)')
+sentry_sdk.init(dsn='$(grep BUGSINK_DSN .env | cut -d= -f2-)')
 try:
     1 / 0
 except Exception:
@@ -202,7 +184,7 @@ The file is gitignored — it is never committed to the repository. For CI/CD de
 ```bash
 # View logs
 docker compose logs -f app
-docker compose logs -f bondi_glitchtip
+docker compose logs -f bondi_bugsink
 
 # Restart a service
 docker compose restart app
@@ -234,9 +216,6 @@ ufw status
 | Problem | Fix |
 |---------|-----|
 | App won't start (libxcb error) | Already fixed in Dockerfile — rebuild: `docker compose up -d --build` |
-| GlitchTip worker crash | Already fixed — worker runs migrations before starting |
 | 502 Bad Gateway | `docker compose logs app` — check if app is running |
 | `/api/docs` returns 404 | Set `ENVIRONMENT=development` in .env and restart |
-| GlitchTip can't login | Create superuser (see Quick Start step 7) |
-| GlitchTip "database does not exist" | Worker runs migrate automatically — just wait and restart |
-| Port 8080 refused | `ufw allow 8080/tcp` + check bondi_glitchtip service has `ports: ["8080:80"]` |
+| Bugsink not reachable | `ufw allow 8080/tcp` + check the `bugsink` service publishes `ports: ["8080:8000"]` |

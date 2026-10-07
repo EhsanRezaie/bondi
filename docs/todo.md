@@ -39,7 +39,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 |------|--------|------|
 | DB indexes, Redis caching, Haversine, N+1 fixes, cursor pagination | ✅ | confirmed in models/endpoints |
 | BackgroundTasks for notifications | ✅ | but no durable queue → P1-7 |
-| GZip, structlog, GlitchTip/Sentry | ✅ | `main.py`, `core/logging.py` |
+| GZip, structlog, Bugsink/Sentry | ✅ | `main.py`, `core/logging.py` |
 | FCM push + device-token endpoint | ✅ | but blocking → P1-1 |
 | Auth hardening (15-min token, OTP, enumeration, timing) | ✅ | `security.py`, `redis.py` |
 | Location fuzzing ±500m | ✅ | `utils/geo.py` |
@@ -269,13 +269,13 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Verify:** `docker exec bondi psql -U bondi_admin -c "select count(*) from pg_stat_activity"` stays ~20 under load. Load-test with `wrk`/`locust` at 100 concurrent — no `TooManyConnections`.
 **Gotchas:**
 - PgBouncer transaction mode breaks server-side cursors and `LISTEN/NOTIFY`. The WebSocket manager uses Redis Pub/Sub (not PG NOTIFY), so you're fine — but don't add PG NOTIFY later without switching to session mode.
-- GlitchTip uses the same Postgres; give it its own small pool (P2-14).
+- Bugsink uses the same Postgres; give it its own small pool (P2-14).
 
 ### P0-5 — Enable HTTPS / TLS · `S`
 
 - [ ] Done
 
-**Evidence:** `nginx/nginx.conf:39-79` only `listen 80`; the entire 443 server block (`:81-125`) is commented out. `.env:119` `GLITCHTIP_DSN=...@localhost:8080/1` (unreachable from the app container in prod). Play Store rejects apps that transmit credentials over HTTP.
+**Evidence:** `nginx/nginx.conf:39-79` only `listen 80`; the entire 443 server block (`:81-125`) is commented out. `.env:119` `BUGSINK_DSN=...@localhost:8080/1` (unreachable from the app container in prod). Play Store rejects apps that transmit credentials over HTTP.
 
 **Fix (step-by-step):**
 1. Point `api.<your-domain>` DNS A-record at the VPS.
@@ -291,7 +291,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
        - /etc/letsencrypt:/etc/letsencrypt:ro
        - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
    ```
-5. Set `GLITCHTIP_DSN` in `.env` to the **public** GlitchTip URL (or `http://<publickey>@bondi_glitchtip:80/1` for in-Docker).
+5. Set `BUGSINK_DSN` in `.env` to the **public** Bugsink URL (or `http://<publickey>@bugsink:8000/1` for in-Docker).
 6. Force HTTP→HTTPS redirect (the 80→443 `return 301` is already in the commented block).
 
 **Files to touch:** `nginx/nginx.conf`, `docker-compose.yml`, `.env`, DNS.
@@ -398,7 +398,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 - [x] Done
 
-**Evidence:** `.env:10` `SECRET_KEY=change-this-to-64-random-characters-in-production`, `.env:23` `ADMIN_SECRET_KEY=change-this-to-random-string`, `.env:84` a real `ENCRYPTION_SECRET`, `.env:125` a real `GLITCHTIP_SECRET_KEY`. No re-encryption script exists. `security_plan` Section 6 (unchecked).
+**Evidence:** `.env:10` `SECRET_KEY=change-this-to-64-random-characters-in-production`, `.env:23` `ADMIN_SECRET_KEY=change-this-to-random-string`, `.env:84` a real `ENCRYPTION_SECRET`, `.env:125` a real `BUGSINK_SECRET_KEY`. No re-encryption script exists. `security_plan` Section 6 (unchecked).
 
 **Why:** Placeholder `SECRET_KEY` means anyone can forge JWTs. Rotating `ENCRYPTION_SECRET` without re-encrypting **bricks every existing chat** (all `messages.content` becomes undecryptable).
 
@@ -408,7 +408,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
    openssl rand -hex 32   # SECRET_KEY
    openssl rand -hex 16   # ADMIN_SECRET_KEY
    openssl rand -hex 16   # ENCRYPTION_SECRET (new)
-   openssl rand -hex 32   # GLITCHTIP_SECRET_KEY
+   openssl rand -hex 32   # BUGSINK_SECRET_KEY
    ```
 2. Put them in the **server's** `.env` (never commit). Keep `.env.example` with placeholders only.
 3. Write `scripts/rotate_encryption_secret.py`:
@@ -515,7 +515,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Files to touch:** `docker-compose.yml`, `docker-compose.test.yml` (keep test creds simple), `.env`, `.env.example`.
 **Commands:** `docker compose up -d redis minio && docker compose logs redis minio`.
 **Verify:** `redis-cli -h localhost -p 6379 ping` → `NOAUTH Authentication required`. MinIO console login rejects `minioadmin`.
-**Gotchas:** GlitchTip also uses Redis (`redis://redis:6379/1`) — add the password there too (`:130,152` in compose). `slowapi` (`limiter.py`) reads `settings.REDIS_URL` so it picks up the password automatically.
+**Gotchas:** Bugsink talks only to PostgreSQL (no Redis), so only `db`/`pgbouncer` credentials matter for it. `slowapi` (`limiter.py`) reads `settings.REDIS_URL` so it picks up the password automatically.
 
 ### P1-4 — Docker network isolation · `S`
 
@@ -532,13 +532,13 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
      frontend:
        driver: bridge
    ```
-2. Put `db`, `redis`, `minio`, `pgbouncer` on `internal` only. Put `nginx` on `frontend` only. Put `app` (and `bondi_glitchtip`) on **both** so it can talk to both sides.
+2. Put `db`, `redis`, `minio`, `pgbouncer` on `internal` only. Put `nginx` on `frontend` only. Put `app` (and `bondi_bugsink`) on **both** so it can talk to both sides.
 3. Remove `ports:` from `db`, `redis`, `minio`, `pgbouncer` in prod compose (keep them only in a dev override file).
 
 **Files to touch:** `docker-compose.yml`, optionally a `docker-compose.override.yml` for dev ports.
 **Commands:** `docker network inspect bondi_internal | grep -i container`.
 **Verify:** From the host, `nc -z localhost 6379` should fail in prod. From inside `app`, `redis-cli ping` works.
-**Gotchas:** Don't put GlitchTip on `internal` if it needs to receive events from outside — but it talks to `redis` and `db`, so `internal` (+ outbound only) is fine.
+**Gotchas:** Bugsink talks only to `db`, so it can live on `internal` (+ outbound only). The app reaches it over the same internal network.
 
 ### P1-5 — `revoke_all_user_tokens` is O(N) over ALL refresh tokens · `S` · NEW
 
@@ -760,7 +760,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
        else:
            self._content = value
    ```
-2. Getter: on decrypt failure, log to GlitchTip and return a safe placeholder string (e.g. `"[undecryptable]"`), never the raw ciphertext blob.
+2. Getter: on decrypt failure, log to Bugsink and return a safe placeholder string (e.g. `"[undecryptable]"`), never the raw ciphertext blob.
 
 **Files to touch:** `app/models/message.py`.
 **Commands:** `pytest tests/test_messages_encryption.py -v`.
@@ -796,7 +796,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Why:** If Redis is down you silently fall back to the DB path (good for availability) but get **zero visibility** into the degradation — you'll only notice when the DB melts.
 
 **Fix (step-by-step):**
-1. In each except block, log a warning with the key and error so GlitchTip catches it:
+1. In each except block, log a warning with the key and error so Bugsink catches it:
    ```python
    except Exception as e:
        logger.warning("cache_get_failed", key=key, error=str(e))
@@ -806,7 +806,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 **Files to touch:** `app/core/cache.py`.
 **Commands:** `pytest tests/ -q`.
-**Verify:** Stop Redis → hit `/interests` → GlitchTip shows `cache_get_failed` warnings; the endpoint still works (DB fallback).
+**Verify:** Stop Redis → hit `/interests` → Bugsink shows `cache_get_failed` warnings; the endpoint still works (DB fallback).
 **Gotchas:** Use `logger.warning`, not `error`, so you don't page on-call for every cache miss during a Redis blip. Add an alert on a high rate of `cache_*_failed`.
 
 ### P2-7 — NSFW detection is a skin-tone heuristic (fairness + accuracy risk) · `L` · NEW
@@ -967,30 +967,30 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Verify:** `curl -X POST -F "file=@20mb_video.mp4" https://api.<domain>/...` passes nginx (reaches the app's own size check).
 **Gotchas:** Must be ≥ the largest `MAX_*_SIZE_MB` in config. Pair with P2-11 so the app's and nginx's limits agree.
 
-### P2-14 — GlitchTip shares the app's Postgres instance · `S` · NEW
+### P2-14 — Bugsink shares the app's Postgres instance · `S` · NEW
 
 - [ ] Done
 
-**Evidence:** `docker-compose.yml:129` GlitchTip `DATABASE_URL: postgres://bondi_admin:CHANGE_ME@db:5432/bondi_glitchtip` — same Postgres process as the app.
+**Evidence:** `docker-compose.yml` Bugsink `DATABASE_URL: postgresql://bondi_admin:CHANGE_ME@db:5432/bondi_bugsink` — same Postgres process as the app.
 
-**Why:** Under load, GlitchTip's event inserts compete with app queries for the same Postgres connection budget/CPU. A bug storm can degrade the app itself (the error tracker making the app slower is a bad feedback loop).
+**Why:** Under load, Bugsink's event inserts compete with app queries for the same Postgres connection budget/CPU. A bug storm can degrade the app itself (the error tracker making the app slower is a bad feedback loop).
 
 **Fix (step-by-step):**
-1. Spin up a second small Postgres for GlitchTip (or a separate database with its own user + connection limit):
+1. Spin up a second small Postgres for Bugsink (or a separate database with its own user + connection limit):
    ```yaml
-   bondi_glitchtip-db:
+   bugsink-db:
      image: postgis/postgis:15-3.3
-     environment: { POSTGRES_USER: bondi_glitchtip, POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASS}, POSTGRES_DB: bondi_glitchtip }
-   bondi_glitchtip:
+     environment: { POSTGRES_USER: bugsink, POSTGRES_PASSWORD: ${BUGSINK_DB_PASS}, POSTGRES_DB: bondi_bugsink }
+   bugsink:
      environment:
-       DATABASE_URL: postgres://bondi_glitchtip:${GLITCHTIP_DB_PASS}@bondi_glitchtip-db:5432/bondi_glitchtip
+       DATABASE_URL: postgresql://bugsink:${BUGSINK_DB_PASS}@bugsink-db:5432/bondi_bugsink
    ```
-2. Alternatively set a `connection_limit` on the `bondi_admin` role for the bondi_glitchtip DB.
+2. Alternatively set a `connection_limit` on the `bondi_admin` role for the bondi_bugsink DB.
 
 **Files to touch:** `docker-compose.yml`.
-**Commands:** `docker compose up -d bondi_glitchtip-db bondi_glitchtip`.
-**Verify:** `pg_stat_activity` for the app DB no longer shows GlitchTip connections.
-**Gotchas:** GlitchTip needs its migrations run; the worker already does `python manage.py migrate` — keep that pointing at the new DB.
+**Commands:** `docker compose up -d bugsink-db bugsink`.
+**Verify:** `pg_stat_activity` for the app DB no longer shows Bugsink connections.
+**Gotchas:** Bugsink runs its own migrations on boot — nothing else needs to point at the new DB.
 
 ### P2-15 — No graceful shutdown / WebSocket drain on SIGTERM · `S` · NEW
 
@@ -1081,7 +1081,7 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 **Files to touch:** `app/schemas/message.py` (add WS inbound models), `app/api/v1/websocket/chat.py`, `app/api/v1/websocket/matches.py`.
 **Commands:** `pytest tests/ -k websocket -v`.
 **Verify:** Send `{"type":"read","message_ids":[200 UUIDs]}` → handled; send garbage JSON → `error` frame, connection stays open.
-**Gotchas:** Don't echo the raw payload in the error (could leak data). Keep `except Exception: break` as a last resort but log the reason first so GlitchTip sees it.
+**Gotchas:** Don't echo the raw payload in the error (could leak data). Keep `except Exception: break` as a last resort but log the reason first so Bugsink sees it.
 
 ### P3-2 — HSTS + full security headers (only meaningful after P0-5) · `XS`
 
@@ -1126,19 +1126,19 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ## 🔵 P4 — Observability & operations
 
-### P4-1 — GlitchTip/Sentry DSN must point at a reachable URL · `XS` · NEW
+### P4-1 — Bugsink/Sentry DSN must point at a reachable URL · `XS` · NEW
 
 - [ ] Done
 
-**Evidence:** `.env:119` `GLITCHTIP_DSN=http://...@localhost:8080/1`. In prod the app container can't reach `localhost:8080` (that's the host). `main.py:55` only inits Sentry if `GLITCHTIP_DSN` is set — so errors silently aren't captured.
+**Evidence:** `.env:119` `BUGSINK_DSN=http://...@localhost:8080/1`. In prod the app container can't reach `localhost:8080` (that's the host). `main.py:55` only inits Sentry if `BUGSINK_DSN` is set — so errors silently aren't captured.
 **Fix (step-by-step):**
-1. Set the DSN to the container-reachable GlitchTip: `http://<publickey>@bondi_glitchtip:80/1` (or the public GlitchTip URL).
+1. Set the DSN to the container-reachable Bugsink: `http://<publickey>@bugsink:8000/1` (or the public Bugsink URL).
 2. Confirm `traces_sample_rate=0.1` in `main.py:65` is sensible (it is).
 3. Test capture from inside the container.
 **Files to touch:** `.env` (prod), `main.py`.
 **Commands:** `docker exec bondi_app python -c "import sentry_sdk; sentry_sdk.capture_message('test'); sentry_sdk.flush()"`.
-**Verify:** The test message appears in the GlitchTip UI.
-**Gotchas:** If GlitchTip is down, the Sentry SDK fails open (no crash) — good. Make sure the DSN's project number matches the GlitchTip project you created.
+**Verify:** The test message appears in the Bugsink UI.
+**Gotchas:** If Bugsink is down, the Sentry SDK fails open (no crash) — good. Make sure the DSN's project number matches the Bugsink project you created.
 
 ### P4-2 — Add app metrics (latency, DB pool, Redis, queue depth) · `M` · NEW
 
@@ -1308,7 +1308,7 @@ touch them.
 - ✅ Swipe deduplication (Redis set) — `cache.py:126-143`
 - ✅ All `broadcast_match`/`send_to_match` callers pass `redis` — `swipes.py:79`, `messages.py:77`
 - ✅ structlog JSON logging — `core/logging.py` (scale §7, Session D)
-- ✅ Sentry/GlitchTip SDK — `main.py:55-67` (scale §7, Session D) — but see P4-1 (DSN)
+- ✅ Sentry/Bugsink SDK — `main.py:55-67` (scale §7, Session D) — but see P4-1 (DSN)
 - ✅ FCM push + device-token endpoint — `push_service.py`, `notifications.py:103` (scale §9, Session E) — but see P1-1
 - ✅ Docker health checks + dynamic multi-worker — `entrypoint.sh`, `compose` (scale §8)
 - ✅ Nginx reverse proxy (HTTP) — `nginx.conf`

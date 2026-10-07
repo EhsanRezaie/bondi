@@ -1,7 +1,8 @@
 # Bondi Admin VPN — Connection Guide (Windows & Ubuntu)
 
-The admin panel **https://admin.bondiapp.ir** is locked to a WireGuard VPN.
-You must connect to the VPN first, then open the admin panel.
+The admin panel **https://admin.bondiapp.ir** and the Bugsink error tracker
+**https://log.bondiapp.ir** are locked to a WireGuard VPN. You must connect to
+the VPN first, then open either dashboard.
 The public website (`www.bondiapp.ir`) and API (`api.bondiapp.ir`) do **not**
 need the VPN.
 
@@ -15,7 +16,8 @@ need the VPN.
 | Server | `87.107.5.88` (UDP port `51820`) |
 | VPN subnet | `10.8.0.0/24` |
 | Admin URL | `https://admin.bondiapp.ir` |
-| Admin host mapping | `admin.bondiapp.ir` → `10.8.0.1` (hosts file) |
+| Bugsink URL | `https://log.bondiapp.ir` |
+| Host mapping | `admin.bondiapp.ir` + `log.bondiapp.ir` → `10.8.0.1` (hosts file) |
 
 Config files (in this folder):
 
@@ -43,13 +45,14 @@ sudo apt install -y wireguard
 sudo install -m 600 ~/Desktop/bondi-wireguard/admin-ubuntu-pc.conf /etc/wireguard/wg0.conf
 ```
 
-### 2.3 Point the admin domain at the VPN address
+### 2.3 Point the admin/bugsink domains at the VPN address
 
-The config only tunnels the VPN subnet, so `admin.bondiapp.ir` must resolve to
-the VPN server address `10.8.0.1`. Add one line to `/etc/hosts`:
+The config only tunnels the VPN subnet, so `admin.bondiapp.ir` and
+`log.bondiapp.ir` must resolve to the VPN server address `10.8.0.1`. Add these
+lines to `/etc/hosts`:
 
 ```bash
-echo "10.8.0.1 admin.bondiapp.ir" | sudo tee -a /etc/hosts
+echo "10.8.0.1 admin.bondiapp.ir log.bondiapp.ir" | sudo tee -a /etc/hosts
 ```
 
 ### 2.4 Connect
@@ -103,7 +106,7 @@ Download and install from: **https://www.wireguard.com/install/**
 2. Click **Import tunnel(s) from file**.
 3. Select `admin-windows-pc.conf`.
 
-### 3.3 Point the admin domain at the VPN address
+### 3.3 Point the admin/bugsink domains at the VPN address
 
 1. Open **Notepad as Administrator** (Start → right-click Notepad → *Run as administrator*).
 2. Open this file:
@@ -115,7 +118,7 @@ Download and install from: **https://www.wireguard.com/install/**
 3. Add this line at the end and save:
 
    ```
-   10.8.0.1 admin.bondiapp.ir
+   10.8.0.1 admin.bondiapp.ir log.bondiapp.ir
    ```
 
    > If saving is blocked, use **File → Save As**, choose the same path and
@@ -142,17 +145,18 @@ Click **Deactivate** in the WireGuard app.
 | `sudo wg show` (Ubuntu) | `latest handshake` a few seconds ago |
 | `ping 10.8.0.1` | replies (a few ms) |
 | Open `https://admin.bondiapp.ir` | admin login page loads |
-| Without VPN, open the same URL | **403 Forbidden** (this is correct) |
+| Open `https://log.bondiapp.ir` | Bugsink login page loads |
+| Without VPN, open the same URLs | **403 Forbidden** (this is correct) |
 
 ---
 
 ## 5. Troubleshooting
 
-**I get `403 Forbidden` on admin.bondiapp.ir**
+**I get `403 Forbidden` on admin.bondiapp.ir or log.bondiapp.ir**
 - The VPN is not connected — run `sudo wg-quick up wg0` (Ubuntu) or click
   *Activate* (Windows).
-- The hosts entry is missing. Confirm `admin.bondiapp.ir` maps to `10.8.0.1`:
-  - Ubuntu: `grep admin.bondiapp.ir /etc/hosts`
+- The hosts entry is missing. Confirm the domains map to `10.8.0.1`:
+  - Ubuntu: `grep bondiapp.ir /etc/hosts`
   - Windows: check the `hosts` file (step 3.3). Then run `ipconfig /flushdns`.
 
 **VPN is connected but admin still does not open**

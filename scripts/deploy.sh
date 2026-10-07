@@ -108,7 +108,7 @@ log "Applying migrations..."
 docker compose run --rm migrate
 
 # 6. Deploy the whole stack. Idempotent: containers whose image/config changed
-#    are recreated; unchanged services (db, redis, minio, glitchtip) stay up.
+#    are recreated; unchanged services (db, redis, minio, bugsink) stay up.
 #    First boot also creates the new services/networks (pgbouncer, celery, …).
 log "Starting services..."
 docker compose up -d

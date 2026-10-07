@@ -2,7 +2,7 @@
 """Centralized error logging + request-context helpers.
 
 Policy (see plan):
-- ERROR  (``exc_info=True``) -> structlog JSON + GlitchTip (via Sentry LoggingIntegration).
+- ERROR  (``exc_info=True``) -> structlog JSON + Bugsink (via Sentry LoggingIntegration).
 - WARNING                     -> structlog JSON only (expected client/duplicate/infra-noise).
 - Unhandled request exceptions are converted to 500 JSON by the global handler in main.py.
 """
@@ -22,7 +22,7 @@ from app.core.logging import get_logger
 
 # NOTE: We intentionally do NOT call sentry_sdk.capture_exception() from blocks
 # that also log at ERROR. The Sentry LoggingIntegration captures every
-# structlog ERROR (with exc_info) as a GlitchTip event, so an extra explicit
+# structlog ERROR (with exc_info) as a Bugsink event, so an extra explicit
 # capture would produce duplicate events for the same bug.
 
 logger = get_logger("error_handling")
@@ -101,7 +101,7 @@ def setup_sentry_handlers(app: FastAPI) -> None:
     """Bind the structlog ERROR bridge + global exceptions to sentry if DSN is set."""
     from app.core.config import settings
 
-    if not settings.GLITCHTIP_DSN or settings.TESTING:
+    if not settings.BUGSINK_DSN or settings.TESTING:
         return
 
     import sentry_sdk
@@ -115,13 +115,13 @@ def setup_sentry_handlers(app: FastAPI) -> None:
         exc_info = hint.get("exc_info")
         if exc_info:
             etype = exc_info[0]
-            # Expected client errors -> never deliver to GlitchTip.
+            # Expected client errors -> never deliver to Bugsink.
             if issubclass(etype, (StarletteHTTPException, RequestValidationError)):
                 return None
         return event
 
     sentry_sdk.init(
-        dsn=settings.GLITCHTIP_DSN,
+        dsn=settings.BUGSINK_DSN,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),

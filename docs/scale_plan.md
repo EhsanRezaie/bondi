@@ -22,7 +22,7 @@
 | GZip middleware | ✅ Done |
 | 556 tests passing | ✅ Done |
 | FCM push notifications | ✅ Done (Session 34) |
-| Structured logging + GlitchTip | ✅ Done (Session 33) |
+| Structured logging + Bugsink | ✅ Done (Session 33) |
 | Auth hardening (token, enumeration, OTP) | ✅ Done (Session 35) |
 | Location fuzzing | ✅ Done (Session 37) |
 | Per-match message rate limit | ✅ Done (Session 38) |

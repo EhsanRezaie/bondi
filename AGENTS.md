@@ -8,7 +8,7 @@ Persian-language dating app (FastAPI + PostgreSQL/PostGIS + Redis + MinIO + Cele
 # Dev server (local)
 uvicorn app.main:app --reload
 
-# Docker (full stack — app + db + redis + minio + bondi_glitchtip)
+# Docker (full stack — app + db + redis + minio + bondi_bugsink)
 docker compose up -d
 
 # Docker (dev with hot-reload, source mounted)
@@ -29,7 +29,7 @@ python -m app.db.scripts.seed_dummy_users
 
 ## Docker
 
-`docker compose up -d` starts everything: Nginx (80), app, Postgres (5432), Redis (6379), MinIO (9000/9001), GlitchTip (8080). The `entrypoint.sh` auto-detects `ENVIRONMENT` — adds `--reload` if development, plain uvicorn if production.
+`docker compose up -d` starts everything: Nginx (80), app, Postgres (5432), Redis (6379), MinIO (9000/9001), Bugsink (8080). The `entrypoint.sh` auto-detects `ENVIRONMENT` — adds `--reload` if development, plain uvicorn if production.
 
 Inside containers, DATABASE_URL/REDIS_URL/S3_ENDPOINT_URL are overridden to use Docker service names (`db`, `redis`, `minio`) instead of `localhost`.
 

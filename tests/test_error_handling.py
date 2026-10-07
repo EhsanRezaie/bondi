@@ -64,7 +64,7 @@ class TestGlobalExceptionHandling:
                 ]
 
     async def test_validation_error_returns_422(self, client):
-        """RequestValidationError must map to 422 (and never to GlitchTip)."""
+        """RequestValidationError must map to 422 (and never to Bugsink)."""
         resp = await client.post("/api/v1/auth/request-code", json={})
         assert resp.status_code == 422
         assert "detail" in resp.json()

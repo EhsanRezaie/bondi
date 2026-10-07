@@ -86,7 +86,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Error tracking: structlog ERROR bridge -> GlitchTip + global exception handlers.
+# Error tracking: structlog ERROR bridge -> Bugsink + global exception handlers.
 from app.core.error_handling import (
     http_context_middleware,
     register_exception_handlers,

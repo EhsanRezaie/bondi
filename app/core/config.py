@@ -147,9 +147,9 @@ class Settings(BaseSettings):
     FORCE_UPDATE_MESSAGE: str = "A critical update is available. Please update to continue using the app."
 
     # ============================================
-    # Error Tracking (GlitchTip)
+    # Error Tracking (Bugsink)
     # ============================================
-    GLITCHTIP_DSN: str = ""
+    BUGSINK_DSN: str = ""
 
     # ============================================
     # FCM Push Notifications

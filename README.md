@@ -24,7 +24,7 @@ A modern Persian-language dating app for the Iranian market. Free to use, with o
 | Database | PostgreSQL + PostGIS |
 | Cache / Realtime | Redis |
 | File storage | MinIO (S3-compatible) |
-| Error Tracking | GlitchTip (self-hosted, Sentry-compatible) |
+| Error Tracking | Bugsink (self-hosted, Sentry-compatible) |
 | Task Queue | Celery |
 | Mobile | Flutter |
 | Containers | Docker + Docker Compose |
@@ -205,7 +205,7 @@ After starting the server, open your browser:
 - **API docs (ReDoc):** http://localhost:8000/api/redoc
 - **OpenAPI JSON:** http://localhost:8000/api/openapi.json
 - **MinIO console:** http://localhost:9001 (login `minioadmin` / `minioadmin`) → browse uploaded photos, confirm `photos-public` and `photos-private` buckets exist
-- **GlitchTip dashboard:** http://localhost:8080 (login `admin@bondi_glitchtip.dev` / `admin123`) → error tracking dashboard
+- **Bugsink dashboard:** http://localhost:8080 (login `admin@bondi.local` / `admin123`) → error tracking dashboard
 
 ---
 
@@ -294,8 +294,7 @@ pytest tests/test_auth.py -v
 | PostgreSQL + PostGIS | 5432 | Main database |
 | Redis | 6379 | Cache + realtime |
 | MinIO | 9000 (API), 9001 (console) | Photo storage (S3-compatible) |
-| GlitchTip (web) | 8080 | Error tracking dashboard |
-| GlitchTip (worker) | — | Event ingestion + processing |
+| Bugsink | 8080 | Error tracking dashboard + event ingestion |
 
 ### Start everything
 
@@ -333,44 +332,42 @@ docker compose up -d
 
 ---
 
-## GlitchTip Error Tracking Setup
+## Bugsink Error Tracking Setup
 
-[GlitchTip](https://bondi_glitchtip.com/) is a self-hosted, open-source error tracker — a drop-in Sentry alternative. It catches unhandled exceptions and errors from the FastAPI app and displays them in a web dashboard.
+[Bugsink](https://www.bugsink.com/) is a self-hosted error tracker that is compatible with the Sentry SDK. It catches unhandled exceptions and errors from the FastAPI app and displays them in a web dashboard.
 
 ### How It Works
 
-- **GlitchTip (web)** — receives error events from the app via the Sentry SDK protocol, serves the dashboard UI
-- **GlitchTip (worker)** — processes queued events and writes them to the database (required — without it, events are silently dropped)
-- **sentry-sdk** — the Python client in `app/main.py` auto-captures exceptions and sends them to GlitchTip
+- **Bugsink** — a single Docker container that receives error events from the app via the Sentry SDK protocol, stores them, and serves the dashboard UI
+- **sentry-sdk** — the Python client in `app/core/error_handling.py` auto-captures exceptions and sends them to Bugsink (Bugsink is Sentry-compatible, so no client changes are needed)
+- **PostgreSQL** — Bugsink stores projects/events in the `bondi_bugsink` database on the existing `db` service (no Redis or worker container required)
 
 ### Architecture
 
 ```
-FastAPI App ──sentry_sdk──▸ GlitchTip Web (:8080) ──queue──▸ GlitchTip Worker ──▸ PostgreSQL
-                                                                              └──▸ Redis (queue backend)
+FastAPI App ──sentry_sdk──▸ Bugsink (:8080) ──▸ PostgreSQL (bondi_bugsink)
 ```
 
 ### Prerequisites
 
-No additional dependencies. GlitchTip runs in Docker (included in `docker-compose.yml`). The Python `sentry-sdk[fastapi]` package is already in `requirements.txt`.
+No additional dependencies. Bugsink runs in Docker (included in `docker-compose.yml`). The Python `sentry-sdk[fastapi]` package is already in `requirements.txt`.
 
 ### Platform Setup
 
-GlitchTip setup is the **same on all platforms** — it runs entirely in Docker. The only prerequisite is Docker + Docker Compose installed and running.
+Bugsink setup is the **same on all platforms** — it runs entirely in Docker. The only prerequisite is Docker + Docker Compose installed and running.
 
 #### Linux (Ubuntu/Debian)
 
 ```bash
 # Docker is already installed from the main setup guide.
-# GlitchTip starts automatically with the rest of the stack:
+# Bugsink starts automatically with the rest of the stack:
 
 docker compose up -d
 
-# Verify all GlitchTip services are running:
-docker ps --filter "name=bondi_bondi_glitchtip"
+# Verify the Bugsink container is running:
+docker ps --filter "name=bondi_bugsink"
 # Should show:
-#   bondi_bondi_glitchtip        Up   (web dashboard)
-#   bondi_bondi_glitchtip_worker Up   (event worker)
+#   bondi_bugsink   Up   (web dashboard + event ingestion)
 
 # Wait ~15 seconds for migrations, then open:
 # Dashboard: http://localhost:8080
@@ -384,8 +381,7 @@ docker ps --filter "name=bondi_bondi_glitchtip"
 docker compose up -d
 
 # Verify:
-docker ps --filter "name=bondi_bondi_glitchtip"
-# Should show both bondi_bondi_glitchtip and bondi_bondi_glitchtip_worker
+docker ps --filter "name=bondi_bugsink"
 
 # Open: http://localhost:8080
 ```
@@ -398,7 +394,7 @@ docker ps --filter "name=bondi_bondi_glitchtip"
 docker compose up -d
 
 # Verify:
-docker ps --filter "name=bondi_bondi_glitchtip"
+docker ps --filter "name=bondi_bugsink"
 
 # Open: http://localhost:8080
 ```
@@ -410,97 +406,53 @@ docker ps --filter "name=bondi_bondi_glitchtip"
 git clone <repo-url> && cd project-d
 docker compose up -d
 
-# 2. Wait for GlitchTip to initialize (~15 seconds)
+# 2. Wait for Bugsink to initialize (~15 seconds)
 sleep 15
 
-# 3. Create admin user
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.contrib.auth import get_user_model
-User = get_user_model()
-user = User.objects.create_superuser(email='admin@yourdomain.com', password='CHANGEME')
-print(f'Admin created: {user.email}')
-"
+# 3. The superuser is created automatically on first boot from BUGSINK_SUPERUSER
+#    (set in .env as email:password). Log in at http://<server-ip>:8080
 
-# 4. Create organization + project + get DSN
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.apps import apps
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-OrgModel = apps.get_model('organizations_ext', 'Organization')
-OrgUser = apps.get_model('organizations_ext', 'OrganizationUser')
-OrgOwner = apps.get_model('organizations_ext', 'OrganizationOwner')
-ProjectModel = apps.get_model('projects', 'Project')
-KeyModel = apps.get_model('projects', 'ProjectKey')
-
-user = User.objects.get(email='admin@yourdomain.com')
-org = OrgModel.objects.create(name='YourApp', slug='yourapp')
-org_user = OrgUser.objects.create(user=user, organization=org, role=0)
-OrgOwner.objects.create(organization_user=org_user, organization=org)
-project = ProjectModel.objects.create(name='YourApp', slug='yourapp', organization=org, platform='python')
-key = KeyModel.objects.create(project=project, name='Default')
-print(f'DSN: {key.get_dsn()}')
-"
+# 4. Create an organization + project in the dashboard (or via the Bugsink API),
+#    then copy the generated DSN.
 
 # 5. Update .env with the DSN (replace YOUR_SERVER_IP with your actual IP)
-#    GLITCHTIP_DSN=http://<public_key>@YOUR_SERVER_IP:8080/1
+#    BUGSINK_DSN=http://<public_key>@YOUR_SERVER_IP:8080/1
 
-# 6. Update SECRET_KEY for GlitchTip (generate a random one)
-#    GLITCHTIP_SECRET_KEY=$(openssl rand -hex 32)
+# 6. Restart the app to pick up the new DSN
+docker compose up -d app
 ```
 
-### First-Time GlitchTip Setup (All Platforms)
+### First-Time Bugsink Setup (All Platforms)
 
-After `docker compose up -d`, GlitchTip needs a one-time initialization:
+On first boot, Bugsink runs migrations and creates the superuser defined by
+`BUGSINK_SUPERUSER` in `.env` (`email:password`). Then, in the dashboard:
 
-```bash
-# 1. Wait for the web container to be healthy
-sleep 15
-
-# 2. Create admin user
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.contrib.auth import get_user_model
-User = get_user_model()
-User.objects.create_superuser(email='admin@bondi_glitchtip.dev', password='admin123')
-print('Admin created successfully')
-"
-
-# 3. Create organization, project, and API key
-docker exec bondi_bondi_glitchtip python manage.py shell -c "
-from django.apps import apps
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-OrgModel = apps.get_model('organizations_ext', 'Organization')
-OrgUser = apps.get_model('organizations_ext', 'OrganizationUser')
-OrgOwner = apps.get_model('organizations_ext', 'OrganizationOwner')
-ProjectModel = apps.get_model('projects', 'Project')
-KeyModel = apps.get_model('projects', 'ProjectKey')
-
-user = User.objects.get(email='admin@bondi_glitchtip.dev')
-org = OrgModel.objects.create(name='DatingApp', slug='datingapp')
-org_user = OrgUser.objects.create(user=user, organization=org, role=0)
-OrgOwner.objects.create(organization_user=org_user, organization=org)
-project = ProjectModel.objects.create(name='DatingApp', slug='datingapp', organization=org, platform='python')
-key = KeyModel.objects.create(project=project, name='Default')
-print(f'DSN: {key.get_dsn()}')
-"
-
-# 4. Copy the DSN from the output above and add it to your .env file:
-#    GLITCHTIP_DSN=http://<public_key>@localhost:8080/1
-
-# 5. Restart the FastAPI app to pick up the new DSN
-```
+1. Open `http://localhost:8080` and log in with `BUGSINK_SUPERUSER`.
+2. Create an organization and a project.
+3. Copy the project **DSN** (format `http://<public_key>@<host>:<port>/<project_id>`).
+4. Set `BUGSINK_DSN` in `.env`, then `docker compose up -d app`.
 
 ### Configuration (.env)
 
 ```env
-# GlitchTip DSN — get this from the dashboard after first-time setup
+# Bugsink DSN — get this from the dashboard after first-time setup
 # Format: http://<public_key>@<host>:<port>/<project_id>
-GLITCHTIP_DSN=http://56b584bd1e1443a6a14db49671e2f5fe@localhost:8080/1
+BUGSINK_DSN=
 
-# GlitchTip secret key — generate with: openssl rand -hex 32
-GLITCHTIP_SECRET_KEY=C6bqhRHE_hXolh2Zm35WnOgO9TDy0DQqGvMcUBYSGAE
+# Bugsink secret key — generate with: openssl rand -hex 32 (must be >= 50 chars)
+BUGSINK_SECRET_KEY=
+
+# Base URL where Bugsink is reachable (used to build links and DSNs)
+BUGSINK_BASE_URL=http://localhost:8080
+
+# Host/domain names Bugsink accepts. "*" disables host validation.
+BUGSINK_ALLOWED_HOSTS=*
+
+# Set true when served over HTTPS by a reverse proxy (nginx).
+BUGSINK_BEHIND_HTTPS_PROXY=false
+
+# Superuser created on first boot, as email:password
+BUGSINK_SUPERUSER=admin@bondi.local:admin123
 ```
 
 ### Verifying It Works
@@ -509,9 +461,9 @@ GLITCHTIP_SECRET_KEY=C6bqhRHE_hXolh2Zm35WnOgO9TDy0DQqGvMcUBYSGAE
 # 1. Start the FastAPI app
 uvicorn app.main:app --reload
 
-# 2. Open the GlitchTip dashboard
+# 2. Open the Bugsink dashboard
 #    http://localhost:8080
-#    Login: admin@bondi_glitchtip.dev / admin123
+#    Login: BUGSINK_SUPERUSER from .env
 
 # 3. Send a test error from a separate terminal:
 source venv/bin/activate
@@ -531,15 +483,15 @@ sentry_sdk.flush()
 
 ### How Errors Are Captured
 
-The FastAPI app initializes `sentry_sdk` in `app/main.py` on startup:
+The FastAPI app initializes `sentry_sdk` in `app/core/error_handling.py` on startup:
 
 ```python
-if settings.GLITCHTIP_DSN:
+if settings.BUGSINK_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
     sentry_sdk.init(
-        dsn=settings.GLITCHTIP_DSN,
+        dsn=settings.BUGSINK_DSN,
         integrations=[
             FastApiIntegration(transaction_style="endpoint"),
             SqlalchemyIntegration(),
@@ -576,29 +528,23 @@ with sentry_sdk.push_scope() as scope:
 
 | Container | Service | Purpose |
 |-----------|---------|---------|
-| `bondi_bondi_glitchtip` | `bondi_glitchtip` | Web UI + event ingestion API (port 8080) |
-| `bondi_bondi_glitchtip_worker` | `bondi_glitchtip-worker` | Background worker that processes events |
-| `bondi_bondi_glitchtip_db_init` | `bondi_glitchtip-db-init` | One-shot: creates the `bondi_glitchtip` database |
+| `bondi_bugsink` | `bugsink` | Web UI + event ingestion API (port 8080) |
+| `bondi_bugsink_db_init` | `bugsink-db-init` | One-shot: creates the `bondi_bugsink` database |
 
 ### Troubleshooting
 
-**500 error on `/api/0/users/me/` after login:**
-- Caused by using a `.local` email domain (e.g. `admin@bondi_glitchtip.local`) — Pydantic rejects `.local` as a reserved TLD
-- Fix: use a real domain like `admin@bondi_glitchtip.dev` or `admin@yourdomain.com`
-- If already created: `docker exec bondi_bondi_glitchtip python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u = User.objects.get(is_superuser=True); u.email = 'admin@bondi_glitchtip.dev'; u.save()"`
+**Dashboard not loading:**
+- Check the container is running: `docker ps --filter "name=bondi_bugsink"`
+- Logs: `docker logs bondi_bugsink`
 
 **Events not showing up in dashboard:**
-- Check the worker is running: `docker ps --filter "name=bondi_bondi_glitchtip_worker"`
-- If missing, the `bondi_glitchtip-worker` service was added after initial setup. Run: `docker compose up -d bondi_glitchtip-worker`
-- Worker logs: `docker logs bondi_bondi_glitchtip_worker`
+- Confirm `BUGSINK_DSN` is set in `.env` and the app was restarted (`docker compose up -d app`)
+- Trigger a test error (see *Verifying It Works*) and check the dashboard
 
-**Dashboard shows "Mode: Web only":**
-- This means the worker container is not running. The web container always shows "Web only" — the worker is separate.
-- Fix: `docker compose up -d bondi_glitchtip-worker`
-
-**GlitchTip won't start / database errors:**
+**Bugsink won't start / database errors:**
+- Ensure the `bondi_bugsink` database exists: `docker compose logs bugsink-db-init`
 - Recreate from scratch: `docker compose down -v && docker compose up -d`
-- Wait 15 seconds for initialization, then run the First-Time GlitchTip Setup above
+- Wait ~15 seconds for initialization
 
 **`sentry_sdk` import error on app startup:**
 - Install the missing dependency: `pip install sentry-sdk[fastapi]`
@@ -607,24 +553,20 @@ with sentry_sdk.push_scope() as scope:
 **Port 8080 already in use:**
 - Change the mapping in `docker-compose.yml`:
   ```yaml
-  bondi_glitchtip:
+  bugsink:
     ports:
-      - "8180:80"   # use port 8180 instead
+      - "8180:8000"   # use port 8180 instead
   ```
-- Update `GLITCHTIP_DSN` in `.env` to use the new port
+- Update `BUGSINK_BASE_URL` and `BUGSINK_DSN` in `.env` to use the new port
 
 ### Production / Server Deployment Notes
 
-- Change the GlitchTip admin password immediately after first setup
-- Set a strong `GLITCHTIP_SECRET_KEY` (generate with `openssl rand -hex 32`)
-- Restrict `ALLOWED_HOSTS` on the GlitchTip container in production:
-  ```yaml
-  bondi_glitchtip:
-    environment:
-      ALLOWED_HOSTS: yourdomain.com
-  ```
+- Change the Bugsink superuser password immediately after first setup
+- Set a strong `BUGSINK_SECRET_KEY` (generate with `openssl rand -hex 32`, must be at least 50 chars)
+- In production the dashboard is served at `https://log.bondiapp.ir`, restricted to the WireGuard VPN (`10.8.0.0/24`, same as the admin panel). Set `BUGSINK_BASE_URL=https://log.bondiapp.ir`, `BUGSINK_ALLOWED_HOSTS=log.bondiapp.ir,bugsink`, and `BUGSINK_BEHIND_HTTPS_PROXY=true`.
+- In production point the app at the **internal** service, not the public URL: `BUGSINK_DSN=http://<public_key>@bugsink:8000/<project_id>` (the app container cannot reach the VPN-only public host).
 - Set `traces_sample_rate` to `0.0` in production to disable performance tracing (or keep `0.1` for 10% sampling)
-- GlitchTip retains events for 90 days by default (configurable)
+- Bugsink retains events according to its retention settings (configurable)
 
 ---
 
