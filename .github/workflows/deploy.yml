@@ -204,6 +204,15 @@ jobs:
             set_env BUGSINK_SUPERUSER "$BUGSINK_SUPERUSER"
             set_env BUGSINK_DSN "$BUGSINK_DSN"
 
+            # docker compose interpolation prefers the process environment over
+            # the .env file. This action exports every name listed in `envs:`,
+            # so an unset GitHub secret arrives as an EMPTY variable and makes
+            # `${BUGSINK_X:-default}` fall back to the insecure default (which
+            # then crashes Bugsink's `check --deploy`). Drop them so compose
+            # reads the values we just persisted to .env.
+            unset BUGSINK_SECRET_KEY BUGSINK_BASE_URL BUGSINK_ALLOWED_HOSTS \
+                  BUGSINK_BEHIND_HTTPS_PROXY BUGSINK_SUPERUSER BUGSINK_DSN
+
             bash scripts/deploy.sh
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
