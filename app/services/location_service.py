@@ -11,6 +11,8 @@ import math
 from functools import lru_cache
 from typing import Optional, List, Dict, Any
 
+from starlette.concurrency import run_in_threadpool
+
 from app.core.config import GEO_REVERSE_MAX_DISTANCE_KM
 from app.core.logging import get_logger
 
@@ -380,7 +382,8 @@ async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional
         except Exception as e:
             logger.warning("Redis cache read failed", error=str(e))
 
-    result = _offline_reverse(lat, lng)
+    # Dataset scan + index build is CPU-bound — keep it off the event loop.
+    result = await run_in_threadpool(_offline_reverse, lat, lng)
     if result is None:
         return None
 

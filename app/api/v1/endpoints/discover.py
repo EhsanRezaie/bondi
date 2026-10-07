@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from datetime import date, datetime, timedelta
 import base64
 import json
+import math
 
 from app.db.session import get_session
 from app.models.user import User
@@ -151,7 +152,23 @@ async def discover(
             UserProfile.lat, UserProfile.lng
         )
         if distance_km is not None:
-            query = query.where(distance_expr <= distance_km)
+            # Bounding-box prefilter (uses idx_profiles_lat_lng) to prune rows
+            # cheaply before the expensive haversine is evaluated.
+            lat_delta = distance_km / 111.0
+            cos_lat = math.cos(math.radians(current_profile.lat))
+            if cos_lat > 1e-6:
+                lng_delta = min(distance_km / (111.0 * cos_lat), 180.0)
+            else:
+                lng_delta = 180.0
+            query = query.where(
+                UserProfile.lat.between(
+                    current_profile.lat - lat_delta, current_profile.lat + lat_delta
+                ),
+                UserProfile.lng.between(
+                    current_profile.lng - lng_delta, current_profile.lng + lng_delta
+                ),
+                distance_expr <= distance_km,
+            )
         query = query.add_columns(distance_expr.label("distance_km"))
     else:
         query = query.add_columns(func.cast(None, Float).label("distance_km"))

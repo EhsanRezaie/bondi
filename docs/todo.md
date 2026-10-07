@@ -69,8 +69,49 @@ email auth path. Verified by tests: backend **848 passed**, mobile **626 passed*
       `email_service.py`, removed email from schemas/cache/admin responses/search/seeds
       and from mobile validators/model/localizations. Migration `b2c3d4e5f6a7`.
 
-Remaining audit work is unchanged below: P2 perf/pagination/PostGIS, P3 mobile
-correctness, P4 mobile perf, P5 scale.
+Remaining audit work is unchanged below: P3 mobile correctness, P4 mobile perf,
+P5 scale (plus deferred keyset pagination for notifications/matches/blocks/
+search/admin_users/swipes and PostGIS distance — see Phase 2 note).
+
+---
+
+## Phase 2 performance & caching — shipped (2026-10-07)
+
+Hot-path query, connection-pool, CPU and fan-out work. Full backend suite:
+**850 passed**.
+
+- [x] **DB connection pool** — `pool_size=10`, `max_overflow=20`,
+      `pool_timeout=30` (was `5/0/5`, which serialized and starved under load).
+      `app/db/session.py`.
+- [x] **Nginx upstream keepalive** — `keepalive 32` + `proxy_http_version 1.1`
+      + `Connection ""` on all API proxy locations (was a fresh TCP connect per
+      request). `nginx/nginx.conf`.
+- [x] **Chat list: SQL pagination + N+1 removal** — deleted-by-me, ordering and
+      LIMIT/OFFSET/keyset now run in SQL (activity = newest message time via a
+      grouped subquery), unread counts are one `GROUP BY` instead of one
+      `COUNT(*)` per chat, and `is_ended` no longer issues a per-chat block query.
+      `app/api/v1/endpoints/chats.py`.
+- [x] **Message history: N+1 + needless COUNT** — reply targets batched into one
+      `IN (...)` query; the `COUNT(*)` is skipped entirely for cursor (`before`)
+      requests and made lightweight for offset. `app/api/v1/endpoints/messages.py`.
+- [x] **CPU-bound work off the event loop** — PIL decode/validate/WebP encode,
+      pHash, NSFW skin heuristic and offline reverse-geocode now run in the
+      Starlette threadpool. `app/services/photo_service.py`,
+      `app/services/nsfw_service.py`, `app/services/location_service.py`,
+      `app/api/v1/endpoints/photos.py`.
+- [x] **Discover distance prefilter** — added a `lat/lng` bounding-box predicate
+      (uses `idx_profiles_lat_lng`) ahead of the haversine so the trig runs on a
+      small candidate set. `app/api/v1/endpoints/discover.py`. (PostGIS deferred —
+      avoids a DB extension dependency; bbox captures most of the win.)
+- [x] **WebSocket fan-out indexes** — added `_chat_subscribers`
+      (chat → local user_ids) and `peer_index` (peer → chat_ids) so presence
+      broadcast, chat delivery and listener release are O(subscribers) instead
+      of scanning every subscription. `app/services/websocket_manager.py`.
+
+**Deferred (tracked, not forgotten):** keyset cursors for
+`notifications`/`matches`/`blocks`/`search`/`admin_users`/`swipes` (all already
+have offset + id tiebreaker, so they are stable; cursor is an optimisation) and a
+full PostGIS distance column.
 
 ---
 

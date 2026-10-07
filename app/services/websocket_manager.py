@@ -50,6 +50,11 @@ class WebSocketManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         # user_id -> {chat_id: peer_user_id}  (open chats / topic subscriptions)
         self.user_subscriptions: Dict[str, Dict[str, str]] = {}
+        # Reverse indexes so presence/fan-out don't scan every subscription:
+        #   chat_id -> set of locally subscribed user_ids
+        #   peer_user_id -> set of chat_ids where that peer is the other side
+        self._chat_subscribers: Dict[str, Set[str]] = {}
+        self.peer_index: Dict[str, Set[str]] = {}
         self._listener_tasks: Dict[str, asyncio.Task] = {}
 
     # ── Session Socket ─────────────────────────────────────────────────
@@ -98,8 +103,8 @@ class WebSocketManager:
                 del self.active_connections[user_id]
 
                 # Drop topic subscriptions and their now-unused channel listeners.
-                subs = self.user_subscriptions.pop(user_id, None)
-                for chat_id in (subs or {}):
+                for chat_id in list(self.user_subscriptions.get(user_id, {}).keys()):
+                    self._drop_subscription(user_id, chat_id)
                     self._release_chat_listener_if_unused(chat_id)
 
                 task_key = f"notify:{user_id}"
@@ -133,17 +138,34 @@ class WebSocketManager:
         if user_id not in self.user_subscriptions:
             self.user_subscriptions[user_id] = {}
         self.user_subscriptions[user_id][chat_id] = peer_user_id
+        self._chat_subscribers.setdefault(chat_id, set()).add(user_id)
+        self.peer_index.setdefault(peer_user_id, set()).add(chat_id)
 
         await self._ensure_chat_listener(_chat_channel(chat_id), redis)
         await redis.setex(_online_key(user_id), ONLINE_TTL, "1")
 
-    async def unsubscribe(self, user_id: str, chat_id: str):
+    def _drop_subscription(self, user_id: str, chat_id: str) -> None:
+        """Remove a chat subscription and keep the reverse indexes in sync."""
         subs = self.user_subscriptions.get(user_id)
         if subs:
-            subs.pop(chat_id, None)
+            peer = subs.pop(chat_id, None)
+            if peer is not None:
+                peer_chats = self.peer_index.get(peer)
+                if peer_chats:
+                    peer_chats.discard(chat_id)
+                    if not peer_chats:
+                        self.peer_index.pop(peer, None)
             if not subs:
                 self.user_subscriptions.pop(user_id, None)
 
+        subscribers = self._chat_subscribers.get(chat_id)
+        if subscribers:
+            subscribers.discard(user_id)
+            if not subscribers:
+                self._chat_subscribers.pop(chat_id, None)
+
+    async def unsubscribe(self, user_id: str, chat_id: str):
+        self._drop_subscription(user_id, chat_id)
         self._release_chat_listener_if_unused(chat_id)
 
     # ── Presence ───────────────────────────────────────────────────────
@@ -153,11 +175,9 @@ class WebSocketManager:
     ):
         """Push a presence event (online/offline) to every open chat whose
         peer is `user_id`, so that peer's open screens update in real time."""
-        for _subscriber, subs in list(self.user_subscriptions.items()):
-            for chat_id, peer in subs.items():
-                if peer == user_id:
-                    channel = _chat_channel(chat_id)
-                    await redis.publish(channel, json.dumps(payload))
+        for chat_id in list(self.peer_index.get(user_id, ())):
+            channel = _chat_channel(chat_id)
+            await redis.publish(channel, json.dumps(payload))
 
     async def is_online(self, user_id: str, redis: Redis) -> bool:
         return bool(await redis.exists(_online_key(user_id)))
@@ -216,9 +236,7 @@ class WebSocketManager:
             else _chat_channel(chat_id_or_channel)
         )
         chat_id = _chat_id_from_channel(channel)
-        still_subscribed = any(
-            chat_id in subs for subs in self.user_subscriptions.values()
-        )
+        still_subscribed = bool(self._chat_subscribers.get(chat_id))
         if still_subscribed:
             return
         task_key = f"chat:{channel}"
@@ -256,9 +274,7 @@ class WebSocketManager:
         message.pop("_target_user", None)
         data = json.dumps(message)
 
-        for user_id, subs in list(self.user_subscriptions.items()):
-            if chat_id not in subs:
-                continue
+        for user_id in list(self._chat_subscribers.get(chat_id, ())):
             if target_user and user_id != target_user:
                 continue
             sockets = self.active_connections.get(user_id)

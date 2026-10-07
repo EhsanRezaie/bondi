@@ -1,6 +1,6 @@
 # app/api/v1/endpoints/chats.py
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Response
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, tuple_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
@@ -383,15 +383,40 @@ async def list_chats(
         (await session.execute(select(Block.blocker_id).where(Block.blocked_id == user_id))).scalars().all()
     )
 
-    filters = [
+    # Deleted-by-me chats are filtered in SQL so LIMIT/OFFSET pagination is
+    # correct (previously the whole set was fetched and filtered in Python).
+    deleted_filter = or_(
+        and_(Chat.initiator_id == user_id, Chat.deleted_for_initiator == False),
+        and_(Chat.recipient_id == user_id, Chat.deleted_for_recipient == False),
+    )
+    base_filters = [
         or_(Chat.initiator_id == user_id, Chat.recipient_id == user_id),
         Chat.is_active == True,
+        deleted_filter,
     ]
     if status:
-        filters.append(Chat.status == status)
+        base_filters.append(Chat.status == status)
 
-    result = await session.execute(
-        select(Chat)
+    # Live activity time = newest non-deleted-for-all message, falling back to
+    # chat.updated_at. Computed in SQL so ordering + keyset pagination happen in
+    # the database instead of pulling every chat into Python.
+    last_msg_subq = (
+        select(
+            Message.chat_id.label("chat_id"),
+            func.max(Message.sent_at).label("last_sent_at"),
+        )
+        .where(Message.is_deleted_for_all == False)
+        .group_by(Message.chat_id)
+        .subquery()
+    )
+    activity = func.coalesce(last_msg_subq.c.last_sent_at, Chat.updated_at)
+
+    total = await session.scalar(
+        select(func.count()).select_from(Chat).where(*base_filters)
+    ) or 0
+
+    stmt = (
+        select(Chat, activity.label("activity"))
         .options(
             selectinload(Chat.initiator).selectinload(User.profile),
             selectinload(Chat.initiator).selectinload(User.photos),
@@ -400,22 +425,56 @@ async def list_chats(
             selectinload(Chat.recipient).selectinload(User.photos),
             selectinload(Chat.recipient).selectinload(User.settings),
         )
-        .where(*filters)
-        .order_by(Chat.updated_at.desc())
+        .outerjoin(last_msg_subq, last_msg_subq.c.chat_id == Chat.id)
+        .where(*base_filters)
+        .order_by(activity.desc(), Chat.id.desc())
     )
-    chats = result.scalars().all()
+
+    # Keyset (cursor) pagination vs legacy offset pagination. The list is sorted
+    # live by activity (last message time), so plain offset can re-return chats
+    # whose key moved up. The cursor takes everything strictly AFTER the previous
+    # page's last row instead.
+    cursor_id = None
+    if cursor:
+        cursor_ts, cursor_raw_id = _decode_chat_cursor(cursor)
+        if cursor_raw_id and cursor_ts is not None:
+            cursor_id = UUID(cursor_raw_id) if not isinstance(cursor_raw_id, UUID) else cursor_raw_id
+            stmt = stmt.where(
+                tuple_(activity, Chat.id) < tuple_(cursor_ts, cursor_id)
+            )
+
+    use_cursor = cursor_id is not None
+    if use_cursor:
+        stmt = stmt.limit(limit)
+    else:
+        stmt = stmt.offset(offset).limit(limit)
+
+    result = await session.execute(stmt)
+    fetched = result.all()
+    chats = [row[0] for row in fetched]
 
     last_messages = await get_last_messages_for_chats(
         session, [c.id for c in chats]
     )
 
+    # Batch unread counts for the page (was one COUNT(*) per chat → N+1).
+    unread_map: dict = {}
+    if chats:
+        unread_rows = await session.execute(
+            select(Message.chat_id, func.count())
+            .where(
+                Message.chat_id.in_([c.id for c in chats]),
+                Message.receiver_id == user_id,
+                Message.is_read == False,
+                Message.is_deleted_for_all == False,
+                Message.is_deleted_for_receiver == False,
+            )
+            .group_by(Message.chat_id)
+        )
+        unread_map = {cid: cnt for cid, cnt in unread_rows.all()}
+
     rows = []
     for chat in chats:
-        if user_id == chat.initiator_id and chat.deleted_for_initiator:
-            continue
-        if user_id == chat.recipient_id and chat.deleted_for_recipient:
-            continue
-
         other = chat.recipient if chat.initiator_id == user_id else chat.initiator
         if other is None:
             continue
@@ -423,17 +482,13 @@ async def list_chats(
         # Blocked chats are NOT hidden anymore. They stay in the list but are
         # flagged so the client can show "This conversation is over."
         is_blocked = other.id in blocked_ids
-        is_ended = await chat_is_ended(session, chat, user_id)
+        peer_deleted = (
+            chat.deleted_for_recipient if user_id == chat.initiator_id
+            else chat.deleted_for_initiator
+        )
+        is_ended = bool(chat.is_ended or peer_deleted or is_blocked)
 
-        unread = await session.scalar(
-            select(func.count()).select_from(Message).where(
-                Message.chat_id == chat.id,
-                Message.receiver_id == user_id,
-                Message.is_read == False,
-                Message.is_deleted_for_all == False,
-                Message.is_deleted_for_receiver == False,
-            )
-        ) or 0
+        unread = unread_map.get(chat.id, 0)
 
         last_msg = last_messages.get(chat.id)
         last_message = None
@@ -470,37 +525,9 @@ async def list_chats(
             "is_ended": is_ended,
         })
 
-    rows.sort(
-        key=lambda r: (r["updated_at"] or r["chat_id"], r["chat_id"]),
-        reverse=True,
-    )
-    total = len(rows)
-
-    # Keyset (cursor) pagination vs legacy offset pagination. The list is
-    # re-sorted live by activity (updated_at changes on every message), so
-    # plain offset can re-return chats whose key moved up. Cursor slicing finds
-    # the first row strictly AFTER the previous page's last row, which skips
-    # shifted rows instead of duplicating them.
-    start = 0
-    cursor_ts, cursor_raw_id = None, None
-    use_cursor = False
-    if cursor:
-        cursor_ts, cursor_raw_id = _decode_chat_cursor(cursor)
-        if cursor_raw_id:
-            use_cursor = True
-            cursor_id = UUID(cursor_raw_id) if not isinstance(cursor_raw_id, UUID) else cursor_raw_id
-            start = total
-            for i, r in enumerate(rows):
-                if (r["updated_at"] or r["chat_id"], r["chat_id"]) < (cursor_ts, cursor_id):
-                    start = i
-                    break
-
-    if use_cursor:
-        page = rows[start: start + limit]
-    else:
-        page = rows[offset: offset + limit]
-
-    has_next = (start + limit < total) if use_cursor else (offset + limit < total)
+    # Rows are already filtered, ordered and limited by SQL — this is the page.
+    page = rows
+    has_next = len(chats) == limit
     next_offset = offset + limit if (has_next and not use_cursor) else None
     next_cursor = None
     if has_next and page:

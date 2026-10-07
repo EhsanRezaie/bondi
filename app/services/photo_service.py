@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 from PIL import Image
 from botocore.exceptions import ClientError
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -49,6 +50,11 @@ class PhotoService:
         if len(file_data) > PhotoService.MAX_FILE_SIZE:
             return False, f"Image too large. Max {PhotoService.MAX_FILE_SIZE // (1024*1024)}MB"
 
+        # PIL decoding is CPU-bound — keep it off the event loop.
+        return await run_in_threadpool(PhotoService._validate_image_sync, file_data)
+
+    @staticmethod
+    def _validate_image_sync(file_data: bytes) -> Tuple[bool, Optional[str]]:
         try:
             # Open and validate image
             image = Image.open(io.BytesIO(file_data))
@@ -134,6 +140,14 @@ class PhotoService:
         return PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
 
     @staticmethod
+    def _encode_full_and_thumb(file_data: bytes) -> Tuple[bytes, bytes]:
+        """Decode once and produce the full-size + thumbnail WebP bytes."""
+        image = PhotoService._to_rgb(Image.open(io.BytesIO(file_data)))
+        full = PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
+        thumb = PhotoService._encode_webp(image, PhotoService.THUMB_MAX, PhotoService.THUMB_QUALITY)
+        return full, thumb
+
+    @staticmethod
     async def save_photo(user_id: str, photo_id: str, file_data: bytes) -> str:
         """
         Optimize and upload a newly-submitted photo (full + thumbnail) to the
@@ -143,9 +157,10 @@ class PhotoService:
         Returns the object KEY (not a URL) — store this in Photo.url.
         Resolve it to an actual loadable URL via get_photo_url() at read time.
         """
-        image = PhotoService._to_rgb(Image.open(io.BytesIO(file_data)))
-        full = PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
-        thumb = PhotoService._encode_webp(image, PhotoService.THUMB_MAX, PhotoService.THUMB_QUALITY)
+        # Decoding + WebP encoding is CPU-bound — keep it off the event loop.
+        full, thumb = await run_in_threadpool(
+            PhotoService._encode_full_and_thumb, file_data
+        )
 
         key = PhotoService._object_key(user_id, photo_id)
         thumb_key = PhotoService.thumb_key(key)

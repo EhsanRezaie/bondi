@@ -18,6 +18,7 @@ from typing import Tuple, Optional
 
 import numpy as np
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -71,7 +72,8 @@ class NSFWService:
             return True, 0.0
 
         try:
-            score = self._classify_heuristic(file_bytes)
+            # PIL/numpy decoding is CPU-bound — keep it off the event loop.
+            score = await run_in_threadpool(self._classify_heuristic, file_bytes)
             self._total_checked += 1
 
             is_safe = score < self._threshold

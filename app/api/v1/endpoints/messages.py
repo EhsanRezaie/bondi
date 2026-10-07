@@ -195,8 +195,15 @@ async def get_chat_history(
             before = before.replace(tzinfo=timezone.utc)
         query = query.where(Message.sent_at < before)
 
-    count_query = select(func.count()).select_from(query.subquery())
-    total = await session.scalar(count_query)
+    # `total` is only used for legacy offset pagination; skip the (potentially
+    # expensive) COUNT for keyset/cursor requests.
+    if before:
+        total = 0
+    else:
+        count_query = select(func.count()).select_from(
+            query.with_only_columns(Message.id).subquery()
+        )
+        total = await session.scalar(count_query)
 
     query = query.order_by(Message.sent_at.desc(), Message.id.desc())
     if not before:
@@ -205,16 +212,22 @@ async def get_chat_history(
     result = await session.execute(query)
     messages = result.scalars().all()
 
+    # Batch reply targets (was one SELECT per message → N+1).
+    reply_ids = [m.reply_to_id for m in messages if m.reply_to_id]
+    reply_map: dict = {}
+    if reply_ids:
+        reply_rows = await session.execute(
+            select(Message).where(Message.id.in_(reply_ids))
+        )
+        reply_map = {r.id: r for r in reply_rows.scalars().all()}
+
     message_responses = []
     for msg in reversed(messages):
         decrypted_data = await get_decrypted_message_for_client(session, msg, current_user.id)
 
         reply_to_data = None
         if msg.reply_to_id:
-            reply_result = await session.execute(
-                select(Message).where(Message.id == msg.reply_to_id)
-            )
-            reply_msg = reply_result.scalar_one_or_none()
+            reply_msg = reply_map.get(msg.reply_to_id)
             if reply_msg:
                 reply_content = reply_msg.content
                 reply_to_data = {

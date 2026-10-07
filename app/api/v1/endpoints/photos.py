@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from uuid import UUID
 import uuid
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.db.session import get_session
@@ -103,7 +104,7 @@ async def upload_photo(
     # Duplicate check: reject the same (or near-identical) image being uploaded
     # more than once. Compare only active photos (pending/approved) — a rejected
     # photo may be re-uploaded with fixes.
-    new_phash = PhotoService.compute_phash(file_data)
+    new_phash = await run_in_threadpool(PhotoService.compute_phash, file_data)
     dup_result = await session.execute(
         select(Photo.phash).where(
             Photo.user_id == current_user.id,
