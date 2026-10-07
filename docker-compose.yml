@@ -204,7 +204,9 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # Pinned copy of the official MinIO image mirrored to Docker Hub under
+    # ehsanpc/ — MinIO's own images are no longer publicly pullable.
+    image: ehsanpc/bondi-minio:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -222,7 +224,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc:latest
+    image: ehsanpc/bondi-minio-mc:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio_init
     depends_on:
       minio:

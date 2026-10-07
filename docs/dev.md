@@ -1228,7 +1228,7 @@ services:
       - "6379:6379"
 
   minio:
-    image: minio/minio:latest
+    image: ehsanpc/bondi-minio:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio
     command: server /data --console-address ":9001"
     environment:
@@ -1246,7 +1246,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc:latest
+    image: ehsanpc/bondi-minio-mc:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio_init
     depends_on:
       minio:
@@ -1290,7 +1290,7 @@ services:
       - "6380:6379"
 
   minio-test:
-    image: minio/minio:latest
+    image: ehsanpc/bondi-minio:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio_test
     command: server /data --console-address ":9091"
     environment:
@@ -1308,7 +1308,7 @@ services:
       retries: 5
 
   minio-test-init:
-    image: minio/mc:latest
+    image: ehsanpc/bondi-minio-mc:RELEASE.2025-09-07T16-13-09Z
     container_name: bondi_minio_test_init
     depends_on:
       minio-test:
