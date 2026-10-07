@@ -555,8 +555,8 @@ with sentry_sdk.push_scope() as scope:
 
 - Change the Bugsink superuser password immediately after first setup
 - Set a strong `BUGSINK_SECRET_KEY` (generate with `openssl rand -hex 32`, must be at least 50 chars)
-- In production the dashboard is served at `https://log.bondiapp.ir`, restricted to the WireGuard VPN (`10.8.0.0/24`, same as the admin panel). Set `BUGSINK_BASE_URL=https://log.bondiapp.ir`, `BUGSINK_ALLOWED_HOSTS=log.bondiapp.ir,bugsink`, and `BUGSINK_BEHIND_HTTPS_PROXY=true`.
-- In production point the app at the **internal** service, not the public URL: `BUGSINK_DSN=http://<public_key>@bugsink:8000/<project_id>` (the app container cannot reach the VPN-only public host).
+- In production the dashboard is served at `https://log.bondiapp.ir` (publicly reachable, gated by Bugsink's own login). Set `BUGSINK_BASE_URL=https://log.bondiapp.ir`, `BUGSINK_ALLOWED_HOSTS=log.bondiapp.ir,bugsink`, and `BUGSINK_BEHIND_HTTPS_PROXY=true`.
+- In production point the app at the **internal** service, not the public URL: `BUGSINK_DSN=http://<public_key>@bugsink:8000/<project_id>`.
 - Set `traces_sample_rate` to `0.0` in production to disable performance tracing (or keep `0.1` for 10% sampling)
 - Bugsink retains events according to its retention settings (configurable)
 
