@@ -29,6 +29,7 @@ from app.schemas.chat import (
 )
 from app.services.chat_service import (
     find_chat_for_pair,
+    pair_lock_key,
     get_user_chat,
     create_chat_for_pair,
     have_mutual_like,
@@ -168,6 +169,11 @@ async def create_chat(
         raise HTTPException(status_code=403, detail="You cannot start a chat with this user")
 
     # ── Existing chat for the pair ────────────────────────────────────
+    # Take a per-pair transaction-level advisory lock first so two concurrent
+    # requests cannot both see "no chat" and insert a duplicate for the pair.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(pair_lock_key(user_id, target_user_id)))
+    )
     existing = await find_chat_for_pair(session, user_id, target_user_id)
     if existing:
         return ChatCreateResponse(

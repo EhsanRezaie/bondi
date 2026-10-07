@@ -361,3 +361,64 @@ class TestSwipeStats:
         assert isinstance(data["ads_watched_today"], int)
         assert isinstance(data["max_ads_per_day"], int)
         assert data["is_unlimited"] is True  # welcome bonus
+
+
+class TestMatchRaceRegression:
+    """Regression: a pre-existing match for the pair must not cause a 409 and
+    must not lose the like swipe (savepoint rollback instead of full rollback)."""
+
+    async def test_duplicate_match_race_returns_existing_match(
+        self,
+        client: AsyncClient,
+        mock_verification_code,
+        db_session,
+    ):
+        from uuid import UUID
+        from sqlalchemy import select
+        from app.models.swipe import Swipe
+        from app.models.match import Match
+
+        male = await register_male(client, mock_verification_code)
+        female = await register_female(client, mock_verification_code)
+        male_headers = {"Authorization": f"Bearer {male['access_token']}"}
+        female_headers = {"Authorization": f"Bearer {female['access_token']}"}
+        male_id, female_id = male["user"]["id"], female["user"]["id"]
+
+        # Female likes male first (no match yet).
+        r = await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
+        assert r.status_code == 200
+
+        # Male passes female first (so a later like is a direction change).
+        r = await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "pass"}, headers=male_headers
+        )
+        assert r.status_code == 200
+
+        # Simulate the concurrent winner having already created the match.
+        u1, u2 = UUID(male_id), UUID(female_id)
+        if u1.int > u2.int:
+            u1, u2 = u2, u1
+        existing = Match(user1_id=u1, user2_id=u2, is_active=True)
+        db_session.add(existing)
+        await db_session.commit()
+        existing_id = str(existing.id)
+
+        # Male likes female → mutual, but the match row already exists.
+        r = await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["matched"] is True
+        assert data["match_id"] == existing_id
+
+        # The like swipe must survive the savepoint rollback.
+        sw = await db_session.execute(
+            select(Swipe).where(
+                Swipe.from_user == UUID(male_id),
+                Swipe.to_user == UUID(female_id),
+            )
+        )
+        assert sw.scalar_one_or_none() is not None

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from uuid import UUID
 import uuid
 
@@ -118,15 +118,17 @@ async def upload_photo(
             detail="Photo rejected: this photo is already uploaded.",
         )
 
-    # Check photo limit atomically — FOR UPDATE locks existing rows so
-    # a concurrent upload cannot read the same count and both pass the check.
-    result = await session.execute(
-        select(Photo)
-        .where(Photo.user_id == current_user.id)
-        .with_for_update()
+    # Check photo limit atomically. Locking the user row serializes concurrent
+    # uploads for the same user; locking existing Photo rows cannot guard the
+    # absent rows a concurrent INSERT is about to create.
+    await session.execute(
+        select(User.id).where(User.id == current_user.id).with_for_update()
     )
-    photos = result.scalars().all()
-    if len(photos) >= settings.MAX_PHOTOS_PER_USER:
+    count_result = await session.execute(
+        select(func.count()).select_from(Photo).where(Photo.user_id == current_user.id)
+    )
+    photo_count = count_result.scalar_one()
+    if photo_count >= settings.MAX_PHOTOS_PER_USER:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Maximum {settings.MAX_PHOTOS_PER_USER} photos per user",
@@ -136,8 +138,8 @@ async def upload_photo(
     new_photo = Photo(
         user_id=current_user.id,
         url="",  # Will update after save
-        order=len(photos),
-        is_main=len(photos) == 0,  # First photo becomes main
+        order=photo_count,
+        is_main=photo_count == 0,  # First photo becomes main
         status="pending",
         nsfw_score=nsfw_score,
         phash=new_phash,

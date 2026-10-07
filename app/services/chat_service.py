@@ -1,5 +1,6 @@
 # app/services/chat_service.py
 import asyncio
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from typing import Optional, Tuple, List, Dict, Any
@@ -51,6 +52,14 @@ async def get_or_create_daily_limit(
     session.add(daily_limit)
     await session.flush()
     return daily_limit
+
+
+def pair_lock_key(a: UUID, b: UUID) -> int:
+    """Stable signed 64-bit key for a user pair, for pg_advisory_xact_lock."""
+    s = ":".join(sorted([str(a), str(b)]))
+    return int.from_bytes(
+        hashlib.blake2b(s.encode(), digest_size=8).digest(), "big", signed=True
+    )
 
 
 async def find_chat_for_pair(

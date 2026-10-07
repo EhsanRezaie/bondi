@@ -49,7 +49,6 @@ async def get_user_main_photo_url(session: AsyncSession, user_id: UUID) -> str |
 
 
 async def _background_match_notification(
-    session: AsyncSession,
     current_user_id: UUID,
     target_user_id: UUID,
     match_id: UUID,
@@ -58,13 +57,21 @@ async def _background_match_notification(
     target_user_name: str,
     target_user_age: int,
 ):
-    """Run after response is sent: create match notifications and broadcast WebSocket."""
-    try:
-        notification_service = NotificationService(session)
-        await notification_service.notify_match(current_user_id, target_user_id, match_id)
+    """Run after response is sent: create match notifications and broadcast WebSocket.
 
-        user1_main_photo_url = await get_user_main_photo_url(session, current_user_id)
-        user2_main_photo_url = await get_user_main_photo_url(session, target_user_id)
+    Opens its own session: this runs as a BackgroundTask after the request's
+    session has been closed, so it must not borrow the request session.
+    """
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            notification_service = NotificationService(session)
+            await notification_service.notify_match(current_user_id, target_user_id, match_id)
+
+            user1_main_photo_url = await get_user_main_photo_url(session, current_user_id)
+            user2_main_photo_url = await get_user_main_photo_url(session, target_user_id)
+            await session.commit()
 
         user1_data = {
             "id": str(current_user_id),
@@ -274,38 +281,64 @@ async def swipe(
         mutual_swipe = mutual_result.scalar_one_or_none()
         
         if mutual_swipe:
-            # Create match
+            # Create the match inside a SAVEPOINT so a concurrent duplicate
+            # (unique constraint) rolls back only this insert — not the swipe
+            # already flushed in the outer transaction.
+            created_match = None
+            existing_match_id = None
+            # Canonical pair order so the (user1_id, user2_id) unique constraint
+            # actually dedupes two concurrent mutual likes triggered from either
+            # side (otherwise each inserts the pair in its own order).
+            pair_user1, pair_user2 = (current_user_id, body.user_id)
+            if pair_user1.int > pair_user2.int:
+                pair_user1, pair_user2 = pair_user2, pair_user1
             try:
-                new_match = Match(
-                    user1_id=current_user_id,
-                    user2_id=body.user_id,
-                    is_active=True,
+                async with session.begin_nested():
+                    new_match = Match(
+                        user1_id=pair_user1,
+                        user2_id=pair_user2,
+                        is_active=True,
+                    )
+                    session.add(new_match)
+                    await session.flush()
+                # Only reached when the insert committed to the savepoint.
+                created_match = new_match
+            except IntegrityError:
+                logger.warning(
+                    "match_duplicate",
+                    user1=str(current_user_id),
+                    user2=str(body.user_id),
+                    exc_info=True,
                 )
-                session.add(new_match)
-                await session.flush()
-            except IntegrityError as e:
-                await session.rollback()
-                logger.warning("match_duplicate", user1=str(current_user_id), user2=str(body.user_id), error=str(e), exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Already matched with this user",
+                # Another request won the race — surface the existing match.
+                existing_result = await session.execute(
+                    select(Match.id).where(
+                        or_(
+                            and_(Match.user1_id == current_user_id, Match.user2_id == body.user_id),
+                            and_(Match.user1_id == body.user_id, Match.user2_id == current_user_id),
+                        )
+                    )
                 )
-            
-            matched = True
-            match_id = new_match.id
-            
-            # Offload match notification + WebSocket broadcast to background
-            background_tasks.add_task(
-                _background_match_notification,
-                session=session,
-                current_user_id=current_user_id,
-                target_user_id=target_user.id,
-                match_id=new_match.id,
-                current_user_name=current_profile.name,
-                current_user_age=current_profile.age,
-                target_user_name=target_user.profile.name,
-                target_user_age=target_user.profile.age,
-            )
+                existing_match_id = existing_result.scalar_one_or_none()
+
+            if created_match is not None:
+                matched = True
+                match_id = created_match.id
+
+                # Offload match notification + WebSocket broadcast to background
+                background_tasks.add_task(
+                    _background_match_notification,
+                    current_user_id=current_user_id,
+                    target_user_id=target_user.id,
+                    match_id=created_match.id,
+                    current_user_name=current_profile.name,
+                    current_user_age=current_profile.age,
+                    target_user_name=target_user.profile.name,
+                    target_user_age=target_user.profile.age,
+                )
+            elif existing_match_id is not None:
+                matched = True
+                match_id = existing_match_id
     
     await session.commit()
     

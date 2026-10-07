@@ -69,8 +69,54 @@ email auth path. Verified by tests: backend **848 passed**, mobile **626 passed*
       `email_service.py`, removed email from schemas/cache/admin responses/search/seeds
       and from mobile validators/model/localizations. Migration `b2c3d4e5f6a7`.
 
-Remaining audit work is unchanged below: P1 correctness races, P2 perf/pagination/
-PostGIS, P3 mobile correctness, P4 mobile perf, P5 scale.
+Remaining audit work is unchanged below: P2 perf/pagination/PostGIS, P3 mobile
+correctness, P4 mobile perf, P5 scale.
+
+---
+
+## Phase 1 correctness & race conditions — shipped (2026-10-07)
+
+Seven check-then-act / transaction-boundary races fixed. Verified by the full
+backend suite: **850 passed** (848 baseline + 2 new regression tests).
+
+- [x] **Match create check-then-insert race** — match is now inserted inside a
+      `SAVEPOINT` (`session.begin_nested()`); a concurrent duplicate rolls back
+      only the insert, not the already-flushed like swipe. The pair is
+      canonicalized (`user1_id == min`, `user2_id == max`) so the
+      `UniqueConstraint(user1_id, user2_id)` actually dedupes mutual likes
+      triggered from either side; on conflict the existing match is surfaced
+      (`matched=True` with its id) instead of returning `409`.
+      `app/api/v1/endpoints/swipes.py`. Regression:
+      `tests/test_swipes.py::TestMatchRaceRegression`.
+- [x] **First like/conversation of the day wrongly `429`** — the atomic counter
+      `UPDATE` matched zero rows when no `daily_limits` row existed yet.
+      `RewardService._ensure_daily_limit_row` (`INSERT ... ON CONFLICT DO
+      NOTHING`) now runs first in `consume_like`/`consume_chat`.
+      `app/services/reward_service.py`. Regression:
+      `tests/test_daily_limits.py::TestFirstLikeOfDayRegression`.
+- [x] **Photo daily-limit locked the wrong rows** — `SELECT ... FOR UPDATE` over
+      existing photos cannot guard the absent rows a concurrent `INSERT` creates.
+      Now locks the **user** row (serializes uploads per user) then counts.
+      `app/api/v1/endpoints/photos.py`.
+- [x] **`create_chat` duplicate-pair race** — added a per-pair transaction-level
+      `pg_advisory_xact_lock` (stable signed 64-bit key via BLAKE2b of the sorted
+      uuid pair) before the existing-chat lookup, so two concurrent requests
+      cannot both insert a chat for the same pair.
+      `app/api/v1/endpoints/chats.py`, `app/services/chat_service.py`
+      (`pair_lock_key`).
+- [x] **Referral claim returned `500` on race** — `grant_premium_days` no longer
+      commits internally; the reward row, both profile updates and the
+      subscription rows commit as one unit, and the endpoint wraps the grants +
+      commit in `try/except IntegrityError` → clean `409`. Previously the
+      internal commit flushed the pending `ReferralReward` and raised uncaught.
+      `app/services/reward_service.py`, `app/api/v1/endpoints/referrals.py`.
+- [x] **`grant_premium_days` internal commit** — replaced with `flush()`; callers
+      own the transaction. Same change as above.
+- [x] **Background tasks reused the request session** — `_background_chat_updated`
+      (messages) and `_background_match_notification` (swipes) now open their own
+      `AsyncSessionLocal`, since BackgroundTasks run after the request session is
+      closed. `app/api/v1/endpoints/messages.py`,
+      `app/api/v1/endpoints/swipes.py`.
 
 ---
 

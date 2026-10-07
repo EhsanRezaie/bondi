@@ -70,7 +70,6 @@ async def _background_websocket_send(
 
 
 async def _background_chat_updated(
-    session: AsyncSession,
     recipient_user_id: UUID,
     chat_id: UUID,
     status: str,
@@ -78,17 +77,24 @@ async def _background_chat_updated(
     updated_at: Optional[datetime],
 ):
     """Publish a chat_updated event on the recipient's personal channel so
-    their chat list can reorder and refresh in real time."""
+    their chat list can reorder and refresh in real time.
+
+    Opens its own session: this runs as a BackgroundTask after the request's
+    session has been closed, so it must not borrow the request session.
+    """
     try:
-        unread = await session.scalar(
-            select(func.count()).select_from(Message).where(
-                Message.chat_id == chat_id,
-                Message.receiver_id == recipient_user_id,
-                Message.is_read == False,
-                Message.is_deleted_for_all == False,
-                Message.is_deleted_for_receiver == False,
-            )
-        ) or 0
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            unread = await session.scalar(
+                select(func.count()).select_from(Message).where(
+                    Message.chat_id == chat_id,
+                    Message.receiver_id == recipient_user_id,
+                    Message.is_read == False,
+                    Message.is_deleted_for_all == False,
+                    Message.is_deleted_for_receiver == False,
+                )
+            ) or 0
         await websocket_manager.send_personal_message(
             str(recipient_user_id),
             {
@@ -340,7 +346,6 @@ async def send_text_message(
     )
     background_tasks.add_task(
         _background_chat_updated,
-        session=session,
         recipient_user_id=other_user_id,
         chat_id=chat.id,
         status=chat.status,
@@ -438,7 +443,6 @@ async def send_photo_message(
     )
     background_tasks.add_task(
         _background_chat_updated,
-        session=session,
         recipient_user_id=other_user_id,
         chat_id=chat.id,
         status=chat.status,
@@ -531,7 +535,6 @@ async def send_voice_message(
     )
     background_tasks.add_task(
         _background_chat_updated,
-        session=session,
         recipient_user_id=other_user_id,
         chat_id=chat.id,
         status=chat.status,

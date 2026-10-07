@@ -94,25 +94,28 @@ async def claim_referral(
         invited_days=settings.REFERRAL_INVITED_DAYS,
     )
     session.add(reward)
-    
-    # Grant rewards
+
+    # Grant rewards. All writes (the reward row, both profiles and the
+    # subscription rows) are committed as one unit; grant_premium_days no
+    # longer commits internally, so a duplicate claim rolls back completely
+    # and surfaces as 409 instead of a 500.
     reward_service = RewardService(session)
-    
-    # Grant to invited user
-    await reward_service.grant_premium_days(
-        current_user,
-        settings.REFERRAL_INVITED_DAYS,
-        source="referral"
-    )
-    
-    # Grant to inviter
-    await reward_service.grant_premium_days(
-        inviter,
-        settings.REFERRAL_INVITER_DAYS,
-        source="referral"
-    )
-    
+
     try:
+        # Grant to invited user
+        await reward_service.grant_premium_days(
+            current_user,
+            settings.REFERRAL_INVITED_DAYS,
+            source="referral"
+        )
+
+        # Grant to inviter
+        await reward_service.grant_premium_days(
+            inviter,
+            settings.REFERRAL_INVITER_DAYS,
+            source="referral"
+        )
+
         await session.commit()
         await invalidate_auth_user(redis_client, current_user.id)
     except IntegrityError as e:

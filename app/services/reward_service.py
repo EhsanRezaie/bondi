@@ -109,12 +109,30 @@ class RewardService:
         available = settings.FREE_USER_DAILY_CHATS + daily_limit.ad_chats_bonus - daily_limit.chats_used
         return max(0, available)
     
+    async def _ensure_daily_limit_row(self, user_id: UUID, target_date: date) -> None:
+        """Guarantee a daily_limits row exists for the day (idempotent, race-safe).
+
+        The atomic counter updates below match zero rows — and wrongly report
+        "limit reached" — when the row was never created. This upsert removes
+        that first-consumption-of-the-day failure.
+        """
+        stmt = insert(DailyLimit).values(
+            user_id=user_id,
+            date=target_date,
+            likes_used=0,
+            chats_used=0,
+            ad_likes_bonus=0,
+            ad_chats_bonus=0,
+        ).on_conflict_do_nothing(constraint="uq_daily_limits_user_date")
+        await self.db.execute(stmt)
+
     async def consume_like(self, user_id: UUID, is_premium: bool) -> bool:
         """Consume one like atomically. Returns True if successful."""
         if is_premium:
             return True
 
         today = utc_today()
+        await self._ensure_daily_limit_row(user_id, today)
 
         # Atomic: increment only if under the limit (prevents TOCTOU race)
         stmt = (
@@ -162,6 +180,7 @@ class RewardService:
             return True
 
         today = utc_today()
+        await self._ensure_daily_limit_row(user.id, today)
 
         # Atomic: increment only if under the limit (prevents TOCTOU race)
         stmt = (
@@ -321,6 +340,9 @@ class RewardService:
             payment_id=payment_id,
         )
         self.db.add(subscription)
-        await self.db.commit()
-        
+        # No internal commit: callers own the transaction (e.g. referral claim
+        # inserts the ReferralReward row and must be able to roll it back as a
+        # unit on a duplicate-key conflict).
+        await self.db.flush()
+
         return profile.premium_until

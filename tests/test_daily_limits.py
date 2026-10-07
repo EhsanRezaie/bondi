@@ -172,3 +172,44 @@ class TestDailyLimits:
         ]
         for field in expected_fields:
             assert field in body
+
+class TestFirstLikeOfDayRegression:
+    """Regression: consume_like must not falsely 429 when the daily_limits row
+    for the day has not been created yet (first action of the day)."""
+
+    async def test_first_like_of_day_succeeds_without_daily_row(
+        self,
+        client: AsyncClient,
+        mock_verification_code,
+        db_session,
+    ):
+        from sqlalchemy import delete, update
+        from app.models.user_profile import UserProfile
+        from app.models.daily_limit import DailyLimit
+        from app.core.config import settings
+
+        male_headers, male_id = await register_and_get_headers(
+            client, _phone("first_like_male"), COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
+        _, female_id = await register_and_get_headers(
+            client, _phone("first_like_female"), COMPLETE_PROFILE_PAYLOAD2, mock_verification_code
+        )
+
+        # Force the liker to be a free user with NO daily_limits row for today.
+        await db_session.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == male_id)
+            .values(premium_until=None)
+        )
+        await db_session.execute(
+            delete(DailyLimit).where(DailyLimit.user_id == male_id)
+        )
+        await db_session.commit()
+
+        res = await client.post(
+            SWIPE_URL,
+            json={"user_id": female_id, "direction": "like"},
+            headers=male_headers,
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["likes_remaining_today"] == settings.FREE_USER_DAILY_LIKES - 1
