@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # bcrypt work factor. Keep 12 in production; tests use 4 for speed.
+    BCRYPT_ROUNDS: int = 12
 
     # ============================================
     # SMS (Kavenegar via OAuth2 gateway) — values come from .env

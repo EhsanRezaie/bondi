@@ -234,7 +234,8 @@ iranian-dating-app/
 │   ├── .env.test
 │   ├── docker-compose.yml                 # App + all infrastructure (db, redis, minio, nginx, bondi_bugsink)
 │   ├── docker-compose.test.yml            # Test infrastructure (db_test, redis_test, minio-test)
-│   ├── requirements.txt
+│   ├── pyproject.toml                     # Dependencies (uv) + pytest config
+│   ├── uv.lock                            # Locked dependency graph
 │   └── Dockerfile
 │
 └── mobile/                                # Flutter app
@@ -1190,13 +1191,13 @@ CREATE INDEX idx_messages_match ON messages(match_id, created_at DESC);
 ### Run All Tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Run a Single File
 
 ```bash
-pytest tests/test_messages_encryption.py -v
+uv run pytest tests/test_messages_encryption.py -v
 ```
 
 ---

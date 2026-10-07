@@ -93,7 +93,7 @@ if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
     fi
 fi
 
-# 4. Build/refresh base image (deps) — no-op unless requirements.txt changed
+# 4. Build/refresh base image (deps) — no-op unless uv.lock changed
 log "Ensuring base image (deps)..."
 bash scripts/build-base.sh
 

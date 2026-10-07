@@ -97,7 +97,7 @@ Message keys derived on-the-fly from `match_id + ENCRYPTION_SECRET` (PBKDF2, 100
 
 ## pytest
 
-`pytest.ini` sets only `asyncio_mode = auto`. No `@pytest.mark.asyncio` decorators needed.
+`pyproject.toml` `[tool.pytest.ini_options]` sets `asyncio_mode = auto` plus session-scoped event loops and `-n auto --dist loadscope` (tests run in parallel). No `@pytest.mark.asyncio` decorators needed. Tests run per-xdist-worker isolated Postgres DBs and Redis logical DBs.
 
 ## Imports
 

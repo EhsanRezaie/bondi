@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Heavy dependency layer. Built ONLY when requirements.txt changes (see
-# scripts/build-base.sh). Tagged bondi-base:<md5(requirements.txt)> and
-# bondi-base:latest so app rebuilds skip pip entirely.
+# Heavy dependency layer. Built ONLY when uv.lock / pyproject.toml changes (see
+# scripts/build-base.sh). Tagged bondi-base:<md5(uv.lock+pyproject.toml)> and
+# bondi-base:latest so app rebuilds skip dependency install entirely.
 
 FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
 
@@ -15,5 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+# Export the exact locked runtime deps and install them into the system
+# interpreter. We install uv with pip (not the ghcr.io image) because the
+# deployment host cannot reliably reach ghcr.io. `uv export` keeps uv.lock as
+# the single source of truth while pip still honours the host's index mirror.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir uv==0.12.19 \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+    && pip install -r /tmp/requirements.txt \
+    && pip uninstall -y uv \
+    && rm -f /tmp/requirements.txt

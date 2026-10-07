@@ -6,7 +6,7 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 import redis.asyncio as aioredis
 from unittest.mock import AsyncMock, patch
 from datetime import datetime, timedelta
@@ -17,6 +17,34 @@ from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 load_dotenv(".env.test", override=True)
+
+# ---------------------------------------------------------------------------
+# Per-xdist-worker isolation. WORKER_ID drives an isolated Postgres database
+# (bondi_test_<worker>) AND an isolated Redis logical DB. The Redis URL is
+# rewritten BEFORE the app is imported so that modules doing
+# `from app.core.redis import redis_client` also bind to the worker's DB
+# (patching the module attribute alone misses those direct imports).
+# ---------------------------------------------------------------------------
+WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "master")
+_WORKER_NUM = 0 if WORKER_ID == "master" else int(WORKER_ID.replace("gw", "") or 0)
+
+ORIGINAL_DATABASE_URL = os.environ["DATABASE_URL"]
+
+
+def _url_with_path(url: str, path: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+# Point BOTH the app's global engine and the test fixtures at the same worker
+# database. Some code paths (e.g. background/backfill work) open their own
+# session from settings instead of the overridden request session, so the app
+# must not fall back to the shared master DB.
+_parts = urlsplit(ORIGINAL_DATABASE_URL)
+_base_db = _parts.path.lstrip("/")
+_worker_db = _base_db if WORKER_ID == "master" else f"{_base_db}_{WORKER_ID}"
+os.environ["DATABASE_URL"] = _url_with_path(ORIGINAL_DATABASE_URL, f"/{_worker_db}")
+os.environ["REDIS_URL"] = _url_with_path(os.environ["REDIS_URL"], f"/{_WORKER_NUM}")
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -30,15 +58,14 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 
-BASE_DATABASE_URL = os.environ["DATABASE_URL"]
+# Keep the master URL for admin DB ops (CREATE/DROP the per-worker DB).
+BASE_DATABASE_URL = ORIGINAL_DATABASE_URL
 TEST_REDIS_URL = os.environ["REDIS_URL"]
 
 # ---------------------------------------------------------------------------
 # Per-xdist-worker DB name → each worker gets isolated DB, no cross-worker
 # deadlocks on shared teardown DELETEs.
 # ---------------------------------------------------------------------------
-
-WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "master")
 
 
 def _split_url(url: str):
@@ -74,13 +101,10 @@ def make_engine():
 
 
 def make_redis():
-    # Separate Redis DB index per worker too, avoid flushdb races across workers.
-    worker_num = 0 if WORKER_ID == "master" else int(WORKER_ID.replace("gw", "") or 0)
-    url = TEST_REDIS_URL
-    if "/0" in url or url.rstrip("/").split("/")[-1].isdigit():
-        base = url.rsplit("/", 1)[0]
-        url = f"{base}/{worker_num}"
-    return aioredis.from_url(url, encoding="utf-8", decode_responses=True)
+    # TEST_REDIS_URL already carries this worker's logical DB index (set above,
+    # before the app import), so both the patched client and direct imports of
+    # app.core.redis.redis_client land on the same isolated DB.
+    return aioredis.from_url(TEST_REDIS_URL, encoding="utf-8", decode_responses=True)
 
 
 async def _create_worker_database():
@@ -158,16 +182,51 @@ async def seed_interests(conn):
 # Create tables once at session start, drop at session end
 # ---------------------------------------------------------------------------
 
+# Tables that hold static/seed data or the admin account. These are never
+# truncated per-test, so we don't have to re-seed 158 interests every test.
+PRESERVED_TABLES = {"users", "user_profiles", "user_settings", "interests"}
+
+# Seed interest names (static reference data). reset_state deletes any interest
+# NOT in this set so tests can insert their own rows without polluting others.
+SEED_INTERESTS_PATH = Path(__file__).parent.parent / "app" / "db" / "seed_data" / "interests.json"
+
+
+def _load_seed_interest_names() -> list:
+    try:
+        with open(SEED_INTERESTS_PATH, encoding="utf-8") as f:
+            return [item["name"] for item in json.load(f)]
+    except FileNotFoundError:
+        return []
+
+
+SEED_INTEREST_NAMES = _load_seed_interest_names()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def db_engine():
+    """One engine for the whole session (NullPool → no loop-bound connections)."""
+    engine = make_engine()
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def redis_client():
+    """One Redis client for the whole session; flushed once per test."""
+    r = make_redis()
+    yield r
+    await r.aclose()
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
-async def setup_database():
+async def setup_database(db_engine):
     await _create_worker_database()
 
-    engine = make_engine()
-    async with engine.begin() as conn:
+    async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-        # ✅ Seed interests after tables are created
+        # ✅ Seed interests once per session (reset_state preserves them)
         await seed_interests(conn)
 
         # Create admin user for tests
@@ -225,12 +284,9 @@ async def setup_database():
             {"id": uuid.uuid4(), "user_id": admin_id}
         )
 
-    await engine.dispose()
     yield
-    engine = make_engine()
-    async with engine.begin() as conn:
+    async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
     await _drop_worker_database()
 
 
@@ -239,26 +295,26 @@ async def setup_database():
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture(autouse=True)
-async def reset_state():
+async def reset_state(db_engine):
     yield
-    engine = make_engine()
-    async with engine.begin() as conn:
-        # Delete all tables except preserve admin user
-        for table in reversed(Base.metadata.sorted_tables):
-            if table.name not in ['users', 'user_profiles', 'user_settings']:
-                await conn.execute(table.delete())
-
-        # ✅ Re-seed interests after deletion
-        await seed_interests(conn)
-
-        # Delete non-admin users and their related data
+    # Wipe every table except the preserved ones in a single statement. This
+    # replaces ~22 round-trips of individual DELETEs + a 158-row interest
+    # re-seed per test. Redis is flushed once per test in patch_redis.
+    names = [t.name for t in Base.metadata.sorted_tables if t.name not in PRESERVED_TABLES]
+    quoted = ", ".join(f'"{n}"' for n in names)
+    async with db_engine.begin() as conn:
+        await conn.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
+        # Remove interests inserted by tests, keeping the seeded 158 in place.
+        if SEED_INTEREST_NAMES:
+            await conn.execute(
+                text("DELETE FROM interests WHERE name NOT IN :names")
+                .bindparams(bindparam("names", expanding=True)),
+                {"names": SEED_INTEREST_NAMES},
+            )
+        # Delete non-admin users and their related rows.
         await conn.execute(text("DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
         await conn.execute(text("DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
         await conn.execute(text("DELETE FROM users WHERE phone != '+989100000000'"))
-    await engine.dispose()
-    r = make_redis()
-    await r.flushdb()
-    await r.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +322,10 @@ async def reset_state():
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncSession:
-    engine = make_engine()
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+async def db_session(db_engine) -> AsyncSession:
+    session_factory = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
         yield session
-    await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -279,14 +333,12 @@ async def db_session() -> AsyncSession:
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture(autouse=True)
-async def patch_redis():
-    r = make_redis()
-    await r.flushdb()
+async def patch_redis(redis_client):
+    await redis_client.flushdb()
     original = redis_module.redis_client
-    redis_module.redis_client = r
-    yield r
+    redis_module.redis_client = redis_client
+    yield redis_client
     redis_module.redis_client = original
-    await r.aclose()
 
 
 # ---------------------------------------------------------------------------

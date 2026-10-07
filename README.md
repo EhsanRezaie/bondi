@@ -53,13 +53,11 @@ Make sure you have these installed before starting:
 git clone https://github.com/EhsanRezaie/dating-app.git
 cd dating-app
 
-# 2. Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# 2. Install uv (fast Python package/venv manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
+# 3. Create the virtualenv + install dependencies (incl. dev tools)
+uv sync --all-groups
 
 # 4. Copy environment file and fill in your values
 cp .env.example .env
@@ -112,13 +110,11 @@ brew install python@3.11
 git clone https://github.com/EhsanRezaie/dating-app.git
 cd dating-app
 
-# 4. Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# 4. Install uv
+brew install uv
 
-# 5. Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
+# 5. Create the virtualenv + install dependencies
+uv sync --all-groups
 
 # 6. Copy environment file and fill in your values
 cp .env.example .env
@@ -162,13 +158,11 @@ uvicorn app.main:app --reload
 git clone https://github.com/EhsanRezaie/dating-app.git
 cd dating-app
 
-# 4. Create and activate virtual environment
-python -m venv venv
-venv\Scripts\activate
+# 4. Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# 5. Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
+# 5. Create the virtualenv + install dependencies
+uv sync --all-groups
 
 # 6. Copy environment file and fill in your values
 copy .env.example .env
@@ -265,18 +259,17 @@ docker compose -f docker-compose.test.yml logs minio-test-init
 Then:
 
 ```bash
-# Make sure venv is activated
-source venv/bin/activate   # Linux/Mac
-venv\Scripts\activate      # Windows
+# uv manages the venv; `uv run` uses it without activation.
+# Tests run in parallel by default (-n auto --dist loadscope, set in pyproject).
 
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=app tests/
+uv run pytest --cov=app tests/
 
 # Run a specific test file
-pytest tests/test_auth.py -v
+uv run pytest tests/test_auth.py -v
 ```
 
 > Tests run against an isolated database that is created fresh and destroyed after each run.
@@ -350,7 +343,7 @@ FastAPI App ──sentry_sdk──▸ Bugsink (:8080) ──▸ PostgreSQL (bond
 
 ### Prerequisites
 
-No additional dependencies. Bugsink runs in Docker (included in `docker-compose.yml`). The Python `sentry-sdk[fastapi]` package is already in `requirements.txt`.
+No additional dependencies. Bugsink runs in Docker (included in `docker-compose.yml`). The Python `sentry-sdk[fastapi]` package is already in `pyproject.toml`.
 
 ### Platform Setup
 
@@ -466,8 +459,7 @@ uvicorn app.main:app --reload
 #    Login: BUGSINK_SUPERUSER from .env
 
 # 3. Send a test error from a separate terminal:
-source venv/bin/activate
-python -c "
+uv run python -c "
 import sentry_sdk
 sentry_sdk.init(dsn='YOUR_DSN_HERE', environment='development')
 try:
@@ -547,8 +539,8 @@ with sentry_sdk.push_scope() as scope:
 - Wait ~15 seconds for initialization
 
 **`sentry_sdk` import error on app startup:**
-- Install the missing dependency: `pip install sentry-sdk[fastapi]`
-- If you see `jinja2 must be installed`: `pip install jinja2`
+- Install the missing dependency: `uv add sentry-sdk[fastapi]`
+- If you see `jinja2 must be installed`: `uv add jinja2`
 
 **Port 8080 already in use:**
 - Change the mapping in `docker-compose.yml`:
@@ -611,7 +603,8 @@ dating-app/
 ├── Dockerfile
 ├── entrypoint.sh           # Auto-migration + seeding on startup
 ├── .env.example
-├── requirements.txt
+├── pyproject.toml          # Project metadata + dependencies (uv)
+├── uv.lock                 # Locked dependency graph
 └── README.md
 ```
 
