@@ -69,9 +69,58 @@ email auth path. Verified by tests: backend **848 passed**, mobile **626 passed*
       `email_service.py`, removed email from schemas/cache/admin responses/search/seeds
       and from mobile validators/model/localizations. Migration `b2c3d4e5f6a7`.
 
-Remaining audit work is unchanged below: P3 mobile correctness, P4 mobile perf,
-P5 scale (plus deferred keyset pagination for notifications/matches/blocks/
-search/admin_users/swipes and PostGIS distance — see Phase 2 note).
+Remaining audit work: **P5 scale** (plus the explicitly deferred keyset cursors
+for notifications/matches/blocks/search/admin_users/swipes and a PostGIS distance
+column — see the Phase 2 note below). P3 mobile correctness and P4 mobile perf
+shipped on 2026-10-07 (see their sections below).
+
+---
+
+## Phase 3 mobile correctness — shipped (2026-10-07)
+
+Session / realtime / race fixes in `bondi_mobile`. `flutter analyze` clean;
+**626 tests passed**.
+
+- [x] **Session expiry no longer half-logs-in** — `ApiService.onSessionExpired`
+      resets provider state via `clearSessionLocally()` and routes to login.
+      `lib/main.dart`, `lib/providers/auth_provider.dart`.
+- [x] **No false logout on transient errors** — `_validateToken` treats only
+      401/403 as a dead token; network/5xx keep the session and fall back to the
+      cached profile. `lib/providers/auth_provider.dart`.
+- [x] **Logout / expiry tears down realtime** — `AuthProvider.onLogout` disconnects
+      the session socket and detaches notification handling. `lib/main.dart`.
+- [x] **Realtime survives re-login** — `attachSocket` rebinds to the new session
+      socket instead of no-oping on a dead subscription.
+      `lib/providers/notifications_provider.dart`.
+- [x] **Session socket channel cleared on close/error** — no writes to a dead sink.
+      `lib/services/session_socket_service.dart`.
+- [x] **Chat bleed** — `openChat` uses a request id so a slow prior chat's response
+      can't overwrite the currently-open chat. `lib/providers/chat_provider.dart`.
+- [x] **Discover filter race** — `loadProfiles` only applies the newest request.
+      `lib/providers/discover_provider.dart`.
+- [x] **FCM listener duplication** — listeners cancel before re-listen; logout
+      cancels both. `lib/services/push_service.dart`.
+- [x] **Terminated-app notification tap deferred** instead of dropped before the
+      first frame. `lib/services/local_notifications.dart`.
+- [x] **Cache / log hygiene** — default `CachePolicy.noCache`; `LogInterceptor`
+      debug-only; guard against an empty refresh response wiping good tokens.
+      `lib/services/api_service.dart`.
+
+## Phase 4 mobile performance — shipped (2026-10-07)
+
+- [x] **Lazy tabs** — `IndexedStack` builds a tab only once visited (was eagerly
+      constructing all four tabs and firing their initial network calls).
+      `lib/screens/main_screen.dart`.
+- [x] **Image memory** — last `Image.network` replaced with `CachedImage`
+      (`memCacheWidth`/`memCacheHeight`). `lib/screens/search/search_profile_detail.dart`.
+- [x] **List repaints** — `RepaintBoundary` + `ValueKey` on chat / notifications /
+      likes / blocked rows.
+- [x] **`DateFormat` hoisted** out of per-item builders (`chat_list_screen`,
+      `chat_message_bubble`, `ticket_detail_screen`, `formatters`).
+- [x] **Startup** — independent init (orientation, dotenv, prefs) runs in parallel;
+      `ApiService.init()` follows dotenv as before. `lib/main.dart`.
+- Release R8 / `isShrinkResources` confirmed already applied by the Flutter Gradle
+  plugin (`FlutterPlugin.kt`), so no `build.gradle.kts` change was needed.
 
 ---
 
@@ -1344,43 +1393,43 @@ context.configure(connection=conn, target_metadata=target_metadata,
 > file is complete. Effort assumes the Flutter app lives in a sibling repo.
 
 ### P5-1 — Add `dio_cache_interceptor` + Hive store · `S`
-- [ ] Done
+- [x] Done
 **What:** Add `dio_cache_interceptor` with a Hive store to `api_service.dart` so static GETs (interests, locations, plans, system status) are cached on-device.
 **Verify:** Airplane mode → open app → interests/locations still render.
 
 ### P5-2 — Set per-endpoint cache policies · `XS`
-- [ ] Done
+- [x] Done
 **What:** `GET /discover` and `/GET /search` must be `NoCache` (results change every swipe/location). Static endpoints = `Cache`.
 **Gotchas:** Getting this wrong = stale swipe deck.
 
 ### P5-3 — Configure `CachedNetworkImage` with size limits · `XS`
-- [ ] Done
+- [x] Done
 **What:** Use `CachedNetworkImage` everywhere with `memCacheWidth`/`memCacheHeight` to avoid decoding full 5000px images into memory.
 
 ### P5-4 — Add `shimmer` package + `_ShimmerAvatar` placeholder · `XS`
-- [ ] Done
+- [x] Done
 **What:** Replace blank circles with shimmer placeholders while photos load.
 
 ### P5-5 — Replace `Consumer` with `Selector` in hot-rebuild paths · `S`
-- [ ] Done
+- [x] Done
 **What:** Profile/chat-list screens: use `Selector<AuthProvider, String?>` so a name change doesn't rebuild the whole screen.
 **Verify:** Flutter DevTools "Rebuild Statistics" — only the changed widget rebuilds.
 
 ### P5-6 — Audit all list screens for `ListView.builder` + `RepaintBoundary` · `XS`
-- [ ] Done
+- [x] Done
 **What:** Matches, search, notifications, blocks lists must be lazy `ListView.builder` with each item wrapped in `RepaintBoundary(key: ValueKey(item.id))`.
 
 ### P5-7 — Parallelize splash screen calls with `Future.wait` · `XS`
-- [ ] Done
+- [x] Done
 **What:** `Future.wait([systemService.getStatus(), checkVersion(), storage.loadTokens()])` instead of sequential awaits.
 
 ### P5-8 — Add WebSocket exponential backoff reconnection · `S`
-- [ ] Done
+- [x] Done
 **What:** On WS disconnect, retry with `delay = min(30, 1 << retryCount)` seconds, cap 6 retries (~60s). Reset on success.
 **Gotchas:** Stop retrying on explicit logout (auth token invalid).
 
 ### P5-9 — Add pagination to notifications screen · `XS`
-- [ ] Done
+- [x] Done
 **What:** Load 20 at a time, append on scroll (`offset`), stop when `next_offset` is null.
 
 ---
