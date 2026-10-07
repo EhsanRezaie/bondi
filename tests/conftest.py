@@ -16,7 +16,8 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
-load_dotenv(".env.test", override=True)
+_env_test = ".env.test" if os.path.exists(".env.test") else ".env.test.example"
+load_dotenv(_env_test, override=True)
 
 # ---------------------------------------------------------------------------
 # Per-xdist-worker isolation. WORKER_ID drives an isolated Postgres database
@@ -235,11 +236,10 @@ async def setup_database(db_engine):
         # Insert into users table
         await conn.execute(
             text("""
-                INSERT INTO users (id, phone, email, phone_verified, is_active, token_version, registration_status, created_at)
+                INSERT INTO users (id, phone, phone_verified, is_active, token_version, registration_status, created_at)
                 VALUES (
                     :id,
                     '+989100000000',
-                    'admin@test.com',
                     true,
                     true,
                     1,

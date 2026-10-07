@@ -121,6 +121,8 @@ ADMIN_TOKEN_EXPIRE_MINUTES = 60
 
 def create_admin_token(admin_id: str) -> str:
     """Create a short-lived admin JWT token."""
+    if not settings.ADMIN_SECRET_KEY:
+        raise RuntimeError("ADMIN_SECRET_KEY is not configured")
     expire = datetime.now(timezone.utc) + timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": admin_id,
@@ -135,6 +137,9 @@ def create_admin_token(admin_id: str) -> str:
 
 def verify_admin_token(token: str) -> Optional[dict]:
     """Decode and validate admin JWT. Returns payload or None."""
+    if not settings.ADMIN_SECRET_KEY:
+        logger.error("admin_secret_key_missing")
+        return None
     try:
         payload = jwt.decode(token, settings.ADMIN_SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("role") != "admin":

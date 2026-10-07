@@ -19,7 +19,7 @@ python -m app.db.scripts.seed_propmts
 # Add --reload only if development environment
 if [ "$ENVIRONMENT" = "development" ]; then
     echo "Starting app (dev mode with --reload)..."
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --forwarded-allow-ips='*'
 else
     CPU_CORES=$(nproc 2>/dev/null || echo 2)
 
@@ -44,5 +44,5 @@ else
     fi
 
     echo "Starting app (production, $CPU_CORES cores, $WORKERS workers)..."
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS --timeout-graceful-shutdown 30
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS --timeout-graceful-shutdown 30 --proxy-headers --forwarded-allow-ips='*'
 fi

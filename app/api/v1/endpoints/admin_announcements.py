@@ -157,9 +157,8 @@ async def admin_send_test_announcement(
 ):
     """Admin: Send test announcement to a specific user.
 
-    The admin identity is no longer an app User account, so the recipient is
-    resolved explicitly: `body.target_user_id` if given, otherwise the legacy
-    `admin@test.com` user (if it still exists) for backward compatibility.
+    The admin identity is no longer an app User account, so the recipient must
+    be given explicitly via `body.target_user_id`.
     """
     target = None
     if body.target_user_id:
@@ -169,16 +168,11 @@ async def admin_send_test_announcement(
         target = result.scalar_one_or_none()
         if not target:
             raise HTTPException(status_code=404, detail="Target user not found")
-    else:
-        result = await session.execute(
-            select(User).options(selectinload(User.profile)).where(User.email == "admin@test.com")
-        )
-        target = result.scalar_one_or_none()
 
     if not target:
         return AdminMessageResponse(
             success=False,
-            message="No test recipient — pass target_user_id or keep an admin@test.com user",
+            message="No test recipient — pass target_user_id",
             user_id=None,
             user_name=None,
         )

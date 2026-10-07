@@ -220,7 +220,6 @@ def build_person(index: int, deterministic: bool):
 
     user = User(
         id=uid,
-        email=f"test{index}@test.com",
         phone=f"+9891{index:08d}",
         phone_verified=True,
         is_active=True,
@@ -313,11 +312,12 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
         random.seed(20260907)
 
     async with AsyncSessionLocal() as session:
+        test_phones = [f"+9891{i:08d}" for i in range(1, count + 1)]
         existing_ids = (
-            await session.execute(select(User.id).where(User.email.like("%@test.com")))
+            await session.execute(select(User.id).where(User.phone.in_(test_phones)))
         ).scalars().all()
         if existing_ids:
-            print(f"🧹  Removing {len(existing_ids)} existing test@test.com users …")
+            print(f"🧹  Removing {len(existing_ids)} existing dummy users …")
             await session.execute(delete(User).where(User.id.in_(existing_ids)))
             await session.commit()
 

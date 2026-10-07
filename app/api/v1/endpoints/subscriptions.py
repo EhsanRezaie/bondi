@@ -12,7 +12,7 @@ from app.core.redis import redis_client
 from app.core.cache import cache_get, cache_set, key_sub_plans, TTL_SUB_PLANS, invalidate_auth_user
 from sqlalchemy.orm import selectinload
 from app.models.user import User
-from app.models.subscription import Subscription
+from app.models.subscription import Subscription, PendingPurchase
 from app.schemas.subscription import (
     SubscriptionPlansResponse,
     PlanResponse,
@@ -78,22 +78,41 @@ async def purchase_subscription(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Purchase a subscription (MOCK - returns fake redirect URL)."""
+    """Initiate a subscription purchase (MOCK gateway).
+
+    Records a PendingPurchase bound to the authenticated user so the callback
+    can be verified server-side and consumed exactly once.
+    """
     plan_days = {
         "monthly": settings.SUBSCRIPTION_MONTHLY_DAYS,
         "quarterly": settings.SUBSCRIPTION_QUARTERLY_DAYS,
         "yearly": settings.SUBSCRIPTION_YEARLY_DAYS,
     }
-    
+    plan_prices = {
+        "monthly": 50000,
+        "quarterly": 127500,
+        "yearly": 420000,
+    }
+
     if body.plan_id not in plan_days:
         raise HTTPException(status_code=400, detail="Invalid plan")
-    
-    mock_authority = str(uuid.uuid4())
-    mock_redirect_url = f"https://sandbox.zarinpal.com/pg/StartPay/{mock_authority}"
-    
+
+    authority = str(uuid.uuid4())
+    purchase = PendingPurchase(
+        authority=authority,
+        user_id=current_user.id,
+        plan=body.plan_id,
+        amount_rials=plan_prices[body.plan_id],
+        status="pending",
+    )
+    session.add(purchase)
+    await session.commit()
+
+    mock_redirect_url = f"https://sandbox.zarinpal.com/pg/StartPay/{authority}"
+
     return PurchaseResponse(
         redirect_url=mock_redirect_url,
-        authority=mock_authority
+        authority=authority
     )
 
 
@@ -104,53 +123,84 @@ async def verify_payment(
     authority: str,
     status: str,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    """Verify payment after ZarinPal redirect (MOCK)."""
+    """Verify a gateway callback and activate premium exactly once.
+
+    The buyer is derived from the access token, never from the query string,
+    and each ``authority`` can be consumed only once.
+    """
     if status != "OK":
         return VerifyResponse(
             success=False,
             message="Payment was canceled or failed.",
             ref_id=None
         )
-    
-    user_id = request.query_params.get("user_id")
-    plan = request.query_params.get("plan", "monthly")
-    
-    if not user_id:
-        return VerifyResponse(
-            success=False,
-            message="User ID not found in callback.",
-            ref_id=None
-        )
-    
+
     result = await session.execute(
-        select(User).options(selectinload(User.profile)).where(User.id == user_id).with_for_update()
+        select(PendingPurchase)
+        .where(PendingPurchase.authority == authority)
+        .with_for_update()
     )
-    user = result.scalar_one_or_none()
-    
-    if not user:
+    purchase = result.scalar_one_or_none()
+
+    if not purchase:
         return VerifyResponse(
             success=False,
-            message="User not found.",
+            message="Unknown payment reference.",
             ref_id=None
         )
-    
+
+    if purchase.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Payment does not belong to this user",
+        )
+
+    if purchase.status != "pending":
+        return VerifyResponse(
+            success=False,
+            message="Payment already processed.",
+            ref_id=None
+        )
+
     plan_days = {
         "monthly": settings.SUBSCRIPTION_MONTHLY_DAYS,
         "quarterly": settings.SUBSCRIPTION_QUARTERLY_DAYS,
         "yearly": settings.SUBSCRIPTION_YEARLY_DAYS,
     }
-    days = plan_days.get(plan, 30)
-    
+    days = plan_days.get(purchase.plan, 0)
+    if days <= 0:
+        return VerifyResponse(
+            success=False,
+            message="Invalid plan on payment.",
+            ref_id=None
+        )
+
+    result = await session.execute(
+        select(User).options(selectinload(User.profile)).where(User.id == current_user.id).with_for_update()
+    )
+    user = result.scalar_one_or_none()
+
+    if not user or not user.profile:
+        return VerifyResponse(
+            success=False,
+            message="User not found.",
+            ref_id=None
+        )
+
     now = datetime.now(timezone.utc)
     if user.profile.premium_until is None or user.profile.premium_until < now:
         user.profile.premium_until = now + timedelta(days=days)
     else:
         user.profile.premium_until = user.profile.premium_until + timedelta(days=days)
-    
+
+    purchase.status = "consumed"
+    purchase.consumed_at = now
+
     subscription = Subscription(
         user_id=user.id,
-        plan=plan,
+        plan=purchase.plan,
         status="active",
         started_at=now,
         expires_at=user.profile.premium_until,
@@ -161,7 +211,7 @@ async def verify_payment(
     await session.commit()
 
     await invalidate_auth_user(redis_client, user.id)
-    
+
     return VerifyResponse(
         success=True,
         message="Payment verified! Premium activated.",

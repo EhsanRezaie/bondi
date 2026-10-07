@@ -18,8 +18,6 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone = Column(String(32), unique=True, nullable=False, index=True)
     phone_verified = Column(Boolean, default=False)
-    email = Column(String(255), unique=True, nullable=True, index=True)
-
     is_active = Column(Boolean, default=True)
     token_version = Column(Integer, default=1, nullable=False)
     registration_status = Column(String(20), default="phone_pending", nullable=False)

@@ -165,19 +165,33 @@ class TestSubscriptions:
         res = await client.post(SUBSCRIPTION_CANCEL_URL)
         assert res.status_code == 401
 
-    async def test_verify_payment_mock_success(self, client: AsyncClient, mock_verification_code):
-        """Mock verify endpoint should return success."""
-        data = await register_user(client, mock_verification_code)
-
-        # Call verify with mock params
+    async def test_verify_requires_auth(self, client: AsyncClient):
+        """Verify is a protected endpoint — anonymous calls are rejected."""
         res = await client.get(
             SUBSCRIPTION_VERIFY_URL,
-            params={
-                "authority": "MOCK_AUTHORITY_123",
-                "status": "OK",
-                "user_id": data["user"]["id"],
-                "plan": "monthly"
-            }
+            params={"authority": "x", "status": "OK"},
+        )
+        assert res.status_code == 401
+
+    async def test_verify_activates_premium_and_is_single_use(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """A purchase can be verified exactly once by its owner."""
+        data = await register_user(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        purchase = await client.post(
+            SUBSCRIPTION_PURCHASE_URL,
+            json={"plan_id": "monthly"},
+            headers=headers,
+        )
+        assert purchase.status_code == 200
+        authority = purchase.json()["authority"]
+
+        res = await client.get(
+            SUBSCRIPTION_VERIFY_URL,
+            params={"authority": authority, "status": "OK"},
+            headers=headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -185,11 +199,69 @@ class TestSubscriptions:
         assert "verified" in body["message"]
         assert body["ref_id"] is not None
 
-    async def test_verify_payment_failed_status(self, client: AsyncClient):
-        """Verify with status NOK should return failure."""
+        # Replaying the same authority must not grant premium again.
+        replay = await client.get(
+            SUBSCRIPTION_VERIFY_URL,
+            params={"authority": authority, "status": "OK"},
+            headers=headers,
+        )
+        assert replay.status_code == 200
+        assert replay.json()["success"] is False
+        assert "already processed" in replay.json()["message"]
+
+    async def test_verify_rejects_unknown_authority(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """A made-up authority cannot be redeemed."""
+        data = await register_user(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
         res = await client.get(
             SUBSCRIPTION_VERIFY_URL,
-            params={"authority": "MOCK", "status": "NOK"}
+            params={"authority": "not-a-real-authority", "status": "OK"},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["success"] is False
+
+    async def test_verify_rejects_other_users_purchase(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """One user cannot redeem another user's payment authority."""
+        owner = await register_user(
+            client, mock_verification_code, phone=_phone("verify_owner")
+        )
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        purchase = await client.post(
+            SUBSCRIPTION_PURCHASE_URL,
+            json={"plan_id": "monthly"},
+            headers=owner_headers,
+        )
+        authority = purchase.json()["authority"]
+
+        attacker = await register_user(
+            client, mock_verification_code, phone=_phone("verify_attacker")
+        )
+        attacker_headers = {"Authorization": f"Bearer {attacker['access_token']}"}
+
+        res = await client.get(
+            SUBSCRIPTION_VERIFY_URL,
+            params={"authority": authority, "status": "OK"},
+            headers=attacker_headers,
+        )
+        assert res.status_code == 403
+
+    async def test_verify_payment_failed_status(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        """Verify with a non-OK gateway status returns failure."""
+        data = await register_user(client, mock_verification_code)
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+        res = await client.get(
+            SUBSCRIPTION_VERIFY_URL,
+            params={"authority": "MOCK", "status": "NOK"},
+            headers=headers,
         )
         assert res.status_code == 200
         body = res.json()

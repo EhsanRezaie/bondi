@@ -63,7 +63,7 @@ async def _build_admin_user_response(
             ))
     return AdminUserResponse(
         id=user.id,
-        email=user.email,
+        email=None,
         phone=user.phone,
         phone_verified=bool(user.phone_verified),
         registration_status=user.registration_status,
@@ -129,7 +129,6 @@ SORT_COLUMNS = {
     "id": User.id,
     "created_at": User.created_at,
     "last_seen_at": User.last_seen_at,
-    "email": User.email,
     "name": UserProfile.name,
     "age": UserProfile.birth_date,
     "gender": UserProfile.gender,
@@ -167,7 +166,7 @@ def _build_admin_user_list_item(user: User) -> AdminUserListItem:
     profile = user.profile
     return AdminUserListItem(
         id=user.id,
-        email=user.email,
+        email=None,
         phone=user.phone,
         phone_verified=bool(user.phone_verified),
         is_active=user.is_active,
@@ -189,7 +188,7 @@ def _build_admin_user_list_item(user: User) -> AdminUserListItem:
 @limiter.limit("120/minute")
 async def admin_list_users(
     request: Request,
-    search: str = Query(None, description="Search by name, email, phone or bio"),
+    search: str = Query(None, description="Search by name, phone or bio"),
     id: UUID = Query(None, description="Search by exact user UUID"),
     is_active: bool = Query(None),
     is_premium: bool = Query(None),
@@ -238,7 +237,6 @@ async def admin_list_users(
         like = f"%{search}%"
         query = query.where(or_(
             UserProfile.name.ilike(like),
-            User.email.ilike(like),
             User.phone.ilike(like),
             UserProfile.bio.ilike(like),
         ))
@@ -536,7 +534,7 @@ async def admin_grant_premium(
 
     return AdminUserResponse(
         id=user.id,
-        email=user.email,
+        email=None,
         name=profile.name if profile else "",
         age=profile.age if profile else 0,
         gender=profile.gender if profile else "unknown",

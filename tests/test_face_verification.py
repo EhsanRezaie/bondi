@@ -52,7 +52,6 @@ async def test_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
         phone=f"+9891{uuid.uuid4().hex[:10]}",
-        email=f"verify_{uuid.uuid4().hex[:8]}@test.com",
         phone_verified=True,
         is_active=True,
         token_version=1,
@@ -78,7 +77,6 @@ async def verified_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
         phone=f"+9891{uuid.uuid4().hex[:10]}",
-        email=f"verified_{uuid.uuid4().hex[:8]}@test.com",
         phone_verified=True,
         is_active=True,
         token_version=1,

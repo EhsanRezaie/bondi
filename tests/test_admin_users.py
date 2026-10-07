@@ -84,8 +84,8 @@ class TestAdminUsers:
         body = res.json()
         assert len(body["users"]) >= 1
 
-    async def test_admin_list_users_search_by_email(self, client: AsyncClient, mock_verification_code):
-        """Admin should search users by email"""
+    async def test_admin_list_users_search_by_phone(self, client: AsyncClient, mock_verification_code):
+        """Admin should search users by phone"""
         await register_user(client, _phone("search_test@example.com"), mock_verification_code)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
@@ -151,7 +151,7 @@ class TestAdminUsers:
         assert res.status_code == 200
         body = res.json()
         assert body["id"] == str(user_data['user']['id'])
-        assert body["email"] == user_data['user']['email']
+        assert body["email"] is None
         assert "total_likes_sent" in body
         assert "total_matches" in body
         assert "total_messages" in body

@@ -255,62 +255,84 @@ async def get_verification_code(identifier: str) -> Optional[str]:
         return None
 
 
+_VERIFY_CODE_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return {'missing', 0}
+end
+if string.sub(raw, 1, 1) ~= '{' then
+  if raw == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    return {'ok', 0}
+  end
+  return {'legacy_invalid', 0}
+end
+local ok, data = pcall(cjson.decode, raw)
+if not ok then
+  redis.call('DEL', KEYS[1])
+  return {'missing', 0}
+end
+if data['attempts'] >= tonumber(ARGV[2]) then
+  redis.call('DEL', KEYS[1])
+  return {'locked', 0}
+end
+if data['code'] == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return {'ok', 0}
+end
+data['attempts'] = data['attempts'] + 1
+local ttl = redis.call('TTL', KEYS[1])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], cjson.encode(data), 'EX', ttl)
+end
+local remaining = tonumber(ARGV[2]) - data['attempts']
+return {'invalid', remaining}
+"""
+
+
 async def verify_code_with_attempts(identifier: str, submitted_code: str) -> bool:
     """
     Verify a code with brute-force protection. Max 5 attempts.
+
+    The get/increment/delete sequence runs as a single atomic Redis Lua script
+    so concurrent submissions cannot race past the attempt counter.
 
     Raises HTTPException on failure. Returns True on success.
     """
     key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     try:
-        raw = await redis_client.get(key)
+        result = await redis_client.eval(
+            _VERIFY_CODE_LUA, 1, key, submitted_code, MAX_OTP_ATTEMPTS
+        )
     except (RedisError, RedisTimeoutError) as e:
-        logger.error("Failed to get verification code", error=str(e))
+        logger.error("Failed to verify verification code", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error.",
         )
 
-    if not raw:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification code.",
-        )
+    outcome = result[0]
 
-    # Backward compatibility: plain string (old format from tests)
-    if not raw.startswith("{"):
-        # Old format — plain code string, no attempt tracking
-        if raw == submitted_code:
-            await redis_client.delete(key)
-            return True
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification code.",
-        )
+    if outcome == "ok":
+        return True
 
-    data = json.loads(raw)
-
-    if data["attempts"] >= MAX_OTP_ATTEMPTS:
-        await redis_client.delete(key)
+    if outcome == "locked":
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many attempts. Request a new code.",
         )
 
-    if data["code"] != submitted_code:
-        data["attempts"] += 1
-        ttl = await redis_client.ttl(key)
-        if ttl > 0:
-            await redis_client.set(key, json.dumps(data), ex=ttl)
-        remaining = MAX_OTP_ATTEMPTS - data["attempts"]
+    if outcome in ("missing", "legacy_invalid"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid code. {remaining} attempt{'s' if remaining != 1 else ''} left.",
+            detail="Invalid or expired verification code.",
         )
 
-    # Success — delete the code (single-use)
-    await redis_client.delete(key)
-    return True
+    remaining = int(result[1]) if len(result) > 1 else 0
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Invalid code. {remaining} attempt{'s' if remaining != 1 else ''} left.",
+    )
 
 
 async def delete_verification_code(identifier: str) -> bool:

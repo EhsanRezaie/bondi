@@ -1,4 +1,5 @@
 # app/core/config.py
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -49,7 +50,9 @@ class Settings(BaseSettings):
     # ============================================
     # Admin
     # ============================================
-    ADMIN_SECRET_KEY: str = ""
+    # Required with no default: admin JWTs are signed/verified with this key, so
+    # an empty value would let anyone forge an admin token.
+    ADMIN_SECRET_KEY: str
     ADMIN_USERNAME: str = ""
     ADMIN_PASSWORD_HASH: str = ""
 
@@ -127,7 +130,9 @@ class Settings(BaseSettings):
     # ===========================================
     # Encryption
     # ===========================================
-    ENCRYPTION_SECRET: str = "your-super-secret-32-byte-key-here-change-in-production"
+    # Required: used to derive per-chat AES-256-GCM keys. A defaulted/placeholder
+    # value would silently encrypt every message with a public key.
+    ENCRYPTION_SECRET: str
     
     # ============================================
     # App Version
@@ -188,6 +193,28 @@ class Settings(BaseSettings):
     # CORS
     # ============================================
     CORS_ORIGINS: str = ""
+
+    @field_validator("ADMIN_SECRET_KEY")
+    @classmethod
+    def _admin_secret_must_be_set(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "ADMIN_SECRET_KEY must be set to a non-empty value"
+            )
+        return v
+
+    @field_validator("ENCRYPTION_SECRET")
+    @classmethod
+    def _encryption_secret_must_be_set(cls, v: str) -> str:
+        weak = {
+            "your-super-secret-32-byte-key-here-change-in-production",
+            "change-this-to-32-byte-key",
+        }
+        if not v or not v.strip() or v in weak:
+            raise ValueError(
+                "ENCRYPTION_SECRET must be set to a strong, non-default value"
+            )
+        return v
 
     # ============================================
     # Pydantic Config

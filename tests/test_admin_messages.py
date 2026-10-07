@@ -181,12 +181,17 @@ class TestAdminAnnouncements:
         # Welcome bonus makes newly registered users premium, so all new users get it
         assert body["recipient_count"] >= 1
 
-    async def test_admin_test_announcement(self, client: AsyncClient):
-        """Admin should send test announcement to themselves"""
+    async def test_admin_test_announcement(self, client: AsyncClient, mock_verification_code):
+        """Admin should send a test announcement to an explicit target user"""
+        target = await register_user(client, _phone("test_announce_target@example.com"), mock_verification_code)
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_ANNOUNCEMENTS_URL}/test",
-            json={"title": "Test", "message": "This is a test"},
+            json={
+                "title": "Test",
+                "message": "This is a test",
+                "target_user_id": target["user"]["id"],
+            },
             headers=admin_headers
         )
         assert res.status_code == 200

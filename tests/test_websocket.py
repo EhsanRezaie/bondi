@@ -678,16 +678,28 @@ class TestChatChannel:
 # WS token validation — validate_ws_token (deps) must unwrap sub correctly
 # =============================================================================
 class TestWsTokenValidation:
-    async def test_validate_ws_token_returns_user_id(self, patch_redis):
+    async def test_validate_ws_token_returns_user_id(self, patch_redis, db_session):
         """A valid access token must yield the subject string, not raise."""
+        import uuid as _uuid
         from app.core.security import create_access_token
         from app.core.deps import validate_ws_token
+        from app.models.user import User
 
-        user_id = "e9dfcd4a-3cf4-42d2-84ef-4a45cd7473ff"
-        token = create_access_token(user_id, token_version=1)
+        user_id = _uuid.uuid4()
+        db_session.add(User(
+            id=user_id,
+            phone=f"+9891{_uuid.uuid4().hex[:10]}",
+            phone_verified=True,
+            is_active=True,
+            token_version=1,
+            registration_status="onboarding_complete",
+        ))
+        await db_session.commit()
+
+        token = create_access_token(str(user_id), token_version=1)
 
         result = await validate_ws_token(token, None)
-        assert result == user_id
+        assert result == str(user_id)
 
     @pytest.mark.parametrize("bad_token", ["not-a-jwt", "", "a.b.c"])
     async def test_validate_ws_token_rejects_invalid(self, patch_redis, bad_token):

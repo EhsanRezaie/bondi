@@ -87,9 +87,16 @@ async def verify_selfie(
                 detail=f"Maximum {settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY} attempts per day",
             )
 
+    # Reject oversized uploads before buffering the whole body into memory.
+    max_size = settings.FACE_VERIFICATION_MAX_SIZE_MB * 1024 * 1024
+    if file.size is not None and file.size > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image too large. Maximum {settings.FACE_VERIFICATION_MAX_SIZE_MB}MB",
+        )
+
     # Read image
     image_bytes = await file.read()
-    max_size = settings.FACE_VERIFICATION_MAX_SIZE_MB * 1024 * 1024
     if len(image_bytes) > max_size:
         raise HTTPException(
             status_code=400,

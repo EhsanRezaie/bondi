@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-import random
+import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +23,7 @@ from app.core.security import (
     create_refresh_token,
     decode_refresh_token,
     decode_token,
+    REFRESH_TOKEN_TYPE,
 )
 from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.services.sms_service import send_verification_code
@@ -51,11 +52,12 @@ OTP_RESEND_COOLDOWN = 60
 
 
 def generate_referral_code() -> str:
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    alphabet = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(8))
 
 
 def generate_verification_code() -> str:
-    return ''.join(random.choices(string.digits, k=6))
+    return ''.join(secrets.choice(string.digits) for _ in range(6))
 
 
 async def get_user_profile(session: AsyncSession, user_id: str) -> UserProfile | None:
@@ -464,6 +466,16 @@ async def refresh(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or deactivated.",
+        )
+
+    # Enforce token_version so a refresh token minted before a global revoke
+    # (or an admin ban) cannot mint fresh access tokens.
+    refresh_payload = decode_token(body.refresh_token, REFRESH_TOKEN_TYPE)
+    refresh_ver = refresh_payload.get("ver", 1) if refresh_payload else 1
+    if refresh_ver != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked.",
         )
 
     family_id = await redis.get_token_family(body.refresh_token) or str(user.id)

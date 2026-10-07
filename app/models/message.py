@@ -88,7 +88,7 @@ class Message(Base):
                 error=str(e),
                 exc_info=True,
             )
-            return self._content
+            return "[undecryptable]"
 
     @content.setter
     def content(self, value: str):

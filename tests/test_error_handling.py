@@ -95,7 +95,7 @@ class TestMessageEncryptionFailure:
         # The plaintext must never reach _content.
         assert m._content is None or "top-secret" not in str(m._content)
 
-    def test_decrypt_failure_returns_ciphertext_and_logs(self, caplog):
+    def test_decrypt_failure_returns_safe_placeholder(self, caplog):
         m = Message(
             id=uuid.uuid4(),
             chat_id=uuid.uuid4(),
@@ -104,4 +104,4 @@ class TestMessageEncryptionFailure:
         )
         m._content = "ciphertext-blob"
         with patch.object(message_model, "decrypt_message", side_effect=Exception("decrypt boom")):
-            assert m.content == "ciphertext-blob"
+            assert m.content == "[undecryptable]"

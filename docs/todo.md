@@ -33,6 +33,47 @@ Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
 
 ---
 
+## Phase 0 hardening — shipped (2026-10-07)
+
+Security launch-blockers from the 2026-10 audit plus removal of the vestigial
+email auth path. Verified by tests: backend **848 passed**, mobile **626 passed**
++ `flutter analyze` clean.
+
+- [x] **Subscriptions replay (was P0-6)** — `/subscriptions/verify` now requires
+      auth, derives the buyer from the access token (ignores client `user_id`/`plan`),
+      and consumes a server-side `pending_purchases.authority` exactly once.
+      `/purchase` records the pending row. Mock ZarinPal gateway retained by decision.
+      `app/api/v1/endpoints/subscriptions.py`, `app/models/subscription.py`,
+      migration `a1b2c3d4e5f6`.
+- [x] **Admin key fails open (was P0-2)** — `ADMIN_SECRET_KEY` is now required and
+      non-empty; the legacy `X-Admin-Key` path uses `hmac.compare_digest`; admin JWT
+      create/verify refuse when unset. `app/core/config.py`, `app/core/security.py`,
+      `app/core/deps.py`.
+- [x] **Revocation / ban gaps** — `get_current_user_id` (swipes, messages read/delivered,
+      notifications, reports, blocks) and `validate_ws_token` now enforce `is_active`
+      + `token_version` (Redis snapshot fast path, indexed DB fallback). `/auth/refresh`
+      re-checks the refresh token's `ver`. `app/core/deps.py`, `app/api/v1/endpoints/auth.py`.
+- [x] **Encryption defaults (was P0-4)** — `ENCRYPTION_SECRET` required and weak
+      placeholders rejected; message getter returns `"[undecryptable]"` instead of
+      leaking ciphertext. `app/core/config.py`, `app/models/message.py`.
+- [x] **OTP hygiene** — codes/referral codes use `secrets`; verification is one atomic
+      Redis Lua script (no read-modify-write race on the attempt counter).
+      `app/api/v1/endpoints/auth.py`, `app/core/redis.py`.
+- [x] **Request surface** — face-verify rejects oversized uploads before buffering;
+      CORS no longer falls back to `"*"` outside development; uvicorn runs with
+      `--proxy-headers`. `app/api/v1/endpoints/verify.py`, `app/main.py`, `entrypoint.sh`.
+- [x] **Secrets hygiene (was P0-8)** — `.env.test` untracked (`git rm --cached`),
+      committed `.env.test.example` added, `conftest` falls back to it, local test
+      secrets rotated. Live server-side secret rotation still pending.
+- [x] **Email removed (phone-only auth)** — dropped `users.email`, deleted
+      `email_service.py`, removed email from schemas/cache/admin responses/search/seeds
+      and from mobile validators/model/localizations. Migration `b2c3d4e5f6a7`.
+
+Remaining audit work is unchanged below: P1 correctness races, P2 perf/pagination/
+PostGIS, P3 mobile correctness, P4 mobile perf, P5 scale.
+
+---
+
 ## Status snapshot (reconciled with code, 2026-08-02)
 
 | Area | Status | Note |

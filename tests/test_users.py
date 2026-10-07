@@ -162,7 +162,7 @@ class TestGetMe:
         data = res.json()
 
         assert data["id"] is not None
-        assert data["email"] is None  # phone-based auth; email is optional
+        assert "email" not in data  # phone-only auth; email was removed
         assert data["is_active"] is True
         assert data["is_profile_complete"] is True
         assert data["profile_completion"] == 100

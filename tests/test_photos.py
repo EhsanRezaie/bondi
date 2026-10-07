@@ -83,7 +83,6 @@ async def test_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
         phone=f"+9891{uuid.uuid4().hex[:10]}",
-        email=f"user_{uuid.uuid4().hex[:8]}@test.com",
         phone_verified=True,
         is_active=True,
         token_version=1,
@@ -113,7 +112,6 @@ async def second_user(db_session) -> User:
     user = User(
         id=uuid.uuid4(),
         phone=f"+9891{uuid.uuid4().hex[:10]}",
-        email=f"user2_{uuid.uuid4().hex[:8]}@test.com",
         phone_verified=True,
         is_active=True,
         token_version=1,
@@ -467,7 +465,7 @@ class TestAdminPendingQueue:
         # Regression check: user_name must come from UserProfile.name,
         # not a nonexistent current_user.profile.name attribute.
         assert photos[0]["user_name"] == "Test User"
-        assert photos[0]["user_email"] == test_user.email
+        assert photos[0]["user_email"] is None
         assert photos[0]["status"] == "pending"
 
     async def test_pending_queue_excludes_approved_and_rejected(self, client, auth_headers):
@@ -689,7 +687,7 @@ class TestAdminGetPhoto:
         assert resp.status_code == 200
         detail = resp.json()
         assert detail["user_name"] == "Test User"
-        assert detail["user_email"] == test_user.email
+        assert detail["user_email"] is None
 
     async def test_get_photo_detail_404_for_missing(self, client):
         resp = await client.get(f"/api/v1/admin/photos/{uuid.uuid4()}", headers=ADMIN_HEADERS)

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hmac
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -188,15 +189,20 @@ async def get_current_user_db(
 
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    session: AsyncSession = Depends(get_session),
 ) -> UUID:
     """
-    Lightweight dependency — validates JWT only, zero DB queries.
+    Lightweight dependency — validates the JWT and the account status.
     Returns user_id as UUID.
     Use for endpoints that only need current_user.id:
       POST /swipes, POST /messages/delivered, POST /messages/read,
       DELETE /messages/{message_id}, POST /notifications/read,
       DELETE /notifications/{id}, POST /blocks/{id}/block,
       POST /blocks/{id}/unblock, POST /reports/{user_id}
+
+    Served from the Redis auth snapshot when warm; otherwise one indexed
+    lookup verifies `is_active` + `token_version` so banned/revoked users can
+    never keep using the API.
     """
     if not credentials:
         raise HTTPException(
@@ -220,7 +226,55 @@ async def get_current_user_id(
             detail="Invalid token payload",
         )
 
-    return UUID(user_id)
+    token_version = payload.get("ver", 1)
+
+    try:
+        user_uuid = UUID(str(user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    cached = await get_cached_auth_user(
+        redis_module.redis_client, user_uuid, token_version
+    )
+    if cached is not None:
+        if not cached.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated",
+            )
+        if token_version != cached.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token revoked. Please login again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user_uuid
+
+    row = (
+        await session.execute(
+            select(User.is_active, User.token_version).where(User.id == user_uuid)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+    if not row[0]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated",
+        )
+    if token_version != row[1]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token revoked. Please login again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user_uuid
 
 
 async def get_current_active_user(
@@ -257,16 +311,37 @@ async def validate_ws_token(token: str, redis: Redis) -> str:
     """
     Validate JWT for WebSocket connections.
     Returns user_id string or raises Exception (caller closes with 4001).
-    Does NOT use get_current_user — WebSocket doesn't need full profile load.
+    Also rejects accounts that are deactivated or whose token_version was
+    bumped (revoked), so a live socket cannot be held by a banned user.
     """
     try:
         user_id = decode_access_token(token)
         if not user_id:
             raise ValueError("No sub in token")
-        return user_id
+        payload = decode_token(token, ACCESS_TOKEN_TYPE)
+        token_version = payload.get("ver", 1) if payload else 1
+        user_uuid = UUID(str(user_id))
     except Exception as e:
         logger.warning("ws_token_validation_failed", error=str(e), exc_info=True)
         raise ValueError("Invalid token")
+
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                select(User.is_active, User.token_version).where(User.id == user_uuid)
+            )
+        ).first()
+
+    if row is None:
+        raise ValueError("User not found")
+    if not row[0]:
+        raise ValueError("Account is deactivated")
+    if token_version != row[1]:
+        raise ValueError("Token revoked")
+
+    return str(user_uuid)
 
 
 async def get_admin_user(request: Request) -> "AdminIdentity":
@@ -289,7 +364,11 @@ async def get_admin_user(request: Request) -> "AdminIdentity":
 
     # Fallback: legacy X-Admin-Key header
     admin_key = request.headers.get("X-Admin-Key")
-    if admin_key and admin_key == settings.ADMIN_SECRET_KEY:
+    if (
+        admin_key
+        and settings.ADMIN_SECRET_KEY
+        and hmac.compare_digest(admin_key, settings.ADMIN_SECRET_KEY)
+    ):
         return AdminIdentity(id=settings.ADMIN_USERNAME)
 
     raise HTTPException(

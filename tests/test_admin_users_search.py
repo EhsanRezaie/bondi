@@ -36,16 +36,14 @@ BASE_PROFILE = {
 
 
 async def register_user(client: AsyncClient, db_session, email: str, mock_verification_code, profile: dict | None = None) -> dict:
-    """Create a user via the phone-OTP flow, keeping the email set so the
-    admin search tests can keep filtering/asserting by email."""
+    """Create a user via the phone-OTP flow. The `email` argument is only used
+    as a unique label to derive the display name (emails no longer exist)."""
     from app.models.user import User
 
-    # Pre-create the account with phone + email so verify-code logs in to it
-    # (email stays attached for the admin search assertions).
+    # Pre-create the account with a phone so verify-code logs in to it.
     user = User(
         id=uuid_lib.uuid4(),
         phone=f"+9891{uuid_lib.uuid4().int % 10_000_000_000:010d}",
-        email=email,
         phone_verified=True,
         is_active=True,
         token_version=1,
@@ -60,15 +58,14 @@ async def register_user(client: AsyncClient, db_session, email: str, mock_verifi
     data = res.json()
     headers = {"Authorization": f"Bearer {data['access_token']}"}
     payload = {**BASE_PROFILE, **(profile or {})}
-    if "name" not in payload:
-        payload["name"] = email.split("@")[0]
+    payload["name"] = (profile or {}).get("name") or email.split("@")[0]
     res = await client.post(REGISTER_COMPLETE_URL, json=payload, headers=headers)
     assert res.status_code == 200, res.text
     return res.json()
 
 
-def _emails(body: dict) -> set:
-    return {u["email"] for u in body["users"]}
+def _names(body: dict) -> set:
+    return {u["name"] for u in body["users"]}
 
 
 class TestAdminSearchFilters:
@@ -95,9 +92,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "tall@example.com" in emails
-        assert "short@example.com" not in emails
+        names = _names(res.json())
+        assert "tall" in names
+        assert "short" not in names
 
     async def test_filter_weight_range(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "heavy@example.com", mock_verification_code, {"weight": 120})
@@ -108,9 +105,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "heavy@example.com" in emails
-        assert "light@example.com" not in emails
+        names = _names(res.json())
+        assert "heavy" in names
+        assert "light" not in names
 
     async def test_filter_body_type(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "slim@example.com", mock_verification_code, {"body_type": "slim"})
@@ -121,9 +118,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "slim@example.com" in emails
-        assert "curvy@example.com" not in emails
+        names = _names(res.json())
+        assert "slim" in names
+        assert "curvy" not in names
 
     async def test_filter_relationship_status(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "single@example.com", mock_verification_code, {"relationship_status": "single"})
@@ -134,9 +131,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "divorced@example.com" in emails
-        assert "single@example.com" not in emails
+        names = _names(res.json())
+        assert "divorced" in names
+        assert "single" not in names
 
     async def test_filter_education(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "phd@example.com", mock_verification_code, {"education": "phd"})
@@ -147,9 +144,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "phd@example.com" in emails
-        assert "hs@example.com" not in emails
+        names = _names(res.json())
+        assert "phd" in names
+        assert "hs" not in names
 
     async def test_filter_religion(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "islam@example.com", mock_verification_code, {"religion": "islam"})
@@ -160,9 +157,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "islam@example.com" in emails
-        assert "none@example.com" not in emails
+        names = _names(res.json())
+        assert "islam" in names
+        assert "none" not in names
 
     async def test_filter_ethnicity(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "kurd@example.com", mock_verification_code, {"ethnicity": "kurdish"})
@@ -173,9 +170,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "kurd@example.com" in emails
-        assert "persian@example.com" not in emails
+        names = _names(res.json())
+        assert "kurd" in names
+        assert "persian" not in names
 
     async def test_filter_political_orientation(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "lib@example.com", mock_verification_code, {"political_orientation": "liberal"})
@@ -186,9 +183,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "cons@example.com" in emails
-        assert "lib@example.com" not in emails
+        names = _names(res.json())
+        assert "cons" in names
+        assert "lib" not in names
 
     async def test_filter_smoking(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "never@example.com", mock_verification_code, {"smoking": "never"})
@@ -199,9 +196,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "regular@example.com" in emails
-        assert "never@example.com" not in emails
+        names = _names(res.json())
+        assert "regular" in names
+        assert "never" not in names
 
     async def test_filter_drinking(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "abst@example.com", mock_verification_code, {"drinking": "never"})
@@ -212,9 +209,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "soc@example.com" in emails
-        assert "abst@example.com" not in emails
+        names = _names(res.json())
+        assert "soc" in names
+        assert "abst" not in names
 
     async def test_filter_country_and_province(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "iran@example.com", mock_verification_code, {"country": "Iran", "province": "Tehran"})
@@ -225,9 +222,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "iran@example.com" in emails
-        assert "fr@example.com" not in emails
+        names = _names(res.json())
+        assert "iran" in names
+        assert "fr" not in names
 
         res = await client.get(
             ADMIN_USERS_URL,
@@ -235,9 +232,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "fr@example.com" in emails
-        assert "iran@example.com" not in emails
+        names = _names(res.json())
+        assert "fr" in names
+        assert "iran" not in names
 
     async def test_filter_languages_jsonb(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "en@example.com", mock_verification_code, {"languages": ["fa", "en"]})
@@ -248,9 +245,9 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "en@example.com" in emails
-        assert "de@example.com" not in emails
+        names = _names(res.json())
+        assert "en" in names
+        assert "de" not in names
 
     async def test_filter_has_photos(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "nophoto@example.com", mock_verification_code)
@@ -260,8 +257,8 @@ class TestAdminSearchFilters:
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
-        emails = _emails(res.json())
-        assert "nophoto@example.com" not in emails
+        names = _names(res.json())
+        assert "nophoto" not in names
 
 
 class TestAdminSearchSorting:
@@ -272,84 +269,84 @@ class TestAdminSearchSorting:
         await register_user(client, db_session, "beta@example.com", mock_verification_code, {"name": "Beta User"})
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "name", "sort_order": "asc", "search": "alpha@example.com"},
+            params={"sort_by": "name", "sort_order": "asc", "search": "Alpha User"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "alpha@example.com"
+        assert body["users"][0]["name"] == "Alpha User"
 
     async def test_sort_by_name_desc(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "alpha@example.com", mock_verification_code, {"name": "Alpha User"})
         await register_user(client, db_session, "beta@example.com", mock_verification_code, {"name": "Beta User"})
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "name", "sort_order": "desc", "search": "beta@example.com"},
+            params={"sort_by": "name", "sort_order": "desc", "search": "Beta User"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "beta@example.com"
+        assert body["users"][0]["name"] == "Beta User"
 
     async def test_sort_by_age_asc(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "older@example.com", mock_verification_code, {"birth_date": "1970-01-01"})
         await register_user(client, db_session, "younger@example.com", mock_verification_code, {"birth_date": "2000-01-01"})
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "age", "sort_order": "asc", "search": "example.com"},
+            params={"sort_by": "age", "sort_order": "asc", "search": "er"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "older@example.com"
+        assert body["users"][0]["name"] == "older"
 
     async def test_sort_by_age_desc(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "older@example.com", mock_verification_code, {"birth_date": "1970-01-01"})
         await register_user(client, db_session, "younger@example.com", mock_verification_code, {"birth_date": "2000-01-01"})
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "age", "sort_order": "desc", "search": "example.com"},
+            params={"sort_by": "age", "sort_order": "desc", "search": "er"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "younger@example.com"
+        assert body["users"][0]["name"] == "younger"
 
-    async def test_sort_by_email(self, client: AsyncClient, db_session, mock_verification_code):
+    async def test_sort_by_name_ascending(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "zz@example.com", mock_verification_code)
         await register_user(client, db_session, "aa@example.com", mock_verification_code)
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "email", "sort_order": "asc", "search": "example.com"},
+            params={"sort_by": "name", "sort_order": "asc"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "aa@example.com"
+        assert body["users"][0]["name"] == "aa"
 
     async def test_sort_by_created_at_default_desc(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "older@example.com", mock_verification_code)
         await register_user(client, db_session, "newer@example.com", mock_verification_code)
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "created_at", "sort_order": "desc", "search": "example.com"},
+            params={"sort_by": "created_at", "sort_order": "desc", "search": "er"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200
         body = res.json()
         assert body["users"]
-        assert body["users"][0]["email"] == "newer@example.com"
+        assert body["users"][0]["name"] == "newer"
 
     async def test_sort_by_invalid_falls_back_to_created_at(self, client: AsyncClient, db_session, mock_verification_code):
         await register_user(client, db_session, "fallback@example.com", mock_verification_code)
         res = await client.get(
             ADMIN_USERS_URL,
-            params={"sort_by": "not_a_real_column", "sort_order": "desc", "search": "fallback@example.com"},
+            params={"sort_by": "not_a_real_column", "sort_order": "desc", "search": "fallback"},
             headers={"X-Admin-Key": ADMIN_KEY},
         )
         assert res.status_code == 200

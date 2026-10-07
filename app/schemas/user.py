@@ -190,7 +190,6 @@ class UserProfileResponse(BaseModel):
     """Response schema for user profile (excludes sensitive data)."""
     id: UUID
     phone: Optional[str] = None
-    email: Optional[str] = None
     name: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None

@@ -6,7 +6,7 @@ from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.message import Message
 from app.models.chat import Chat
-from app.models.subscription import Subscription
+from app.models.subscription import Subscription, PendingPurchase
 from app.models.report import Report
 from app.models.daily_limit import DailyLimit
 from app.models.review_reward import ReviewReward

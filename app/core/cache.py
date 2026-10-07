@@ -223,7 +223,6 @@ def _user_from_cache(data: dict) -> SimpleNamespace:
         registration_status=data.get("registration_status"),
         referral_code=data.get("referral_code"),
         phone=data.get("phone"),
-        email=data.get("email"),
         profile=_profile_from_cache(data.get("profile")),
         settings=_dict_to_obj(UserSettings, data.get("settings")),
     )
@@ -239,7 +238,6 @@ async def cache_auth_user(redis: Redis, user, token_version: int) -> None:
         "registration_status": user.registration_status,
         "referral_code": user.referral_code,
         "phone": user.phone,
-        "email": user.email,
         "profile": _row_to_dict(user.profile),
         "settings": _row_to_dict(user.settings),
     }

@@ -29,7 +29,6 @@ async def _make_user(db_session: AsyncSession, email: str, name: str, gender: st
     user = User(
         id=user_id,
         phone=f"+9891{uuid.uuid4().hex[:10]}",
-        email=email,
         phone_verified=True,
         is_active=True,
         registration_status="onboarding_complete",
