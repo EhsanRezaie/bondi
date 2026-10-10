@@ -77,6 +77,46 @@ class TestNotifications:
         assert body["total"] >= 3
         assert body["next_offset"] == 2
 
+    async def test_get_notifications_cursor_pagination(self, client: AsyncClient, mock_verification_code):
+        receiver_data = await register_user(
+            client, _phone("cursor_receiver@example.com"), mock_verification_code
+        )
+        receiver_headers = {"Authorization": f"Bearer {receiver_data['access_token']}"}
+
+        for i in range(3):
+            liker_data = await register_user(
+                client, _phone(f"cursor_liker_{i}@example.com"), mock_verification_code
+            )
+            liker_headers = {"Authorization": f"Bearer {liker_data['access_token']}"}
+            await client.post(
+                SWIPE_URL,
+                json={"user_id": receiver_data["user"]["id"], "direction": "like"},
+                headers=liker_headers,
+            )
+
+        first = await client.get(
+            NOTIFICATIONS_URL, params={"limit": 2}, headers=receiver_headers
+        )
+        assert first.status_code == 200
+        first_body = first.json()
+        assert len(first_body["notifications"]) == 2
+        cursor = first_body["next_cursor"]
+        assert cursor
+
+        first_ids = {n["id"] for n in first_body["notifications"]}
+        second = await client.get(
+            NOTIFICATIONS_URL,
+            params={"limit": 2, "cursor": cursor},
+            headers=receiver_headers,
+        )
+        assert second.status_code == 200
+        second_body = second.json()
+        second_ids = {n["id"] for n in second_body["notifications"]}
+        # Keyset paging must not repeat or skip rows, and total is page-stable.
+        assert first_ids.isdisjoint(second_ids)
+        assert second_body["total"] == first_body["total"]
+        assert len(second_ids) >= 1
+
     async def test_get_notifications_type_filter(self, client: AsyncClient, mock_verification_code):
         receiver_data = await register_user(client, _phone("typefilter@example.com"), mock_verification_code)
         receiver_headers = {"Authorization": f"Bearer {receiver_data['access_token']}"}

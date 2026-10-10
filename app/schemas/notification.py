@@ -25,6 +25,7 @@ class NotificationListResponse(BaseModel):
     notifications: List[NotificationResponse]
     total: int
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None
 
 
 class NotificationCountsResponse(BaseModel):

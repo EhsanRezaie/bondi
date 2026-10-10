@@ -39,6 +39,8 @@ class MatchListResponse(BaseModel):
     """Response for matches list"""
     matches: List[MatchResponse]
     total: int
+    next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None
 
 
 class MatchDetailResponse(BaseModel):

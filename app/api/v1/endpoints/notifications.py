@@ -7,6 +7,12 @@ from uuid import UUID
 from app.db.session import get_session
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
+from app.core.pagination import (
+    decode_cursor,
+    encode_cursor,
+    keyset_desc,
+    parse_datetime_key,
+)
 from app.models.user import User
 from app.models.notification import Notification
 from app.models.device_token import DeviceToken
@@ -33,6 +39,7 @@ async def get_notifications(
     notif_type: str | None = Query(None, alias="type", description="Filter by notification type"),
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    cursor: str | None = Query(None, description="Opaque keyset cursor from a previous page"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -53,16 +60,38 @@ async def get_notifications(
         select(Notification)
         .where(filter_stmt)
         .order_by(Notification.created_at.desc(), Notification.id.desc())
-        .offset(offset)
-        .limit(limit)
     )
+
+    # Keyset cursor takes precedence over offset when supplied and valid.
+    used_cursor = False
+    if cursor:
+        raw_key, last_id = decode_cursor(cursor)
+        cursor_key = parse_datetime_key(raw_key)
+        if cursor_key is not None and last_id is not None:
+            query = query.where(
+                keyset_desc(
+                    Notification.created_at, Notification.id, cursor_key, last_id
+                )
+            )
+            used_cursor = True
+
+    if not used_cursor:
+        query = query.offset(offset)
+    query = query.limit(limit)
+
     result = await session.execute(query)
     notifications = result.scalars().all()
-    
+
+    next_cursor = None
+    if len(notifications) == limit:
+        last = notifications[-1]
+        next_cursor = encode_cursor(last.created_at, last.id)
+
     return NotificationListResponse(
         notifications=[NotificationResponse.model_validate(n) for n in notifications],
         total=total or 0,
-        next_offset=offset + limit if offset + limit < total else None
+        next_offset=offset + limit if offset + limit < total else None,
+        next_cursor=next_cursor,
     )
 
 

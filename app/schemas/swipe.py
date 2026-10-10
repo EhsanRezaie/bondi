@@ -37,3 +37,4 @@ class LikedUsersResponse(BaseModel):
     users: List[LikedUserResponse]
     total: int
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None

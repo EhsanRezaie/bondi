@@ -19,6 +19,12 @@ from app.services.photo_service import PhotoService
 from app.models.photo import Photo
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
+from app.core.pagination import (
+    decode_cursor,
+    encode_cursor,
+    keyset_desc,
+    parse_datetime_key,
+)
 from app.core.redis import redis_client
 from app.core.cache import record_swipe_cache, get_swiped_ids
 from app.schemas.discover import SwipeRequest, SwipeResponse
@@ -417,6 +423,7 @@ async def get_liked_users(
     request: Request,
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    cursor: str | None = Query(None, description="Opaque keyset cursor from a previous page"),
     session: AsyncSession = Depends(get_session),
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> LikedUsersResponse:
@@ -456,7 +463,7 @@ async def get_liked_users(
     
     # Get paginated results with profile data and swipe timestamp
     query = (
-        select(User, UserProfile, Swipe.created_at)
+        select(User, UserProfile, Swipe.created_at, Swipe.id)
         .join(UserProfile, User.id == UserProfile.user_id)
         .join(Swipe, Swipe.to_user == User.id)
         .where(
@@ -467,10 +474,22 @@ async def get_liked_users(
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
         .order_by(Swipe.created_at.desc(), Swipe.id.desc())
-        .offset(offset)
-        .limit(limit)
     )
-    
+
+    # Keyset cursor takes precedence over offset when supplied and valid.
+    used_cursor = False
+    if cursor:
+        raw_key, last_id = decode_cursor(cursor)
+        cursor_key = parse_datetime_key(raw_key)
+        if cursor_key is not None and last_id is not None:
+            query = query.where(
+                keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id)
+            )
+            used_cursor = True
+    if not used_cursor:
+        query = query.offset(offset)
+    query = query.limit(limit)
+
     result = await session.execute(query)
     rows = result.all()
 
@@ -483,7 +502,7 @@ async def get_liked_users(
         )
 
     users = []
-    for user, profile, swiped_at in rows:
+    for user, profile, swiped_at, _swipe_id in rows:
         # Get main photo URL
         main_photo_url = await get_user_main_photo_url(session, user.id)
         
@@ -500,11 +519,16 @@ async def get_liked_users(
         })
     
     next_offset = offset + limit if offset + limit < total else None
-    
+    next_cursor = None
+    if len(rows) == limit:
+        last = rows[-1]
+        next_cursor = encode_cursor(last[2], last[3])
+
     return LikedUsersResponse(
         users=users,
         total=total,
         next_offset=next_offset,
+        next_cursor=next_cursor,
     )
 
 
@@ -514,6 +538,7 @@ async def get_likers(
     request: Request,
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    cursor: str | None = Query(None, description="Opaque keyset cursor from a previous page"),
     session: AsyncSession = Depends(get_session),
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> LikedUsersResponse:
@@ -569,7 +594,7 @@ async def get_likers(
     
     # Get paginated results
     query = (
-        select(User, UserProfile, Swipe.created_at)
+        select(User, UserProfile, Swipe.created_at, Swipe.id)
         .join(UserProfile, User.id == UserProfile.user_id)
         .join(Swipe, Swipe.from_user == User.id)
         .where(
@@ -581,10 +606,22 @@ async def get_likers(
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
         .order_by(Swipe.created_at.desc(), Swipe.id.desc())
-        .offset(offset)
-        .limit(limit)
     )
-    
+
+    # Keyset cursor takes precedence over offset when supplied and valid.
+    used_cursor = False
+    if cursor:
+        raw_key, last_id = decode_cursor(cursor)
+        cursor_key = parse_datetime_key(raw_key)
+        if cursor_key is not None and last_id is not None:
+            query = query.where(
+                keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id)
+            )
+            used_cursor = True
+    if not used_cursor:
+        query = query.offset(offset)
+    query = query.limit(limit)
+
     result = await session.execute(query)
     rows = result.all()
 
@@ -597,7 +634,7 @@ async def get_likers(
         )
 
     users = []
-    for user, profile, swiped_at in rows:
+    for user, profile, swiped_at, _swipe_id in rows:
         main_photo_url = await get_user_main_photo_url(session, user.id)
         
         users.append({
@@ -613,9 +650,14 @@ async def get_likers(
         })
     
     next_offset = offset + limit if offset + limit < total else None
-    
+    next_cursor = None
+    if len(rows) == limit:
+        last = rows[-1]
+        next_cursor = encode_cursor(last[2], last[3])
+
     return LikedUsersResponse(
         users=users,
         total=total,
         next_offset=next_offset,
+        next_cursor=next_cursor,
     )

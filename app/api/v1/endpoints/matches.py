@@ -11,6 +11,12 @@ from app.models.chat import Chat
 from app.models.photo import Photo
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
+from app.core.pagination import (
+    decode_cursor,
+    encode_cursor,
+    keyset_desc,
+    parse_datetime_key,
+)
 from app.schemas.match import MatchResponse, MatchListResponse, MatchDetailResponse, MatchUserResponse, LastMessageResponse
 from app.services.notification_service import NotificationService
 from app.services.photo_service import PhotoService
@@ -29,6 +35,7 @@ async def get_matches(
     request: Request,
     limit: int = Query(50, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    cursor: str | None = Query(None, description="Opaque keyset cursor from a previous page"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> MatchListResponse:
@@ -57,7 +64,20 @@ async def get_matches(
         Match.is_active == True
     ).order_by(Match.matched_at.desc(), Match.id.desc())
 
-    query = query.offset(offset).limit(limit)
+    # Keyset cursor takes precedence over offset when supplied and valid.
+    used_cursor = False
+    if cursor:
+        raw_key, last_id = decode_cursor(cursor)
+        cursor_key = parse_datetime_key(raw_key)
+        if cursor_key is not None and last_id is not None:
+            query = query.where(
+                keyset_desc(Match.matched_at, Match.id, cursor_key, last_id)
+            )
+            used_cursor = True
+
+    if not used_cursor:
+        query = query.offset(offset)
+    query = query.limit(limit)
     result = await session.execute(query)
     matches = result.scalars().all()
 
@@ -144,9 +164,16 @@ async def get_matches(
             last_message=last_message
         ))
 
+    next_cursor = None
+    if len(matches) == limit:
+        last = matches[-1]
+        next_cursor = encode_cursor(last.matched_at, last.id)
+
     return MatchListResponse(
         matches=match_responses,
-        total=total or 0
+        total=total or 0,
+        next_offset=offset + limit if offset + limit < (total or 0) else None,
+        next_cursor=next_cursor,
     )
 
 

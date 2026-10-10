@@ -178,6 +178,40 @@ class TestSwipeLiked:
         assert len(data["users"]) == 1
         assert data["next_offset"] is None
 
+    async def test_liked_users_cursor_pagination(self, client, mock_verification_code):
+        """Keyset cursor pages seek without overlap or gaps."""
+        male = await register_male(client, mock_verification_code)
+        female = await register_female(client, mock_verification_code)
+        female2 = await register_female_2(client, mock_verification_code)
+        female3 = await register_female_3(client, mock_verification_code)
+        male_headers = {"Authorization": f"Bearer {male['access_token']}"}
+
+        for f in (female, female2, female3):
+            await client.post(
+                SWIPE_URL,
+                json={"user_id": f["user"]["id"], "direction": "like"},
+                headers=male_headers,
+            )
+
+        first = await client.get(f"{LIKED_URL}?limit=2", headers=male_headers)
+        assert first.status_code == 200
+        first_body = first.json()
+        assert first_body["total"] == 3
+        assert len(first_body["users"]) == 2
+        cursor = first_body["next_cursor"]
+        assert cursor
+
+        first_ids = {u["id"] for u in first_body["users"]}
+        second = await client.get(
+            f"{LIKED_URL}?limit=2&cursor={cursor}", headers=male_headers
+        )
+        assert second.status_code == 200
+        second_body = second.json()
+        second_ids = {u["id"] for u in second_body["users"]}
+        assert first_ids.isdisjoint(second_ids)
+        assert len(second_ids) == 1
+        assert second_body["total"] == 3
+
     async def test_liked_users_excludes_blocked(self, client, mock_verification_code, db_session):
         """Should not include blocked users in liked list."""
         male = await register_male(client, mock_verification_code)

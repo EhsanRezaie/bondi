@@ -69,10 +69,11 @@ email auth path. Verified by tests: backend **848 passed**, mobile **626 passed*
       `email_service.py`, removed email from schemas/cache/admin responses/search/seeds
       and from mobile validators/model/localizations. Migration `b2c3d4e5f6a7`.
 
-Remaining audit work: **P5 scale** (plus the explicitly deferred keyset cursors
-for notifications/matches/blocks/search/admin_users/swipes and a PostGIS distance
-column — see the Phase 2 note below). P3 mobile correctness and P4 mobile perf
-shipped on 2026-10-07 (see their sections below).
+Remaining audit work: **P5 scale's consciously deferred tail** — keyset cursors
+for `blocks`/`admin_users` (small/admin-only lists, still offset-paginated) and a
+full PostGIS distance column (a DB-extension dependency the bbox prefilter makes
+unnecessary). P3 mobile correctness, P4 mobile perf and the user-facing keyset
+cursors shipped on 2026-10-07 (see their sections below).
 
 ---
 
@@ -157,10 +158,39 @@ Hot-path query, connection-pool, CPU and fan-out work. Full backend suite:
       broadcast, chat delivery and listener release are O(subscribers) instead
       of scanning every subscription. `app/services/websocket_manager.py`.
 
-**Deferred (tracked, not forgotten):** keyset cursors for
-`notifications`/`matches`/`blocks`/`search`/`admin_users`/`swipes` (all already
-have offset + id tiebreaker, so they are stable; cursor is an optimisation) and a
-full PostGIS distance column.
+**Deferred (tracked, not forgotten):** a full PostGIS distance column (the
+lat/lng bbox prefilter already captures most of the win without an extension
+dependency).
+
+---
+
+## Phase 5 scale — shipped (2026-10-07)
+
+The user-facing keyset (cursor) pagination from the Phase 2 deferral. Shared
+opaque-cursor helper + additive `cursor`/`next_cursor` on the list endpoints, so
+offset pagination keeps working untouched. Backend suite: **851 passed** (+ new
+regression tests); mobile **626 passed**, `flutter analyze` clean.
+
+- [x] **Shared cursor helper** — `encode_cursor` / `decode_cursor` /
+      `keyset_desc` (row `(key, id)` seek, no OFFSET scan on deep pages).
+      `app/core/pagination.py`.
+- [x] **Notifications** — `GET /notifications` accepts `cursor`, returns
+      `next_cursor`. `app/api/v1/endpoints/notifications.py`,
+      `app/schemas/notification.py`.
+- [x] **Matches** — `GET /matches` now returns `next_cursor`/`next_offset` and
+      accepts `cursor`. `app/api/v1/endpoints/matches.py`, `app/schemas/match.py`.
+- [x] **Liked / likers** — `GET /swipes/liked` and `/swipes/likers` accept
+      `cursor`, return `next_cursor`. `app/api/v1/endpoints/swipes.py`,
+      `app/schemas/swipe.py`.
+- [x] **Mobile follows cursors** — notifications, matches, liked and likers
+      providers now prefer `next_cursor` and pass `cursor`, falling back to
+      offset for older servers. `lib/providers/{notifications,chat}_provider.dart`,
+      `lib/services/chat_service.dart`.
+- [x] **Search** — already had keyset cursors (previous session); unchanged.
+
+**Still offset-paginated (deliberate):** `blocks` (returns a bare list — adding a
+cursor would change the response contract) and `admin_users` (dynamic `nullslast`
+sort, admin-only, shallow). PostGIS remains a non-goal.
 
 ---
 
