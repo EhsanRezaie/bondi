@@ -66,6 +66,14 @@ markers = [
     "blockbuster: fail test if blocking IO runs on the event loop",
 ]
 
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+# Phase 1.5 baseline measured 2026-11-14: 67% (9242 stmts, 3071 missed).
+# RATCHET ONLY — raise this number as tests are added; never lower it.
+fail_under = 67
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
