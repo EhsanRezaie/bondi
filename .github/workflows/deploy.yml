@@ -26,6 +26,34 @@ jobs:
       - name: ruff format check
         run: uv run ruff format --check .
 
+  mypy:
+    name: Mypy (no new errors vs baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: mypy — fail only on errors NOT in mypy-baseline.txt
+        run: |
+          set -o pipefail
+          uv run mypy --no-error-summary > /tmp/mypy-current.txt || true
+          grep 'error:' /tmp/mypy-current.txt | sort -u > /tmp/mypy-current-sorted.txt
+          NEW=$(comm -13 mypy-baseline.txt /tmp/mypy-current-sorted.txt)
+          if [ -n "$NEW" ]; then
+            echo "::error::New mypy errors (must fix, not add to baseline):"
+            echo "$NEW"
+            exit 1
+          fi
+          echo "No new mypy errors. ($(wc -l < /tmp/mypy-current-sorted.txt) total, $(wc -l < mypy-baseline.txt) in baseline)"
+
   migrations:
     name: Migrations drift check
     runs-on: ubuntu-latest
