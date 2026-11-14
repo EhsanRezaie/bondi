@@ -49,6 +49,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==6.0.0",
     "pytest-xdist==3.8.0",
+    "ruff>=0.17.5",
 ]
 
 [tool.uv]
@@ -59,3 +60,118 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 addopts = "-n auto --dist loadscope"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["venv", ".venv", "alembic/versions", ".mimocode"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "PERF", # perflint
+    "RUF",  # ruff-specific
+    "ASYNC",# blocking calls inside async functions
+    "S",    # bandit (security)
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency-injection markers are immutable, evaluated per-request.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Form",
+    "fastapi.File",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Baseline — generated 2026-11-14 at Phase 1.1; MAY ONLY SHRINK (delete lines as code is fixed).
+"tests/*" = ["S101", "S105", "S106", "S311", "S324", "B017", "F403"]
+"alembic/env.py" = ["SIM103"]
+"app/api/v1/endpoints/admin_announcements.py" = ["E712", "PERF401"]
+"app/api/v1/endpoints/admin_auth.py" = ["S105"]
+"app/api/v1/endpoints/admin_users.py" = ["E712", "PERF401", "SIM108"]
+"app/api/v1/endpoints/auth.py" = ["B904", "E501", "F841", "RUF013", "S106"]
+"app/api/v1/endpoints/blocks.py" = ["B904", "E712", "F841"]
+"app/api/v1/endpoints/chats.py" = ["E501", "E712", "F821", "SIM108"]
+"app/api/v1/endpoints/discover.py" = ["B905", "E712", "SIM108"]
+"app/api/v1/endpoints/locations.py" = ["PERF401"]
+"app/api/v1/endpoints/matches.py" = ["E712", "SIM108"]
+"app/api/v1/endpoints/messages.py" = ["E501", "E712", "F841", "SIM108"]
+"app/api/v1/endpoints/notifications.py" = ["E712"]
+"app/api/v1/endpoints/photos.py" = ["RUF059"]
+"app/api/v1/endpoints/referrals.py" = ["B904", "E501", "S311"]
+"app/api/v1/endpoints/reports.py" = ["F841"]
+"app/api/v1/endpoints/search.py" = ["B905", "E712", "SIM108"]
+"app/api/v1/endpoints/swipes.py" = ["B904", "E501", "E712"]
+"app/api/v1/endpoints/system.py" = ["ASYNC230", "ASYNC240"]
+"app/api/v1/endpoints/users.py" = ["E712", "S311", "SIM102"]
+"app/api/v1/endpoints/verify.py" = ["E501"]
+"app/api/v1/websocket/stream.py" = ["E712", "S110", "SIM105"]
+"app/core/deps.py" = ["B904"]
+"app/core/redis.py" = ["B904", "F841", "S105"]
+"app/core/security.py" = ["S105"]
+"app/db/scripts/rotate_encryption_secret.py" = ["SIM220"]
+"app/db/scripts/seed_dummy_users.py" = ["B905", "E501", "E741", "PERF401", "RUF001", "S110", "S311"]
+"app/main.py" = ["E402", "S110"]
+"app/models/__init__.py" = ["F401"]
+"app/schemas/__init__.py" = ["F403"]
+"app/schemas/auth.py" = ["E402", "S105", "UP042"]
+"app/schemas/user.py" = ["B904", "RUF013"]
+"app/services/chat_service.py" = ["E501", "E712"]
+"app/services/face_verification_service.py" = ["S310"]
+"app/services/location_service.py" = ["E402"]
+"app/services/media_service.py" = ["RUF012"]
+"app/services/notification_service.py" = ["E712", "RUF013"]
+"app/services/photo_service.py" = ["E501", "RUF012"]
+"app/services/profile_service.py" = ["SIM102"]
+"app/services/reward_service.py" = ["E501", "RUF013"]
+"app/services/sms_service.py" = ["S105"]
+"app/services/subscriptions.py" = ["F821"]
+"app/services/websocket_manager.py" = ["B905"]
+"app/utils/geo.py" = ["S311"]
+"tests/conftest.py" = ["ASYNC230", "B905", "E402", "E501"]
+"tests/test_admin_dashboard.py" = ["S324"]
+"tests/test_admin_messages.py" = ["B007", "F841", "S324"]
+"tests/test_admin_photos.py" = ["F841", "S324"]
+"tests/test_admin_reports.py" = ["S324"]
+"tests/test_admin_tickets.py" = ["S324"]
+"tests/test_admin_users.py" = ["RUF013", "S324"]
+"tests/test_blocks.py" = ["E402", "F841", "RUF059", "S324"]
+"tests/test_chat_features.py" = ["E402", "RUF059", "S324"]
+"tests/test_chats.py" = ["B007", "E402", "F841", "PERF102", "PERF401", "RUF059", "S324"]
+"tests/test_daily_limits.py" = ["RUF059", "S324"]
+"tests/test_discover.py" = ["E402", "F841", "RUF012", "RUF059", "S324"]
+"tests/test_encryption.py" = ["B017"]
+"tests/test_error_handling.py" = ["SIM117"]
+"tests/test_face_verification.py" = ["E501", "RUF059"]
+"tests/test_matches.py" = ["E712", "S324"]
+"tests/test_messages.py" = ["E402", "E712", "RUF059", "S324"]
+"tests/test_messages_encryption.py" = ["E712"]
+"tests/test_notifications.py" = ["F841", "S324"]
+"tests/test_nsfw.py" = ["E402", "S324"]
+"tests/test_photos.py" = ["F841"]
+"tests/test_public_profile.py" = ["E402", "S324"]
+"tests/test_push_notifications.py" = ["S324"]
+"tests/test_referrals.py" = ["S324"]
+"tests/test_reports.py" = ["S324"]
+"tests/test_rewards.py" = ["F841", "S324"]
+"tests/test_search.py" = ["E402", "RUF012", "RUF059", "S324"]
+"tests/test_settings.py" = ["S324"]
+"tests/test_subscriptions.py" = ["S324"]
+"tests/test_swipes.py" = ["S324"]
+"tests/test_swipes_liked.py" = ["F841", "S324"]
+"tests/test_system.py" = ["ASYNC230", "SIM117"]
+"tests/test_tickets.py" = ["S324"]
+"tests/test_users.py" = ["F841", "RUF013", "S324"]
+"tests/test_websocket.py" = ["E402", "F841", "RUF059", "S324"]

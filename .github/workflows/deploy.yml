@@ -5,6 +5,27 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Ruff lint (baseline may only shrink)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format check
+        run: uv run ruff format --check .
+
   migrations:
     name: Migrations drift check
     runs-on: ubuntu-latest
