@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -11,12 +11,13 @@ class InterestResponse(BaseModel):
     display labels resolved for the requested `language` (falling back to the
     stable key when a translation is missing).
     """
+
     id: UUID
     name: str
-    name_localized: Optional[str] = None
-    category: Optional[str] = None
-    category_localized: Optional[str] = None
-    icon: Optional[str] = None
+    name_localized: str | None = None
+    category: str | None = None
+    category_localized: str | None = None
+    icon: str | None = None
 
     class Config:
         from_attributes = True

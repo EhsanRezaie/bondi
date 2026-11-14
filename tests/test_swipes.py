@@ -1,13 +1,12 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-
-from app.core.config import settings as app_settings
 
 # ============ URL Constants ============
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
@@ -71,8 +70,8 @@ async def register_female(client, mock_verification_code) -> dict:
 # POST /api/v1/swipes
 # =============================================================================
 
-class TestSwipe:
 
+class TestSwipe:
     async def test_swipe_like_success(self, client, mock_verification_code):
         """Should successfully like another user."""
         male = await register_male(client, mock_verification_code)
@@ -196,6 +195,7 @@ class TestSwipe:
     async def test_swipe_nonexistent_user(self, client, mock_verification_code):
         """Should return 404 when swiping on non-existent user."""
         from uuid import uuid4
+
         male = await register_male(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {male['access_token']}"}
 
@@ -210,6 +210,7 @@ class TestSwipe:
     async def test_swipe_requires_auth(self, client):
         """Should return 401 without token."""
         from uuid import uuid4
+
         res = await client.post(
             SWIPE_URL,
             json={"user_id": str(uuid4()), "direction": "like"},
@@ -266,8 +267,8 @@ class TestSwipe:
 # GET /api/v1/swipes/stats
 # =============================================================================
 
-class TestSwipeStats:
 
+class TestSwipeStats:
     async def test_stats_initial(self, client, mock_verification_code):
         """Should return zero stats when no swipes have been made."""
         male = await register_male(client, mock_verification_code)
@@ -374,9 +375,11 @@ class TestMatchRaceRegression:
         db_session,
     ):
         from uuid import UUID
+
         from sqlalchemy import select
-        from app.models.swipe import Swipe
+
         from app.models.match import Match
+        from app.models.swipe import Swipe
 
         male = await register_male(client, mock_verification_code)
         female = await register_female(client, mock_verification_code)

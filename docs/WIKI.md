@@ -2476,6 +2476,7 @@ if settings.BUGSINK_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
     sentry_sdk.init(
         dsn=settings.BUGSINK_DSN,
         integrations=[

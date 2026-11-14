@@ -1,28 +1,28 @@
-from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, Float, and_, or_
-from sqlalchemy.orm import selectinload
-from sqlalchemy.dialects.postgresql import JSONB
-from datetime import datetime, timedelta, date
 import base64
 import json
+from datetime import date, datetime, timedelta
 
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import Float, and_, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import app.core.redis as redis_module
+from app.core.deps import get_current_user
+from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.db.session import get_session
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_interest import UserInterest
+from app.models.block import Block
 from app.models.interest import Interest
 from app.models.photo import Photo
-from app.models.block import Block
 from app.models.swipe import Swipe
-from app.core.deps import get_current_user
-import app.core.redis as redis_module
-from app.core.limiter import limiter
+from app.models.user import User
+from app.models.user_interest import UserInterest
+from app.models.user_profile import UserProfile
 from app.schemas.search import SearchResponse
 from app.services.profile_service import serialize_card
 from app.utils.geo import fuzz_distance
-
-from app.core.logging import get_logger
 
 logger = get_logger("search")
 
@@ -31,11 +31,9 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 def haversine_distance(lat1, lng1, lat2_col, lng2_col):
     """Haversine distance as SQL expression. Returns km."""
-    cos_val = (
-        func.cos(func.radians(lat1)) * func.cos(func.radians(lat2_col)) *
-        func.cos(func.radians(lng2_col) - func.radians(lng1)) +
-        func.sin(func.radians(lat1)) * func.sin(func.radians(lat2_col))
-    )
+    cos_val = func.cos(func.radians(lat1)) * func.cos(func.radians(lat2_col)) * func.cos(
+        func.radians(lng2_col) - func.radians(lng1)
+    ) + func.sin(func.radians(lat1)) * func.sin(func.radians(lat2_col))
     return 6371 * func.acos(func.least(1.0, func.greatest(-1.0, cos_val)))
 
 
@@ -133,18 +131,22 @@ async def search_users(
     blocked_user_ids = select(Block.blocked_id).where(Block.blocker_id == current_user.id)
     blocked_by_user_ids = select(Block.blocker_id).where(Block.blocked_id == current_user.id)
 
-    query = select(User).options(
-        selectinload(User.profile),
-        selectinload(User.settings),
-        selectinload(User.photos),
-    ).where(
-        User.is_active == True,
-        User.id != current_user.id,
-        User.id.not_in(blocked_user_ids),
-        User.id.not_in(blocked_by_user_ids),
-        # Visibility policy: only show users whose photos are all approved.
-        User.photos.any(),
-        ~User.photos.any(Photo.status != "approved"),
+    query = (
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.photos),
+        )
+        .where(
+            User.is_active == True,
+            User.id != current_user.id,
+            User.id.not_in(blocked_user_ids),
+            User.id.not_in(blocked_by_user_ids),
+            # Visibility policy: only show users whose photos are all approved.
+            User.photos.any(),
+            ~User.photos.any(Photo.status != "approved"),
+        )
     )
 
     query = query.join(UserProfile, User.id == UserProfile.user_id)
@@ -199,17 +201,14 @@ async def search_users(
     if languages:
         lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
         if lang_list:
-            query = query.where(
-                UserProfile.languages.cast(JSONB).contains(lang_list)
-            )
+            query = query.where(UserProfile.languages.cast(JSONB).contains(lang_list))
 
     if interests:
         interest_list = [i.strip() for i in interests.split(",") if i.strip()]
         if interest_list:
             interest_count_subquery = (
                 select(
-                    UserInterest.user_id,
-                    func.count(UserInterest.interest_id).label('match_count')
+                    UserInterest.user_id, func.count(UserInterest.interest_id).label("match_count")
                 )
                 .join(Interest, UserInterest.interest_id == Interest.id)
                 .where(Interest.name.in_(interest_list))
@@ -217,32 +216,29 @@ async def search_users(
                 .having(func.count(UserInterest.interest_id) == len(interest_list))
                 .subquery()
             )
-            query = query.where(
-                User.id.in_(
-                    select(interest_count_subquery.c.user_id)
-                )
-            )
+            query = query.where(User.id.in_(select(interest_count_subquery.c.user_id)))
 
     if has_photos is not None:
         if has_photos:
             query = query.where(
                 select(func.count(Photo.id))
                 .where(Photo.user_id == User.id, Photo.status == "approved")
-                .as_scalar() > 0
+                .as_scalar()
+                > 0
             )
         else:
             query = query.where(
                 select(func.count(Photo.id))
                 .where(Photo.user_id == User.id, Photo.status == "approved")
-                .as_scalar() == 0
+                .as_scalar()
+                == 0
             )
 
     has_coords = current_profile.lat is not None and current_profile.lng is not None
 
     if has_coords:
         distance_expr = haversine_distance(
-            current_profile.lat, current_profile.lng,
-            UserProfile.lat, UserProfile.lng
+            current_profile.lat, current_profile.lng, UserProfile.lat, UserProfile.lng
         )
         if distance_km:
             query = query.where(distance_expr <= distance_km)
@@ -297,15 +293,19 @@ async def search_users(
             else:
                 query = query.where(col.is_(None), User.id < cursor_id)
         elif col_asc:
-            query = query.where(or_(
-                col > cursor_key,
-                and_(col == cursor_key, User.id > cursor_id),
-            ))
+            query = query.where(
+                or_(
+                    col > cursor_key,
+                    and_(col == cursor_key, User.id > cursor_id),
+                )
+            )
         else:
-            query = query.where(or_(
-                col < cursor_key,
-                and_(col == cursor_key, User.id < cursor_id),
-            ))
+            query = query.where(
+                or_(
+                    col < cursor_key,
+                    and_(col == cursor_key, User.id < cursor_id),
+                )
+            )
 
     if use_cursor:
         # Fetch one extra row to detect whether another page exists.
@@ -343,16 +343,9 @@ async def search_users(
                 else None
             )
         elif sort_by == "last_seen":
-            key = (
-                last_user.last_seen_at.isoformat()
-                if last_user.last_seen_at else None
-            )
+            key = last_user.last_seen_at.isoformat() if last_user.last_seen_at else None
         elif sort_by == "name":
-            key = (
-                last_user.profile.name
-                if last_user.profile and last_user.profile.name
-                else None
-            )
+            key = last_user.profile.name if last_user.profile and last_user.profile.name else None
         else:
             key = last_user.created_at.isoformat()
         next_cursor = _encode_cursor(key, last_user.id)
@@ -363,8 +356,7 @@ async def search_users(
     if result_user_ids:
         swipe_rows = await session.execute(
             select(Swipe.to_user, Swipe.direction).where(
-                Swipe.from_user == current_user.id,
-                Swipe.to_user.in_(result_user_ids)
+                Swipe.from_user == current_user.id, Swipe.to_user.in_(result_user_ids)
             )
         )
         swipe_map = {row.to_user: row.direction for row in swipe_rows}
@@ -389,13 +381,15 @@ async def search_users(
 
         is_online = online_map.get(str(user.id), False)
 
-        response_users.append(await serialize_card(
-            user,
-            is_online=is_online,
-            distance_km=fuzz_distance(distance),
-            is_verified=profile.is_verified,
-            current_user_action=swipe_map.get(user.id),
-        ))
+        response_users.append(
+            await serialize_card(
+                user,
+                is_online=is_online,
+                distance_km=fuzz_distance(distance),
+                is_verified=profile.is_verified,
+                current_user_action=swipe_map.get(user.id),
+            )
+        )
 
     return SearchResponse(
         users=response_users,

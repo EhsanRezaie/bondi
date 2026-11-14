@@ -1,58 +1,69 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import UUID
+
 from redis.asyncio import Redis
 from sqlalchemy import Date, DateTime
+
 from app.core.logging import get_logger
-from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 
 logger = get_logger("core.cache")
 
 # ── TTLs ──────────────────────────────────────────────────────────────────────
-TTL_INTERESTS       = 86400      # 24h  — seed data, never changes at runtime
-TTL_PROMPTS         = 86400      # 24h  — seed data, never changes at runtime
-TTL_LOCATIONS       = 604800     # 7d   — countries/provinces/cities
-TTL_SYSTEM_STATUS   = 60         # 60s  — /system/status
-TTL_SUB_PLANS       = 3600       # 1h   — /subscriptions/plans
-TTL_USER_PROFILE    = 600        # 10m  — /users/me
-TTL_USER_PHOTOS     = 600        # 10m  — /users/me/photos
-TTL_PUBLIC_PROFILE  = 300        # 5m   — GET /users/{user_id} (public profile)
-TTL_DAILY_LIMITS    = None       # dynamic — until midnight
+TTL_INTERESTS = 86400  # 24h  — seed data, never changes at runtime
+TTL_PROMPTS = 86400  # 24h  — seed data, never changes at runtime
+TTL_LOCATIONS = 604800  # 7d   — countries/provinces/cities
+TTL_SYSTEM_STATUS = 60  # 60s  — /system/status
+TTL_SUB_PLANS = 3600  # 1h   — /subscriptions/plans
+TTL_USER_PROFILE = 600  # 10m  — /users/me
+TTL_USER_PHOTOS = 600  # 10m  — /users/me/photos
+TTL_PUBLIC_PROFILE = 300  # 5m   — GET /users/{user_id} (public profile)
+TTL_DAILY_LIMITS = None  # dynamic — until midnight
 
 
 # ── Cache Keys ────────────────────────────────────────────────────────────────
 def key_interests(language: str = "en") -> str:
     return f"cache:interests:{language.lower()}"
 
+
 def key_prompts(language: str) -> str:
     return f"cache:prompts:{language}"
+
 
 def key_countries() -> str:
     return "cache:locations:countries"
 
+
 def key_provinces(country: str) -> str:
     return f"cache:locations:provinces:{country}"
+
 
 def key_cities(country: str, province: str) -> str:
     return f"cache:locations:cities:{country}:{province}"
 
+
 def key_system_status() -> str:
     return "cache:system:status"
+
 
 def key_sub_plans() -> str:
     return "cache:subscriptions:plans"
 
+
 def key_user_profile(user_id: UUID) -> str:
     return f"cache:user:{user_id}:profile"
+
 
 def key_user_photos(user_id: UUID) -> str:
     return f"cache:user:{user_id}:photos"
 
+
 def key_public_profile(user_id: UUID) -> str:
     return f"cache:user:{user_id}:public_profile"
+
 
 def key_daily_limits(user_id: UUID, date: str) -> str:
     return f"cache:limits:{user_id}:{date}"
@@ -91,9 +102,9 @@ async def invalidate_user_cache(redis: Redis, user_id: UUID):
 
 
 # ── Discover Card Stack ──────────────────────────────────────────────────────
-DISCOVER_STACK_TTL = 1800    # 30 minutes
-DISCOVER_STACK_SIZE = 50     # pre-fetch 50 cards at a time
-SWIPED_SET_TTL = 7 * 86400   # 7 days
+DISCOVER_STACK_TTL = 1800  # 30 minutes
+DISCOVER_STACK_SIZE = 50  # pre-fetch 50 cards at a time
+SWIPED_SET_TTL = 7 * 86400  # 7 days
 
 
 def key_discover_stack(user_id: UUID) -> str:
@@ -131,10 +142,13 @@ async def invalidate_discover_stack(redis: Redis, user_id: UUID):
     try:
         await redis.delete(key_discover_stack(user_id))
     except Exception as e:
-        logger.warning("discover_stack_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True)
+        logger.warning(
+            "discover_stack_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
 
 
 # ── Swipe Deduplication ──────────────────────────────────────────────────────
+
 
 async def record_swipe_cache(redis: Redis, swiper_id: UUID, swipee_id: UUID):
     """Add a swipe to the Redis set for fast exclusion in discover."""
@@ -143,7 +157,9 @@ async def record_swipe_cache(redis: Redis, swiper_id: UUID, swipee_id: UUID):
         await redis.sadd(key, str(swipee_id))
         await redis.expire(key, SWIPED_SET_TTL)
     except Exception as e:
-        logger.warning("record_swipe_cache_failed", swiper_id=str(swiper_id), error=str(e), exc_info=True)
+        logger.warning(
+            "record_swipe_cache_failed", swiper_id=str(swiper_id), error=str(e), exc_info=True
+        )
 
 
 async def get_swiped_ids(redis: Redis, user_id: UUID) -> set[str]:
@@ -195,7 +211,7 @@ def _profile_from_cache(data: dict) -> SimpleNamespace | None:
     p = _dict_to_obj(UserProfile, data)
     if p is None:
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     p.is_premium = p.premium_until is not None and p.premium_until > now
     if p.birth_date is None:
         p.age = 0
@@ -205,13 +221,15 @@ def _profile_from_cache(data: dict) -> SimpleNamespace | None:
         if (today.month, today.day) < (p.birth_date.month, p.birth_date.day):
             age -= 1
         p.age = age
-    p.is_profile_complete = all([
-        p.name is not None,
-        p.birth_date is not None,
-        p.gender is not None,
-        p.lat is not None,
-        p.lng is not None,
-    ])
+    p.is_profile_complete = all(
+        [
+            p.name is not None,
+            p.birth_date is not None,
+            p.gender is not None,
+            p.lat is not None,
+            p.lng is not None,
+        ]
+    )
     return p
 
 

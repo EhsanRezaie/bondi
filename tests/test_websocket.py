@@ -1,17 +1,18 @@
-
 # tests/done/test_websocket.py
-import pytest
-import json
 import base64
-from unittest.mock import patch, AsyncMock, MagicMock
-from httpx import AsyncClient
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timezone
-from uuid import UUID
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -96,6 +97,7 @@ def create_mp3():
 # new_match push shape (via mock_websocket_manager)
 # =============================================================================
 
+
 class TestWebSocketMatchPush:
     """Verify the shape of new_match WebSocket push data."""
 
@@ -111,18 +113,23 @@ class TestWebSocketMatchPush:
         )
 
         result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(
-                User.id.in_([male_id, female_id])
-            )
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id.in_([male_id, female_id]))
         )
         result.scalars().all()
 
         # Create mutual match -> triggers broadcast_match in background task
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
 
         # Let background tasks finish
         import asyncio
+
         await asyncio.sleep(0.1)
 
         assert mock_websocket_manager.broadcast_match.called, "broadcast_match was not called"
@@ -166,24 +173,32 @@ class TestWebSocketMessagePush:
         )
 
         result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(
-                User.id.in_([male_id, female_id])
-            )
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id.in_([male_id, female_id]))
         )
         result.scalars().all()
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
         chat_res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
         )
         chat_id = chat_res.json()["chat_id"]
 
         import asyncio
+
         await asyncio.sleep(0.1)
 
         # Patch messages module's send_to_match
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
+        with patch(
+            "app.api.v1.endpoints.messages.websocket_manager.send_to_conversation",
+            new_callable=AsyncMock,
+        ) as mock_send:
             await client.post(
                 f"{MESSAGES_URL}/{chat_id}/text",
                 json={"content": "Hello WS"},
@@ -222,23 +237,31 @@ class TestWebSocketMessagePush:
         )
 
         result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(
-                User.id.in_([male_id, female_id])
-            )
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id.in_([male_id, female_id]))
         )
         result.scalars().all()
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
         chat_res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
         )
         chat_id = chat_res.json()["chat_id"]
 
         import asyncio
+
         await asyncio.sleep(0.1)
 
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
+        with patch(
+            "app.api.v1.endpoints.messages.websocket_manager.send_to_conversation",
+            new_callable=AsyncMock,
+        ) as mock_send:
             files = {"file": ("test.jpg", create_jpeg(), "image/jpeg")}
             data = {"caption": "Photo caption"}
             await client.post(
@@ -275,23 +298,31 @@ class TestWebSocketMessagePush:
         )
 
         result = await db_session.execute(
-            select(User).options(selectinload(User.profile)).where(
-                User.id.in_([male_id, female_id])
-            )
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id.in_([male_id, female_id]))
         )
         result.scalars().all()
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
         chat_res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hi"}, headers=male_headers
         )
         chat_id = chat_res.json()["chat_id"]
 
         import asyncio
+
         await asyncio.sleep(0.1)
 
-        with patch("app.api.v1.endpoints.messages.websocket_manager.send_to_conversation", new_callable=AsyncMock) as mock_send:
+        with patch(
+            "app.api.v1.endpoints.messages.websocket_manager.send_to_conversation",
+            new_callable=AsyncMock,
+        ) as mock_send:
             files = {"file": ("test.mp3", create_mp3(), "audio/mpeg")}
             data = {"duration": 30}
             await client.post(
@@ -323,6 +354,7 @@ class TestWebSocketMessagePush:
 # WebSocketManager unit tests — verify internal envelope construction
 # =============================================================================
 
+
 class TestWebSocketManagerUnit:
     """Direct unit tests of WebSocketManager to verify JSON envelope shapes."""
 
@@ -344,7 +376,12 @@ class TestWebSocketManagerUnit:
         user2_data = {"id": "u2", "name": "Bob", "age": 30, "main_photo_url": "http://photo.url"}
 
         await self.manager.broadcast_match(
-            user1_id, user2_id, match_id, user1_data, user2_data, mock_redis,
+            user1_id,
+            user2_id,
+            match_id,
+            user1_data,
+            user2_data,
+            mock_redis,
         )
 
         assert mock_redis.publish.call_count == 2
@@ -387,11 +424,15 @@ class TestWebSocketManagerUnit:
                 "content": "Hello",
                 "sender_id": sender_id,
                 "sent_at": "2026-06-28T12:00:00",
-            }
+            },
         }
 
         await self.manager.send_to_match(
-            match_id, sender_id, message_data, other_user_id, mock_redis,
+            match_id,
+            sender_id,
+            message_data,
+            other_user_id,
+            mock_redis,
         )
 
         assert mock_redis.publish.call_count == 2
@@ -475,8 +516,9 @@ class TestWebSocketManagerUnit:
     async def test_relay_typing_publishes_on_prefixed_channel(self):
         """The stream handler relays typing on ws:chat:{id}, using the
         subscribed chat as the fast path."""
-        from app.api.v1.websocket import stream as stream_mod
         from unittest.mock import AsyncMock, patch
+
+        from app.api.v1.websocket import stream as stream_mod
 
         with patch.object(
             stream_mod.websocket_manager, "set_typing", new_callable=AsyncMock
@@ -496,17 +538,21 @@ class TestWebSocketManagerUnit:
     async def test_relay_typing_resolves_chat_when_not_subscribed(self):
         """Typing still relays when the frame's chat_id must be resolved (no
         active subscription yet) — guards against the subscribe race."""
-        from app.api.v1.websocket import stream as stream_mod
         from unittest.mock import AsyncMock, patch
 
-        with patch.object(
-            stream_mod,
-            "_resolve_chat",
-            new_callable=AsyncMock,
-            return_value=("c9", "u2"),
-        ), patch.object(
-            stream_mod.websocket_manager, "clear_typing", new_callable=AsyncMock
-        ) as mock_clear:
+        from app.api.v1.websocket import stream as stream_mod
+
+        with (
+            patch.object(
+                stream_mod,
+                "_resolve_chat",
+                new_callable=AsyncMock,
+                return_value=("c9", "u2"),
+            ),
+            patch.object(
+                stream_mod.websocket_manager, "clear_typing", new_callable=AsyncMock
+            ) as mock_clear,
+        ):
             await stream_mod._relay_typing(
                 db=AsyncMock(),
                 user_id="u1",
@@ -521,8 +567,9 @@ class TestWebSocketManagerUnit:
     async def test_broadcast_presence_publishes_to_all_user_chats(self):
         """Presence is published to every chat the user is in (cross-worker),
         not just chats opened on this worker."""
-        from app.api.v1.websocket import stream as stream_mod
         from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.api.v1.websocket import stream as stream_mod
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
@@ -576,7 +623,8 @@ class TestWebSocketManagerUnit:
         mock_redis.pipeline.return_value = mock_pipe
 
         result = await self.manager.get_online_status_bulk(
-            ["u1", "u2", "u3"], mock_redis,
+            ["u1", "u2", "u3"],
+            mock_redis,
         )
         assert result == {"u1": True, "u2": False, "u3": True}
         mock_redis.pipeline.assert_called_once()
@@ -681,19 +729,22 @@ class TestWsTokenValidation:
     async def test_validate_ws_token_returns_user_id(self, patch_redis, db_session):
         """A valid access token must yield the subject string, not raise."""
         import uuid as _uuid
-        from app.core.security import create_access_token
+
         from app.core.deps import validate_ws_token
+        from app.core.security import create_access_token
         from app.models.user import User
 
         user_id = _uuid.uuid4()
-        db_session.add(User(
-            id=user_id,
-            phone=f"+9891{_uuid.uuid4().hex[:10]}",
-            phone_verified=True,
-            is_active=True,
-            token_version=1,
-            registration_status="onboarding_complete",
-        ))
+        db_session.add(
+            User(
+                id=user_id,
+                phone=f"+9891{_uuid.uuid4().hex[:10]}",
+                phone_verified=True,
+                is_active=True,
+                token_version=1,
+                registration_status="onboarding_complete",
+            )
+        )
         await db_session.commit()
 
         token = create_access_token(str(user_id), token_version=1)
@@ -704,6 +755,7 @@ class TestWsTokenValidation:
     @pytest.mark.parametrize("bad_token", ["not-a-jwt", "", "a.b.c"])
     async def test_validate_ws_token_rejects_invalid(self, patch_redis, bad_token):
         import pytest as _pytest
+
         from app.core.deps import validate_ws_token
 
         with _pytest.raises(ValueError):
@@ -715,30 +767,39 @@ class TestWsInboundValidation:
 
     def test_ping_valid(self):
         from app.schemas.message import WsInbound
+
         msg = WsInbound.model_validate({"type": "ping"})
         assert msg.type == "ping"
 
     def test_subscribe_requires_chat_id(self):
         from pydantic import ValidationError
+
         from app.schemas.message import WsInbound
+
         with pytest.raises(ValidationError):
             WsInbound.model_validate({"type": "subscribe"})
 
     def test_subscribe_requires_valid_uuid(self):
         from pydantic import ValidationError
+
         from app.schemas.message import WsInbound
+
         with pytest.raises(ValidationError):
             WsInbound.model_validate({"type": "subscribe", "chat_id": "not-a-uuid"})
 
     def test_unknown_type_rejected(self):
         from pydantic import ValidationError
+
         from app.schemas.message import WsInbound
+
         with pytest.raises(ValidationError):
             WsInbound.model_validate({"type": "exploit"})
 
     def test_read_caps_message_ids(self):
         from pydantic import ValidationError
+
         from app.schemas.message import WsInbound
+
         big = {"type": "read", "message_ids": [str(UUID(int=i)) for i in range(201)]}
         with pytest.raises(ValidationError):
             WsInbound.model_validate(big)
@@ -747,11 +808,14 @@ class TestWsInboundValidation:
 
     def test_read_rejects_bad_message_id(self):
         from pydantic import ValidationError
+
         from app.schemas.message import WsInbound
+
         with pytest.raises(ValidationError):
             WsInbound.model_validate({"type": "read", "message_ids": ["garbage"]})
 
     def test_read_empty_ids_ok(self):
         from app.schemas.message import WsInbound
+
         msg = WsInbound.model_validate({"type": "read", "message_ids": []})
         assert msg.message_ids == []

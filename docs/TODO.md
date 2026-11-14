@@ -323,8 +323,10 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    ```python
    TTL_AUTH_USER = 30  # seconds
 
+
    def key_auth_user(user_id: UUID, token_version: int) -> str:
        return f"cache:auth:{user_id}:v{token_version}"
+
 
    async def get_cached_auth_user(redis, user_id, token_version):
        try:
@@ -332,6 +334,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
            return json.loads(raw) if raw else None
        except Exception:
            return None
+
 
    async def invalidate_auth_user(redis, user_id):
        # token_version changed → old key won't match anyway, but clear broadly:
@@ -347,11 +350,15 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
        # ... decode token, get user_id + token_version (existing) ...
        cached = await get_cached_auth_user(redis_client, user_id, token_version)
        if cached:
-           return _user_from_cache(cached)   # reconstruct User-like object
+           return _user_from_cache(cached)  # reconstruct User-like object
        # DB load (existing), then cache it:
        user = result.scalar_one_or_none()
-       await cache_set(redis_client, key_auth_user(user_id, user.token_version),
-                      _user_to_cache(user), TTL_AUTH_USER)
+       await cache_set(
+           redis_client,
+           key_auth_user(user_id, user.token_version),
+           _user_to_cache(user),
+           TTL_AUTH_USER,
+       )
        return user
    ```
 3. Invalidate everywhere `token_version` changes or profile/settings mutate:
@@ -382,6 +389,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    # app/core/encryption.py
    from functools import lru_cache
 
+
    @lru_cache(maxsize=4096)
    def derive_chat_key(match_id: str) -> bytes:
        salt = match_id.encode("utf-8")
@@ -392,9 +400,12 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 2. Move decryption off the event loop. Add an async helper:
    ```python
    import asyncio
+
+
    async def decrypt_many(rows: list[tuple[str, str]], match_id: str) -> list[str]:
        key = derive_chat_key(match_id)
        loop = asyncio.get_running_loop()
+
        def _work():
            out = []
            for enc, mid in rows:
@@ -403,6 +414,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
                except Exception:
                    out.append(enc)  # fallback
            return out
+
        return await loop.run_in_executor(None, _work)
    ```
 3. In `messages.py` `get_chat_history`, collect `(encrypted_content, match_id)` rows and call `decrypt_many(...)` once instead of touching `.content` per row.
@@ -457,8 +469,8 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
        echo=False,
        pool_pre_ping=True,
        pool_size=5,
-       max_overflow=0,            # hard cap; PgBouncer is the real pool
-       pool_recycle=1800,        # recycle connections every 30 min
+       max_overflow=0,  # hard cap; PgBouncer is the real pool
+       pool_recycle=1800,  # recycle connections every 30 min
        connect_args={
            "statement_cache_size=0",
            "prepared_statement_cache_size=0",
@@ -515,20 +527,25 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    from app.core.config import settings
 
    ZARINPAL_REQUEST = "https://api.zarinpal.com/pg/v4/payment/request.json"
-   ZARINPAL_VERIFY  = "https://api.zarinpal.com/pg/v4/payment/verify.json"
-   ZARINPAL_START   = "https://www.zarinpal.com/pg/StartPay/{authority}"
+   ZARINPAL_VERIFY = "https://api.zarinpal.com/pg/v4/payment/verify.json"
+   ZARINPAL_START = "https://www.zarinpal.com/pg/StartPay/{authority}"
+
 
    class PaymentError(Exception): ...
+
 
    class ZarinpalService:
        async def create(self, amount_toman: int, description: str, callback_url: str) -> dict:
            async with httpx.AsyncClient(timeout=15) as c:
-               r = await c.post(ZARINPAL_REQUEST, json={
-                   "merchant_id": settings.ZARINPAL_MERCHANT_ID,
-                   "amount": amount_toman * 10,          # toman → rial
-                   "description": description,
-                   "callback_url": callback_url,
-               })
+               r = await c.post(
+                   ZARINPAL_REQUEST,
+                   json={
+                       "merchant_id": settings.ZARINPAL_MERCHANT_ID,
+                       "amount": amount_toman * 10,  # toman → rial
+                       "description": description,
+                       "callback_url": callback_url,
+                   },
+               )
            data = r.json()
            if data.get("data", {}).get("code") != 100:
                raise PaymentError(str(data.get("errors")))
@@ -537,11 +554,14 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
        async def verify(self, amount_toman: int, authority: str) -> str:
            async with httpx.AsyncClient(timeout=15) as c:
-               r = await c.post(ZARINPAL_VERIFY, json={
-                   "merchant_id": settings.ZARINPAL_MERCHANT_ID,
-                   "amount": amount_toman * 10,
-                   "authority": authority,
-               })
+               r = await c.post(
+                   ZARINPAL_VERIFY,
+                   json={
+                       "merchant_id": settings.ZARINPAL_MERCHANT_ID,
+                       "amount": amount_toman * 10,
+                       "authority": authority,
+                   },
+               )
            data = r.json()
            code = data.get("data", {}).get("code")
            if code not in (100, 101):
@@ -550,9 +570,11 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    ```
 2. In `/subscriptions/purchase`: call `ZarinpalService.create(...)`, then store the intent in Redis so the callback can be trusted:
    ```python
-   await redis_client.setex(f"purchase:{authority}", 3600, json.dumps({
-       "user_id": str(current_user.id), "plan": body.plan_id, "amount_toman": price
-   }))
+   await redis_client.setex(
+       f"purchase:{authority}",
+       3600,
+       json.dumps({"user_id": str(current_user.id), "plan": body.plan_id, "amount_toman": price}),
+   )
    return PurchaseResponse(redirect_url=url, authority=authority)
    ```
 3. In `/subscriptions/verify` (GET callback): read `authority` + `Status` query param; **verify the intent from Redis** (prevents a user from forging an authority); call `ZarinpalService.verify(...)`; only then grant premium via `RewardService.grant_premium_days(...)`.
@@ -577,14 +599,21 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    import aiosmtplib
    from email.message import EmailMessage
 
+
    async def send_verification_code(to_email: str, code: str):
        msg = EmailMessage()
        msg["From"] = settings.SMTP_FROM
        msg["To"] = to_email
        msg["Subject"] = "Bondi — your verification code"
        msg.set_content(f"Your code is: {code}\nIt expires in 5 minutes.")
-       await aiosmtplib.send(msg, hostname=settings.SMTP_HOST, port=587,
-                             username=settings.SMTP_USER, password=settings.SMTP_PASS, start_tls=True)
+       await aiosmtplib.send(
+           msg,
+           hostname=settings.SMTP_HOST,
+           port=587,
+           username=settings.SMTP_USER,
+           password=settings.SMTP_PASS,
+           start_tls=True,
+       )
    ```
 2. Add `SMTP_HOST/USER/PASS/FROM` to `Settings` (`config.py`) and `.env`.
 3. In `auth.py` `register/init` and `password-reset`: after `redis.store_verification_code(...)`, fire the email **off the request path** — via `BackgroundTasks` now, or Celery once P1-7 is done — so a slow SMTP server doesn't block registration.
@@ -646,6 +675,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 1. Wrap the blocking call in a thread:
    ```python
    import asyncio
+
    # push_service.py
    response = await asyncio.to_thread(messaging.send_each_for_multicast, message)
    ```
@@ -679,7 +709,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
            return cached
        async with _s3_client() as s3:
            url = await s3.generate_presigned_url(...)
-       await redis_client.setex(cache_key, 300, url)   # 5 min
+       await redis_client.setex(cache_key, 300, url)  # 5 min
        return url
    ```
 3. Even better: use a single `MGET` to batch all presigned URLs for a page instead of N round-trips.
@@ -760,7 +790,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
        await redis_client.set(key, user_id, ex=REFRESH_TOKEN_TTL)
        await redis_client.sadd(f"user_tokens:{user_id}", jti)
        await redis_client.expire(f"user_tokens:{user_id}", REFRESH_TOKEN_TTL)
-       return jti   # store jti in the JWT too
+       return jti  # store jti in the JWT too
    ```
 2. Revoke only that user's tokens (no global scan):
    ```python
@@ -822,6 +852,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    ```python
    from celery import Celery
    from app.core.config import settings
+
    celery_app = Celery("bondi", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
    celery_app.conf.update(
        task_acks_late=True,
@@ -875,9 +906,18 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 1. Pin a single timezone everywhere daily limits are computed:
    ```python
    from zoneinfo import ZoneInfo
+
    TEHRAN = ZoneInfo("Asia/Tehran")
-   def _tehran_now(): return datetime.now(TEHRAN)
-   def _tehran_today(): return _tehran_now().date()
+
+
+   def _tehran_now():
+       return datetime.now(TEHRAN)
+
+
+   def _tehran_today():
+       return _tehran_now().date()
+
+
    def _seconds_until_midnight():
        now = _tehran_now()
        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1025,7 +1065,8 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 2. Run inference in a thread executor (it's CPU/GPU-bound):
    ```python
    async def check_image(self, file_bytes: bytes):
-       if not self._enabled: return True, 0.0
+       if not self._enabled:
+           return True, 0.0
        return await asyncio.to_thread(self._classify_ml, file_bytes)
    ```
 3. Keep the quarantine flow (`quarantine_photo`) for the rejected images.
@@ -1052,7 +1093,8 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 2. Add a Redis token-bucket rate limiter around the call (1 req/sec global, plus per-user):
    ```python
    allowed = await redis_client.set(f"rl:nominatim:global", "1", ex=1, nx=True)
-   if not allowed: return cached_or_none
+   if not allowed:
+       return cached_or_none
    ```
 3. Use a real contact User-Agent: `Bondi <admin@yourdomain>`.
 4. The 24h cache (`reverse_geocode` already caches) is good — keep it.
@@ -1094,7 +1136,10 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 **Fix (step-by-step):**
 1. Count on a plain query without the `selectinload` options:
    ```python
-   base_filter = or_(Match.user1_id == current_user.id, Match.user2_id == current_user.id), Match.is_active == True
+   base_filter = (
+       or_(Match.user1_id == current_user.id, Match.user2_id == current_user.id),
+       Match.is_active == True,
+   )
    total = await session.scalar(select(func.count(Match.id)).where(*base_filter))
    # data query keeps the selectinload chains + ORDER BY + offset/limit
    ```
@@ -1139,11 +1184,18 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    # app/services/storage.py
    import aioboto3
    from app.core.config import settings
+
    _session = aioboto3.Session()
+
+
    def s3_client():
-       return _session.client("s3", endpoint_url=settings.S3_ENDPOINT_URL,
+       return _session.client(
+           "s3",
+           endpoint_url=settings.S3_ENDPOINT_URL,
            aws_access_key_id=settings.S3_ACCESS_KEY,
-           aws_secret_access_key=settings.S3_SECRET_KEY, region_name=settings.S3_REGION)
+           aws_secret_access_key=settings.S3_SECRET_KEY,
+           region_name=settings.S3_REGION,
+       )
    ```
 2. Replace the per-call `aioboto3.Session()` in `media_service.py` and `nsfw_service.py:quarantine_photo` with `from app.services.storage import s3_client`.
 
@@ -1233,6 +1285,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 1. Wrap the insert in `try/except IntegrityError`:
    ```python
    from sqlalchemy.exc import IntegrityError
+
    try:
        session.add(reward)
        await session.commit()
@@ -1276,7 +1329,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
        data = json.loads(raw)
        msg = WsInbound.model_validate(data)
    except (json.JSONDecodeError, ValidationError):
-       await websocket.send_text(json.dumps({"type":"error","reason":"bad_message"}))
+       await websocket.send_text(json.dumps({"type": "error", "reason": "bad_message"}))
        continue
    ```
 3. Cap array sizes: on `read`, reject `message_ids` longer than ~200 to prevent a giant-payload DoS.
@@ -1354,6 +1407,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 1. Add `prometheus-fastapi-instrumentator` and expose `/metrics`:
    ```python
    from prometheus_fastapi_instrumentator import Instrumentator
+
    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
    ```
 2. Add custom gauges: DB pool checked-out (`engine.pool.checkedout()`), Redis command latency, WS connection count (`sum(len(s) for s in websocket_manager.active_connections.values())`), Celery queue depth (if P1-7).
@@ -1388,9 +1442,13 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 **Evidence:** `alembic/env.py:41-45` configures `context.configure(...)` without `compare_type=True` → autogenerate won't detect column type changes (e.g. `String(20)` → `String(50)`), so migrations silently miss them.
 **Fix:**
 ```python
-context.configure(connection=conn, target_metadata=target_metadata,
-                  include_object=include_object, compare_type=True,
-                  compare_server_default=True)
+context.configure(
+    connection=conn,
+    target_metadata=target_metadata,
+    include_object=include_object,
+    compare_type=True,
+    compare_server_default=True,
+)
 ```
 **Files to touch:** `alembic/env.py`.
 **Commands:** `alembic revision --autogenerate -m "test" && alembic downgrade -1`.

@@ -1,18 +1,18 @@
 # tests/test_error_logging.py
 import json
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi import Request
-from unittest.mock import patch
 
 import app.models.message as message_model
 from app.models.message import Message
 
-
 # ---------------------------------------------------------------------------
 # Global exception handlers
 # ---------------------------------------------------------------------------
+
 
 def _make_request(app) -> Request:
     return Request(
@@ -80,6 +80,7 @@ class TestGlobalExceptionHandling:
 # ---------------------------------------------------------------------------
 # Message encryption: never store plaintext, log failures
 # ---------------------------------------------------------------------------
+
 
 class TestMessageEncryptionFailure:
     def test_encrypt_failure_raises_and_does_not_store_plaintext(self):

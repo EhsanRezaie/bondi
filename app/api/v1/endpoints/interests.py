@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import TTL_INTERESTS, cache_get, cache_set, key_interests
+from app.core.logging import get_logger
+from app.core.redis import redis_client
 from app.db.session import get_session
 from app.models.interest import Interest
 from app.schemas.interest import InterestResponse
-from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_interests, TTL_INTERESTS
-
-from app.core.logging import get_logger
 
 logger = get_logger("interests")
 
@@ -45,7 +44,9 @@ def _resolve_localized(interest: Interest, language: str) -> dict:
 @router.get("", response_model=list[InterestResponse])
 async def get_interests(
     response: Response,
-    language: str = Query("en", min_length=2, max_length=5, description="Language code, e.g. 'fa' or 'en'"),
+    language: str = Query(
+        "en", min_length=2, max_length=5, description="Language code, e.g. 'fa' or 'en'"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> list[InterestResponse]:
     """
@@ -67,9 +68,7 @@ async def get_interests(
     if cached:
         return [InterestResponse(**i) for i in cached]
 
-    result = await session.execute(
-        select(Interest).order_by(Interest.category, Interest.name)
-    )
+    result = await session.execute(select(Interest).order_by(Interest.category, Interest.name))
     interests = result.scalars().all()
     data = [_resolve_localized(i, language) for i in interests]
     await cache_set(redis_client, cache_key, data, TTL_INTERESTS)

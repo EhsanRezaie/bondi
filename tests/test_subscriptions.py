@@ -1,9 +1,10 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -27,7 +28,9 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+async def register_user(
+    client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -84,9 +87,7 @@ class TestSubscriptions:
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            SUBSCRIPTION_PURCHASE_URL,
-            json={"plan_id": "monthly"},
-            headers=headers
+            SUBSCRIPTION_PURCHASE_URL, json={"plan_id": "monthly"}, headers=headers
         )
         assert res.status_code == 200
         body = res.json()
@@ -102,14 +103,14 @@ class TestSubscriptions:
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            SUBSCRIPTION_PURCHASE_URL,
-            json={"plan_id": "invalid_plan"},
-            headers=headers
+            SUBSCRIPTION_PURCHASE_URL, json={"plan_id": "invalid_plan"}, headers=headers
         )
         assert res.status_code == 400
         assert "Invalid plan" in res.json()["detail"]
 
-    async def test_get_my_subscription_after_welcome_bonus(self, client: AsyncClient, mock_verification_code):
+    async def test_get_my_subscription_after_welcome_bonus(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """After registration, user should have active welcome bonus subscription."""
         data = await register_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -228,9 +229,7 @@ class TestSubscriptions:
         self, client: AsyncClient, mock_verification_code
     ):
         """One user cannot redeem another user's payment authority."""
-        owner = await register_user(
-            client, mock_verification_code, phone=_phone("verify_owner")
-        )
+        owner = await register_user(client, mock_verification_code, phone=_phone("verify_owner"))
         owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
         purchase = await client.post(
             SUBSCRIPTION_PURCHASE_URL,
@@ -251,9 +250,7 @@ class TestSubscriptions:
         )
         assert res.status_code == 403
 
-    async def test_verify_payment_failed_status(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_verify_payment_failed_status(self, client: AsyncClient, mock_verification_code):
         """Verify with a non-OK gateway status returns failure."""
         data = await register_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}

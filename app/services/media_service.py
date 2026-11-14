@@ -1,7 +1,7 @@
 # app/services/media_service.py
 import io
-from typing import Tuple, Optional
 from urllib.parse import urlparse
+
 from PIL import Image
 
 from app.core.config import settings
@@ -68,23 +68,35 @@ class MediaService:
         return buffer.getvalue()
 
     @staticmethod
-    async def save_photo(file_data: bytes, chat_id: str, message_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def save_photo(
+        file_data: bytes, chat_id: str, message_id: str
+    ) -> tuple[bool, str | None, str | None]:
         """
         Save a chat photo to MinIO as WebP (full + thumbnail).
         Returns: (success, file_key, error_message)
         """
         if len(file_data) > MediaService.MAX_PHOTO_SIZE:
-            return False, None, f"Photo too large. Max {MediaService.MAX_PHOTO_SIZE // (1024 * 1024)}MB"
+            return (
+                False,
+                None,
+                f"Photo too large. Max {MediaService.MAX_PHOTO_SIZE // (1024 * 1024)}MB",
+            )
 
         try:
             image = Image.open(io.BytesIO(file_data))
 
             if image.format not in MediaService.ALLOWED_IMAGE_FORMATS:
-                return False, None, f"Invalid format. Allowed: {', '.join(MediaService.ALLOWED_IMAGE_FORMATS)}"
+                return (
+                    False,
+                    None,
+                    f"Invalid format. Allowed: {', '.join(MediaService.ALLOWED_IMAGE_FORMATS)}",
+                )
 
             rgb = MediaService._to_rgb(image)
             full = MediaService._encode_webp(rgb, MediaService.FULL_MAX, MediaService.IMAGE_QUALITY)
-            thumb = MediaService._encode_webp(rgb, MediaService.THUMB_MAX, MediaService.THUMB_QUALITY)
+            thumb = MediaService._encode_webp(
+                rgb, MediaService.THUMB_MAX, MediaService.THUMB_QUALITY
+            )
 
             key = f"chat/photos/{chat_id}/{message_id}.webp"
             thumb_key = MediaService.thumb_key(key)
@@ -115,7 +127,9 @@ class MediaService:
             return False, None, "Invalid image file"
 
     @staticmethod
-    async def save_voice(file_data: bytes, chat_id: str, message_id: str, duration: int) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def save_voice(
+        file_data: bytes, chat_id: str, message_id: str, duration: int
+    ) -> tuple[bool, str | None, str | None]:
         """
         Save a voice message to MinIO. The client records AAC-LC in an MPEG-4
         (M4A) container, so it is stored as `.m4a` / `audio/mp4` — the format
@@ -124,11 +138,19 @@ class MediaService:
         """
         # Check size
         if len(file_data) > MediaService.MAX_VOICE_SIZE:
-            return False, None, f"Voice message too large. Max {MediaService.MAX_VOICE_SIZE // (1024 * 1024)}MB"
+            return (
+                False,
+                None,
+                f"Voice message too large. Max {MediaService.MAX_VOICE_SIZE // (1024 * 1024)}MB",
+            )
 
         # Check duration
         if duration > MediaService.MAX_VOICE_DURATION:
-            return False, None, f"Voice message too long. Max {MediaService.MAX_VOICE_DURATION} seconds"
+            return (
+                False,
+                None,
+                f"Voice message too long. Max {MediaService.MAX_VOICE_DURATION} seconds",
+            )
 
         try:
             key = f"chat/voice/{chat_id}/{message_id}.m4a"
@@ -185,14 +207,16 @@ class MediaService:
                                 error=str(delete_err),
                                 exc_info=True,
                             )
-            logger.info("Deleted chat media", chat_id=chat_id, message_id=message_id, media_type=media_type)
+            logger.info(
+                "Deleted chat media", chat_id=chat_id, message_id=message_id, media_type=media_type
+            )
             return True
         except Exception as e:
             logger.error("Failed to delete chat media", error=str(e), exc_info=True)
             return False
 
     @staticmethod
-    async def resolve_media_url(media_ref: Optional[str]) -> Optional[str]:
+    async def resolve_media_url(media_ref: str | None) -> str | None:
         """
         Resolve a stored chat-media reference into a fresh, short-lived
         presigned URL for the client to load.

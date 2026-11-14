@@ -1,12 +1,13 @@
-
 # tests/test_blocks.py
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -62,10 +63,7 @@ COMPLETE_PROFILE_PAYLOAD_FEMALE2 = {
 
 
 async def register_user_full(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> dict:
     """Complete full registration via phone OTP - returns user data with tokens."""
     await mock_verification_code(phone, VALID_CODE)
@@ -86,10 +84,7 @@ async def register_user_full(
 
 
 async def register_and_get_headers(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user via phone OTP and return headers with user_id."""
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
@@ -100,12 +95,7 @@ async def register_and_get_headers(
 
 
 class TestBlocks:
-    
-    async def test_block_user_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_block_user_success(self, client: AsyncClient, mock_verification_code):
         """Should block a user successfully"""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -113,46 +103,33 @@ class TestBlocks:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
         assert res.status_code == 204
-    
-    async def test_block_self_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_block_self_fails(self, client: AsyncClient, mock_verification_code):
         """Cannot block yourself"""
         headers, user_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.post(f"{BLOCKS_URL}/{user_id}/block", headers=headers)
         assert res.status_code == 400
         assert "Cannot block yourself" in res.json()["detail"]
-    
-    async def test_block_nonexistent_user_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_block_nonexistent_user_fails(self, client: AsyncClient, mock_verification_code):
         """Cannot block non-existent user"""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.post(
-            f"{BLOCKS_URL}/00000000-0000-0000-0000-000000000000/block", 
-            headers=headers
+            f"{BLOCKS_URL}/00000000-0000-0000-0000-000000000000/block", headers=headers
         )
         assert res.status_code == 404
         assert "User not found" in res.json()["detail"]
-    
-    async def test_block_twice_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_block_twice_fails(self, client: AsyncClient, mock_verification_code):
         """Cannot block same user twice"""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -160,21 +137,17 @@ class TestBlocks:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # First block
         res1 = await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
         assert res1.status_code == 204
-        
+
         # Second block - should fail
         res2 = await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
         assert res2.status_code == 400
         assert "already blocked" in res2.json()["detail"].lower()
-    
-    async def test_unblock_user_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_unblock_user_success(self, client: AsyncClient, mock_verification_code):
         """Should unblock a user successfully"""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -182,19 +155,15 @@ class TestBlocks:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Block first
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
-        
+
         # Then unblock
         res = await client.post(f"{BLOCKS_URL}/{female_id}/unblock", headers=male_headers)
         assert res.status_code == 204
-    
-    async def test_unblock_not_blocked_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_unblock_not_blocked_fails(self, client: AsyncClient, mock_verification_code):
         """Cannot unblock a user that wasn't blocked"""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -202,32 +171,24 @@ class TestBlocks:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.post(f"{BLOCKS_URL}/{female_id}/unblock", headers=male_headers)
         assert res.status_code == 404
         assert "Block not found" in res.json()["detail"]
-    
-    async def test_list_blocks_empty(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_list_blocks_empty(self, client: AsyncClient, mock_verification_code):
         """Should return empty list when no blocks"""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.get(BLOCKS_URL, headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert isinstance(data, list)
         assert len(data) == 0
-    
-    async def test_list_blocks_with_blocks(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_list_blocks_with_blocks(self, client: AsyncClient, mock_verification_code):
         """Should return list of blocked users"""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -238,28 +199,25 @@ class TestBlocks:
         female2_headers, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         # Block two users
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
         await client.post(f"{BLOCKS_URL}/{female2_id}/block", headers=male_headers)
-        
+
         res = await client.get(BLOCKS_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
         assert len(data) >= 2
-        
+
         # Check response structure
         for block in data:
             assert "id" in block
             assert "blocked_user_id" in block
             assert "blocked_user_name" in block
             assert "blocked_at" in block
-    
+
     async def test_blocked_user_not_in_search(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Blocked users should not appear in search results"""
         male_headers, _ = await register_and_get_headers(
@@ -268,36 +226,34 @@ class TestBlocks:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Load profiles
         result = await db_session.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.id.in_([female_id]))
+            select(User).options(selectinload(User.profile)).where(User.id.in_([female_id]))
         )
         users = result.scalars().all()
-        
+
         # Search before block - should see female
         res_before = await client.get(SEARCH_URL, headers=male_headers)
         assert res_before.status_code == 200
         users_before = [u["id"] for u in res_before.json()["users"]]
-        
+
         # Block female
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
-        
+
         # Search after block - should NOT see female
         res_after = await client.get(SEARCH_URL, headers=male_headers)
         assert res_after.status_code == 200
         users_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert female_id in users_before
         assert female_id not in users_after
-    
+
     async def test_block_requires_auth(self, client: AsyncClient):
         """Block endpoint requires authentication"""
         res = await client.post(f"{BLOCKS_URL}/123/block")
         assert res.status_code == 401
-    
+
     async def test_unblock_requires_auth(self, client: AsyncClient):
         """Unblock endpoint requires authentication"""
         res = await client.post(f"{BLOCKS_URL}/123/unblock")
@@ -313,16 +269,20 @@ class TestBlocks:
     ):
         """A blocked user must not be able to open an unmatched chat (403)."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("block_chat_sender@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("block_chat_sender@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("block_chat_target@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("block_chat_target@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
 
         # Female blocks male (reverse direction).
-        await client.post(
-            f"{BLOCKS_URL}/{male_id}/block", headers=female_headers
-        )
+        await client.post(f"{BLOCKS_URL}/{male_id}/block", headers=female_headers)
 
         # Male now tries to message female directly.
         res = await client.post(
@@ -336,8 +296,10 @@ class TestBlocks:
 # Blocked-list response: photo + age (powers the mobile blocked-users screen)
 # ---------------------------------------------------------------------------
 
+
 def _expected_age(birth_date: str) -> int:
     from datetime import date
+
     today = date.today()
     birth = date.fromisoformat(birth_date)
     age = today.year - birth.year
@@ -347,15 +309,18 @@ def _expected_age(birth_date: str) -> int:
 
 
 class TestBlockListResponse:
-
-    async def test_list_blocks_includes_age(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_list_blocks_includes_age(self, client: AsyncClient, mock_verification_code):
         male_headers, _ = await register_and_get_headers(
-            client, _phone("bl_age_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("bl_age_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         _, female_id = await register_and_get_headers(
-            client, _phone("bl_age_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("bl_age_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
 
@@ -371,10 +336,16 @@ class TestBlockListResponse:
         from app.core.config import settings
 
         male_headers, _ = await register_and_get_headers(
-            client, _phone("bl_photo_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("bl_photo_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         _, female_id = await register_and_get_headers(
-            client, _phone("bl_photo_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("bl_photo_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
 
         # Give the blocked user an approved photo → public URL must be returned.
@@ -385,7 +356,9 @@ class TestBlockListResponse:
         res = await client.get(BLOCKS_URL, headers=male_headers)
         assert res.status_code == 200
         entry = next(b for b in res.json() if b["blocked_user_id"] == female_id)
-        assert entry["main_photo_url"] == f"{settings.S3_PUBLIC_BASE_URL}/users/{female_id}/test.jpg"
+        assert (
+            entry["main_photo_url"] == f"{settings.S3_PUBLIC_BASE_URL}/users/{female_id}/test.jpg"
+        )
 
     async def test_list_blocks_photo_null_without_approved_photo(
         self, client: AsyncClient, mock_verification_code
@@ -393,11 +366,17 @@ class TestBlockListResponse:
         # register_and_get_headers auto-grants a photo — register directly so the
         # blocked user truly has no photos.
         male_data = await register_user_full(
-            client, _phone("bl_nophoto_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("bl_nophoto_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         male_headers = {"Authorization": f"Bearer {male_data['access_token']}"}
         female_data = await register_user_full(
-            client, _phone("bl_nophoto_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("bl_nophoto_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         female_id = female_data["user"]["id"]
 

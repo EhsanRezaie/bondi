@@ -1,11 +1,11 @@
-from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator
-from datetime import date, datetime
-from uuid import UUID
+from datetime import date
 from enum import Enum
+from uuid import UUID
 
+from pydantic import BaseModel, Field, field_validator
 
 # ============ Enums ============
+
 
 class Gender(str, Enum):
     male = "male"
@@ -117,6 +117,7 @@ class PoliticalOrientation(str, Enum):
 
 # ============ Phone validation helpers ============
 
+
 def validate_e164_phone(value: str) -> str:
     """Normalize + validate an E.164 phone number (e.g. +989379191281)."""
     v = value.strip()
@@ -131,6 +132,7 @@ def validate_e164_phone(value: str) -> str:
 
 
 # ============ Step 1: Request Code (SMS OTP) ============
+
 
 class RequestCodeRequest(BaseModel):
     phone: str = Field(..., description="E.164 phone number, e.g. +989379191281")
@@ -158,10 +160,13 @@ class RequestCodeResponse(BaseModel):
 
 # ============ Step 2: Verify Code ============
 
+
 class VerifyCodeRequest(BaseModel):
     phone: str = Field(..., description="E.164 phone number, e.g. +989379191281")
     code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
-    referral_code: Optional[str] = Field(None, min_length=8, max_length=8, description="Optional referral code")
+    referral_code: str | None = Field(
+        None, min_length=8, max_length=8, description="Optional referral code"
+    )
 
     @field_validator("phone")
     @classmethod
@@ -180,6 +185,7 @@ class VerifyCodeResponse(BaseModel):
 
 # ============ Step 3: Onboarding Complete ============
 
+
 class UserPromptCreateRequest(BaseModel):
     prompt_id: UUID
     answer: str = Field(..., max_length=500)
@@ -187,47 +193,48 @@ class UserPromptCreateRequest(BaseModel):
 
 class OnboardingCompleteRequest(BaseModel):
     """Complete user profile after phone verification."""
+
     # Identity
     name: str = Field(..., min_length=2, max_length=100)
     birth_date: date
     gender: Gender
-    sexual_orientation: Optional[SexualOrientation] = None
-    bio: Optional[str] = Field(None, max_length=500)
-    
+    sexual_orientation: SexualOrientation | None = None
+    bio: str | None = Field(None, max_length=500)
+
     # Appearance
-    height: Optional[int] = Field(None, ge=50, le=250, description="Height in cm")
-    weight: Optional[int] = Field(None, ge=30, le=300, description="Weight in kg")
-    body_type: Optional[BodyType] = None
-    
+    height: int | None = Field(None, ge=50, le=250, description="Height in cm")
+    weight: int | None = Field(None, ge=30, le=300, description="Weight in kg")
+    body_type: BodyType | None = None
+
     # Lifestyle
-    relationship_status: Optional[RelationshipStatus] = None
-    living_situation: Optional[LivingSituation] = None
-    children_status: Optional[ChildrenStatus] = None
-    smoking: Optional[SmokingStatus] = None
-    drinking: Optional[DrinkingStatus] = None
-    here_for: Optional[HereFor] = None
-    pets: Optional[Pets] = None
-    workout_frequency: Optional[WorkoutFrequency] = None
-    zodiac_sign: Optional[ZodiacSign] = None
-    
+    relationship_status: RelationshipStatus | None = None
+    living_situation: LivingSituation | None = None
+    children_status: ChildrenStatus | None = None
+    smoking: SmokingStatus | None = None
+    drinking: DrinkingStatus | None = None
+    here_for: HereFor | None = None
+    pets: Pets | None = None
+    workout_frequency: WorkoutFrequency | None = None
+    zodiac_sign: ZodiacSign | None = None
+
     # Background
-    education: Optional[EducationLevel] = None
-    workplace: Optional[str] = Field(None, max_length=100)
-    religion: Optional[str] = Field(None, max_length=50)
-    ethnicity: Optional[str] = Field(None, max_length=50)
-    political_orientation: Optional[PoliticalOrientation] = None
-    languages: Optional[List[str]] = None
-    
+    education: EducationLevel | None = None
+    workplace: str | None = Field(None, max_length=100)
+    religion: str | None = Field(None, max_length=50)
+    ethnicity: str | None = Field(None, max_length=50)
+    political_orientation: PoliticalOrientation | None = None
+    languages: list[str] | None = None
+
     # Location (required)
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    country: Optional[str] = Field(None, max_length=100)
-    province: Optional[str] = Field(None, max_length=100)
-    city: Optional[str] = Field(None, max_length=100)
-    
+    country: str | None = Field(None, max_length=100)
+    province: str | None = Field(None, max_length=100)
+    city: str | None = Field(None, max_length=100)
+
     # Optional extras
-    interests: Optional[List[str]] = Field(None, description="List of interest names")
-    prompts: Optional[List[UserPromptCreateRequest]] = None
+    interests: list[str] | None = Field(None, description="List of interest names")
+    prompts: list[UserPromptCreateRequest] | None = None
 
     @field_validator("gender", mode="before")
     @classmethod
@@ -239,6 +246,7 @@ class OnboardingCompleteRequest(BaseModel):
 
 # ============ Authenticated Response ============
 
+
 class AuthResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -247,6 +255,7 @@ class AuthResponse(BaseModel):
 
 
 # ============ Refresh Token ============
+
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
@@ -260,6 +269,7 @@ class RefreshTokenResponse(BaseModel):
 
 # ============ Logout ============
 
+
 class LogoutRequest(BaseModel):
     refresh_token: str
 
@@ -268,5 +278,6 @@ class LogoutRequest(BaseModel):
 
 # Import here to avoid circular import
 from app.schemas.user import UserProfileResponse
+
 VerifyCodeResponse.model_rebuild()
 AuthResponse.model_rebuild()

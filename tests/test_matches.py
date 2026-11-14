@@ -1,9 +1,10 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -61,7 +62,6 @@ async def register_and_get_headers(
 
 
 class TestMatches:
-
     async def test_get_matches_empty(self, client: AsyncClient, mock_verification_code):
         """Should return empty list when no matches"""
         headers, _ = await register_and_get_headers(
@@ -193,6 +193,7 @@ class TestMatches:
         res = await client.get(MATCHES_URL)
         assert res.status_code == 401
 
+
 class TestMatchPresence:
     """Match list should include online status + last seen."""
 
@@ -208,8 +209,12 @@ class TestMatchPresence:
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_FEMALE, mock_verification_code
         )
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-        await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+        )
 
         # Mark the female user online in Redis
         await redis_module.redis_client.setex(f"online:{female_id}", 60, "1")

@@ -71,17 +71,13 @@ async def ensure_buckets() -> None:
                                 "Effect": "Allow",
                                 "Principal": {"AWS": ["*"]},
                                 "Action": ["s3:GetBucketLocation"],
-                                "Resource": [
-                                    f"arn:aws:s3:::{settings.S3_PUBLIC_BUCKET}"
-                                ],
+                                "Resource": [f"arn:aws:s3:::{settings.S3_PUBLIC_BUCKET}"],
                             },
                             {
                                 "Effect": "Allow",
                                 "Principal": {"AWS": ["*"]},
                                 "Action": ["s3:GetObject"],
-                                "Resource": [
-                                    f"arn:aws:s3:::{settings.S3_PUBLIC_BUCKET}/*"
-                                ],
+                                "Resource": [f"arn:aws:s3:::{settings.S3_PUBLIC_BUCKET}/*"],
                             },
                         ],
                     }

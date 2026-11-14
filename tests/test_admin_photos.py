@@ -1,15 +1,18 @@
+import io
+from unittest.mock import AsyncMock, patch
 
-import pytest
 import numpy as np
 import pytest_asyncio
 from httpx import AsyncClient
 from PIL import Image
-import io
-from unittest.mock import patch, AsyncMock
+
 from app.core.config import settings
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -38,7 +41,9 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, phone: str = _phone("photo@example.com"), mock_verification_code=None) -> dict:
+async def register_user(
+    client: AsyncClient, phone: str = _phone("photo@example.com"), mock_verification_code=None
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -62,29 +67,25 @@ class TestAdminPhotos:
         n = getattr(self, "_n", 0)
         self._n = n + 1
         color = (30 + n * 41 % 225, 80 + n * 53 % 175, 130 + n * 29 % 125)
-        rng = np.random.default_rng(
-            (color[0] << 16) | (color[1] << 8) | color[2]
-        )
+        rng = np.random.default_rng((color[0] << 16) | (color[1] << 8) | color[2])
         img = Image.fromarray(
             rng.integers(0, 256, size=(200, 200, 3), dtype=np.uint8),
             mode="RGB",
         )
         img_bytes = io.BytesIO()
-        img.save(img_bytes, format='JPEG')
+        img.save(img_bytes, format="JPEG")
         img_bytes.seek(0)
 
         files = {"file": ("test.jpg", img_bytes, "image/jpeg")}
 
-        return await client.post(
-            "/api/v1/users/me/photos",
-            files=files,
-            headers=headers
-        )
+        return await client.post("/api/v1/users/me/photos", files=files, headers=headers)
 
     async def test_admin_get_pending_photos(self, client: AsyncClient, mock_verification_code):
         """Admin should list pending photos"""
         # Upload a photo (status = pending)
-        user_data = await register_user(client, _phone("photopending@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("photopending@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         await self.create_test_photo(client, user_headers)
 
@@ -97,23 +98,24 @@ class TestAdminPhotos:
     async def test_admin_approve_photo(self, client: AsyncClient, mock_verification_code):
         """Admin should approve a pending photo"""
         # Upload a photo
-        user_data = await register_user(client, _phone("photoapprove@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("photoapprove@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
-        res = await client.post(
-            f"{ADMIN_PHOTOS_URL}/{photo_id}/approve",
-            headers=admin_headers
-        )
+        res = await client.post(f"{ADMIN_PHOTOS_URL}/{photo_id}/approve", headers=admin_headers)
         assert res.status_code == 200
         assert res.json()["message"] == "Photo approved successfully"
 
     async def test_admin_reject_photo(self, client: AsyncClient, mock_verification_code):
         """Admin should reject a pending photo with reason"""
         # Upload a photo
-        user_data = await register_user(client, _phone("photoreject@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("photoreject@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -122,7 +124,7 @@ class TestAdminPhotos:
         res = await client.post(
             f"{ADMIN_PHOTOS_URL}/{photo_id}/reject",
             params={"reason": "Inappropriate content"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 200
         assert res.json()["message"] == "Photo rejected successfully"
@@ -143,7 +145,9 @@ class TestAdminPhotos:
     async def test_admin_get_photo_detail(self, client: AsyncClient, mock_verification_code):
         """Admin should get photo details with user info"""
         # Upload a photo
-        user_data = await register_user(client, _phone("photodetail@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("photodetail@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -162,31 +166,31 @@ class TestAdminPhotos:
     async def test_admin_verify_face(self, client: AsyncClient, mock_verification_code):
         """Admin should mark photo as face-verified"""
         # Upload a photo
-        user_data = await register_user(client, _phone("faceverify@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("faceverify@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
-        res = await client.post(
-            f"{ADMIN_PHOTOS_URL}/{photo_id}/verify-face",
-            headers=admin_headers
-        )
+        res = await client.post(f"{ADMIN_PHOTOS_URL}/{photo_id}/verify-face", headers=admin_headers)
         assert res.status_code == 200
         assert res.json()["face_verified"] is True
 
     async def test_admin_get_user_photos(self, client: AsyncClient, mock_verification_code):
         """Admin should get all photos for a specific user"""
         # Upload photos
-        user_data = await register_user(client, _phone("userphotos@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("userphotos@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         await self.create_test_photo(client, user_headers)
         await self.create_test_photo(client, user_headers)
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
-            f"{ADMIN_PHOTOS_URL}/users/{user_data['user']['id']}/photos",
-            headers=admin_headers
+            f"{ADMIN_PHOTOS_URL}/users/{user_data['user']['id']}/photos", headers=admin_headers
         )
         assert res.status_code == 200
         body = res.json()
@@ -194,7 +198,9 @@ class TestAdminPhotos:
 
     async def test_pending_photos_response_shape(self, client: AsyncClient, mock_verification_code):
         """AdminPendingPhotoResponse should contain all schema fields."""
-        user_data = await register_user(client, _phone("pendingshape@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("pendingshape@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         await self.create_test_photo(client, user_headers)
 
@@ -217,7 +223,9 @@ class TestAdminPhotos:
 
     async def test_approve_response_shape(self, client: AsyncClient, mock_verification_code):
         """AdminPhotoActionResponse should match schema."""
-        user_data = await register_user(client, _phone("approveshape@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("approveshape@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -232,7 +240,9 @@ class TestAdminPhotos:
 
     async def test_reject_response_shape(self, client: AsyncClient, mock_verification_code):
         """AdminPhotoRejectResponse should match schema."""
-        user_data = await register_user(client, _phone("rejectshape@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("rejectshape@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -241,7 +251,7 @@ class TestAdminPhotos:
         res = await client.post(
             f"{ADMIN_PHOTOS_URL}/{photo_id}/reject",
             params={"reason": "Inappropriate"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -265,7 +275,9 @@ class TestAdminPhotos:
 
     async def test_verify_face_response_shape(self, client: AsyncClient, mock_verification_code):
         """AdminPhotoVerifyResponse should match schema."""
-        user_data = await register_user(client, _phone("faceverify2@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("faceverify2@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -279,9 +291,13 @@ class TestAdminPhotos:
         assert body["photo_id"] == photo_id
         assert body["face_verified"] is True
 
-    async def test_photo_detail_contains_user_email(self, client: AsyncClient, mock_verification_code):
+    async def test_photo_detail_contains_user_email(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """AdminPhotoDetailResponse should include user_email."""
-        user_data = await register_user(client, _phone("detailemail@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("detailemail@example.com"), mock_verification_code
+        )
         user_headers = {"Authorization": f"Bearer {user_data['access_token']}"}
         upload_res = await self.create_test_photo(client, user_headers)
         photo_id = upload_res.json()["id"]
@@ -294,15 +310,17 @@ class TestAdminPhotos:
         assert "user_email" in body
         assert body["user_email"] is None  # phone-based auth; email is optional
 
-    async def test_admin_photos_requires_admin_key(self, client: AsyncClient, mock_verification_code):
+    async def test_admin_photos_requires_admin_key(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should return 401 with wrong admin key"""
         # Create a normal user (not admin)
-        user_data = await register_user(client, _phone("photoauth@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("photoauth@example.com"), mock_verification_code
+        )
 
         # Try to access admin endpoint with valid JWT + WRONG admin key
-        wrong_headers = {
-            "X-Admin-Key": "WRONG_KEY_123"
-        }
+        wrong_headers = {"X-Admin-Key": "WRONG_KEY_123"}
         res = await client.get(f"{ADMIN_PHOTOS_URL}/pending", headers=wrong_headers)
         assert res.status_code == 403
         assert "Admin access required" in res.json()["detail"]

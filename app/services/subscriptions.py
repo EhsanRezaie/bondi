@@ -1,20 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta ,timezone
 import uuid
+from datetime import UTC, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
-from app.db.session import get_session
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.core.config import settings
-from app.models.user import User
-from app.models.subscription import Subscription
-from app.schemas.subscription import (
-    SubscriptionPlansResponse, PlanResponse, PurchaseRequest,
-    PurchaseResponse, VerifyResponse, SubscriptionStatusResponse,
-    CancelSubscriptionResponse
-)
 from app.core.logging import get_logger
+from app.db.session import get_session
+from app.models.subscription import Subscription
+from app.models.user import User
+from app.schemas.subscription import (
+    CancelSubscriptionResponse,
+    PlanResponse,
+    PurchaseRequest,
+    PurchaseResponse,
+    SubscriptionPlansResponse,
+    SubscriptionStatusResponse,
+    VerifyResponse,
+)
 
 logger = get_logger("services.subscriptions")
 
@@ -74,24 +80,21 @@ async def purchase_subscription(
         "quarterly": settings.SUBSCRIPTION_QUARTERLY_DAYS,
         "yearly": settings.SUBSCRIPTION_YEARLY_DAYS,
     }
-    
+
     if body.plan_id not in plan_days:
         raise HTTPException(status_code=400, detail="Invalid plan")
-    
+
     # Mock: Generate fake authority
     mock_authority = str(uuid.uuid4()).replace("-", "")[:36]
-    
+
     # In production: Call ZarinPal API here
     # For MVP: Return mock redirect URL
     mock_redirect_url = f"https://sandbox.zarinpal.com/pg/StartPay/{mock_authority}"
-    
+
     # Store pending purchase in Redis (optional)
     # await redis.setex(f"purchase:{mock_authority}", 3600, str(current_user.id))
-    
-    return PurchaseResponse(
-        redirect_url=mock_redirect_url,
-        authority=mock_authority
-    )
+
+    return PurchaseResponse(redirect_url=mock_redirect_url, authority=mock_authority)
 
 
 @router.get("/verify", response_model=VerifyResponse)
@@ -107,38 +110,27 @@ async def verify_payment(
     In production: Verify with ZarinPal API and activate subscription.
     """
     if status != "OK":
-        return VerifyResponse(
-            success=False,
-            message="Payment was canceled or failed.",
-            ref_id=None
-        )
-    
+        return VerifyResponse(success=False, message="Payment was canceled or failed.", ref_id=None)
+
     # Mock: Find which user made this purchase
     # In production: Get user_id from Redis or database
-    
+
     # For mock, we need user_id from query param or session
     user_id = request.query_params.get("user_id")
     plan = request.query_params.get("plan", "monthly")
-    
+
     if not user_id:
-        return VerifyResponse(
-            success=False,
-            message="User ID not found in callback.",
-            ref_id=None
-        )
-    
+        return VerifyResponse(success=False, message="User ID not found in callback.", ref_id=None)
+
     # Find user
     from sqlalchemy import select
+
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user:
-        return VerifyResponse(
-            success=False,
-            message="User not found.",
-            ref_id=None
-        )
-    
+        return VerifyResponse(success=False, message="User not found.", ref_id=None)
+
     # Map plan to days
     plan_days = {
         "monthly": settings.SUBSCRIPTION_MONTHLY_DAYS,
@@ -146,14 +138,14 @@ async def verify_payment(
         "yearly": settings.SUBSCRIPTION_YEARLY_DAYS,
     }
     days = plan_days.get(plan, 30)
-    
+
     # Grant premium
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if user.premium_until is None or user.premium_until < now:
         user.premium_until = now + timedelta(days=days)
     else:
         user.premium_until = user.premium_until + timedelta(days=days)
-    
+
     # Create subscription record
     subscription = Subscription(
         user_id=user.id,
@@ -166,11 +158,11 @@ async def verify_payment(
     )
     session.add(subscription)
     await session.commit()
-    
+
     return VerifyResponse(
         success=True,
         message="Payment verified! Premium activated.",
-        ref_id="MOCK_REF_123456"  # Mock reference
+        ref_id="MOCK_REF_123456",  # Mock reference
     )
 
 
@@ -189,24 +181,19 @@ async def get_my_subscription(
         .limit(1)
     )
     subscription = result.scalar_one_or_none()
-    
+
     if not subscription or not current_user.profile.is_premium:
         return SubscriptionStatusResponse(
-            is_premium=False,
-            plan=None,
-            started_at=None,
-            expires_at=None,
-            source=None,
-            status=None
+            is_premium=False, plan=None, started_at=None, expires_at=None, source=None, status=None
         )
-    
+
     return SubscriptionStatusResponse(
         is_premium=True,
         plan=subscription.plan,
         started_at=subscription.started_at,
         expires_at=subscription.expires_at,
         source=subscription.source,
-        status=subscription.status
+        status=subscription.status,
     )
 
 
@@ -221,23 +208,19 @@ async def cancel_subscription(
     # Find active subscription
     result = await session.execute(
         select(Subscription)
-        .where(
-            Subscription.user_id == current_user.id,
-            Subscription.status == "active"
-        )
+        .where(Subscription.user_id == current_user.id, Subscription.status == "active")
         .order_by(Subscription.created_at.desc())
         .limit(1)
     )
     subscription = result.scalar_one_or_none()
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="No active subscription found")
-    
+
     # Mark as cancelled (premium remains until expiry)
     subscription.status = "cancelled"
     await session.commit()
-    
+
     return CancelSubscriptionResponse(
-        success=True,
-        message="Auto-renewal cancelled. Your premium remains until expiry."
+        success=True, message="Auto-renewal cancelled. Your premium remains until expiry."
     )

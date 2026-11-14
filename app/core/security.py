@@ -1,6 +1,5 @@
-from datetime import datetime, timedelta, timezone
-from typing import Optional
 import secrets
+from datetime import UTC, datetime, timedelta
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -41,15 +40,17 @@ REFRESH_TOKEN_TYPE = "refresh"
 REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 
-def _create_token(subject: str, token_type: str, expires_delta: timedelta, token_version: int = 1) -> str:
+def _create_token(
+    subject: str, token_type: str, expires_delta: timedelta, token_version: int = 1
+) -> str:
     """Internal helper — build and sign a JWT with unique jti and version."""
-    expire = datetime.now(timezone.utc) + expires_delta
+    expire = datetime.now(UTC) + expires_delta
     payload = {
         "sub": subject,
         "type": token_type,
         "exp": expire,
         "jti": secrets.token_urlsafe(16),
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
         "ver": token_version,  # Token version for revocation
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -78,7 +79,7 @@ def create_refresh_token(user_id: str, token_version: int = 1) -> str:
     )
 
 
-def decode_token(token: str, expected_type: str) -> Optional[dict]:
+def decode_token(token: str, expected_type: str) -> dict | None:
     """
     Decode and validate JWT signature + expiry + type.
     Returns full payload dict or None.
@@ -93,19 +94,19 @@ def decode_token(token: str, expected_type: str) -> Optional[dict]:
         return None
 
 
-def decode_access_token(token: str) -> Optional[str]:
+def decode_access_token(token: str) -> str | None:
     """Returns user_id if valid, None otherwise."""
     payload = decode_token(token, ACCESS_TOKEN_TYPE)
     return payload.get("sub") if payload else None
 
 
-def get_token_version(token: str, expected_type: str) -> Optional[int]:
+def get_token_version(token: str, expected_type: str) -> int | None:
     """Extract token version from JWT."""
     payload = decode_token(token, expected_type)
     return payload.get("ver") if payload else None
 
 
-def decode_refresh_token(token: str) -> Optional[str]:
+def decode_refresh_token(token: str) -> str | None:
     """Returns user_id if valid, None otherwise."""
     payload = decode_token(token, REFRESH_TOKEN_TYPE)
     return payload.get("sub") if payload else None
@@ -123,19 +124,19 @@ def create_admin_token(admin_id: str) -> str:
     """Create a short-lived admin JWT token."""
     if not settings.ADMIN_SECRET_KEY:
         raise RuntimeError("ADMIN_SECRET_KEY is not configured")
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(UTC) + timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": admin_id,
         "type": ADMIN_TOKEN_TYPE,
         "role": "admin",
         "exp": expire,
         "jti": secrets.token_urlsafe(16),
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
     }
     return jwt.encode(payload, settings.ADMIN_SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def verify_admin_token(token: str) -> Optional[dict]:
+def verify_admin_token(token: str) -> dict | None:
     """Decode and validate admin JWT. Returns payload or None."""
     if not settings.ADMIN_SECRET_KEY:
         logger.error("admin_secret_key_missing")

@@ -1,20 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from uuid import UUID
 
-from app.db.session import get_session
-from app.core.deps import get_admin_user, AdminIdentity
-from app.core.limiter import limiter
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.models.user import User
-from app.models.ticket import Ticket
-from app.models.ticket_message import TicketMessage
-from app.schemas.admin import AdminTicketResponse, AdminTicketUpdate, AdminTicketListResponse
-from app.schemas.ticket import TicketMessageCreate, TicketMessageResponse
 
+from app.core.deps import AdminIdentity, get_admin_user
+from app.core.limiter import limiter
 from app.core.logging import get_logger
 from app.core.timezone import utcnow
+from app.db.session import get_session
+from app.models.ticket import Ticket
+from app.models.ticket_message import TicketMessage
+from app.models.user import User
+from app.schemas.admin import AdminTicketListResponse, AdminTicketResponse, AdminTicketUpdate
+from app.schemas.ticket import TicketMessageCreate, TicketMessageResponse
 from app.services.admin_log_service import log_admin_action
 
 logger = get_logger("admin_tickets")
@@ -53,7 +53,9 @@ async def admin_list_tickets(
             select(TicketMessage)
             .distinct(TicketMessage.ticket_id)
             .where(TicketMessage.ticket_id.in_([t.id for t in tickets]))
-            .order_by(TicketMessage.ticket_id, TicketMessage.created_at.desc(), TicketMessage.id.desc())
+            .order_by(
+                TicketMessage.ticket_id, TicketMessage.created_at.desc(), TicketMessage.id.desc()
+            )
         )
         for msg in msg_result.scalars().all():
             last_msg_map[msg.ticket_id] = msg.content
@@ -66,26 +68,28 @@ async def admin_list_tickets(
         )
         user = user_result.scalar_one_or_none()
 
-        response_tickets.append(AdminTicketResponse(
-            id=ticket.id,
-            user_id=ticket.user_id,
-            user_uid=str(ticket.user_id),
-            user_name=user.profile.name if user else "Deleted User",
-            user_email=None,
-            subject=ticket.subject,
-            message=ticket.message,
-            last_message=last_msg_map.get(ticket.id),
-            status=ticket.status,
-            admin_response=ticket.admin_response,
-            created_at=ticket.created_at,
-            updated_at=ticket.updated_at,
-            messages=[]
-        ))
+        response_tickets.append(
+            AdminTicketResponse(
+                id=ticket.id,
+                user_id=ticket.user_id,
+                user_uid=str(ticket.user_id),
+                user_name=user.profile.name if user else "Deleted User",
+                user_email=None,
+                subject=ticket.subject,
+                message=ticket.message,
+                last_message=last_msg_map.get(ticket.id),
+                status=ticket.status,
+                admin_response=ticket.admin_response,
+                created_at=ticket.created_at,
+                updated_at=ticket.updated_at,
+                messages=[],
+            )
+        )
 
     return AdminTicketListResponse(
         tickets=response_tickets,
         total=total or 0,
-        next_offset=offset + limit if offset + limit < (total or 0) else None
+        next_offset=offset + limit if offset + limit < (total or 0) else None,
     )
 
 
@@ -99,9 +103,7 @@ async def admin_get_ticket(
 ):
     """Admin: Get ticket details (including full conversation)"""
 
-    result = await session.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
-    )
+    result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalar_one_or_none()
 
     if not ticket:
@@ -110,7 +112,9 @@ async def admin_get_ticket(
     return await _build_admin_response(session, ticket)
 
 
-@router.post("/{ticket_id}/messages", response_model=AdminTicketResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{ticket_id}/messages", response_model=AdminTicketResponse, status_code=status.HTTP_201_CREATED
+)
 @limiter.limit("30/minute")
 async def admin_reply_to_ticket(
     request: Request,
@@ -122,20 +126,20 @@ async def admin_reply_to_ticket(
     """Admin: Reply to a ticket. Appends a message to the conversation; never
     changes the ticket status (status is controlled manually)."""
 
-    result = await session.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
-    )
+    result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalar_one_or_none()
 
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    session.add(TicketMessage(
-        ticket_id=ticket.id,
-        sender_type="admin",
-        admin_name=str(admin.id),
-        content=body.content,
-    ))
+    session.add(
+        TicketMessage(
+            ticket_id=ticket.id,
+            sender_type="admin",
+            admin_name=str(admin.id),
+            content=body.content,
+        )
+    )
     ticket.admin_response = body.content
     ticket.updated_at = utcnow()
     await session.commit()
@@ -156,9 +160,7 @@ async def admin_update_ticket(
     """Admin: Update ticket status. Replies are sent via POST .../messages; a
     legacy admin_response value is appended as an admin conversation message."""
 
-    result = await session.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
-    )
+    result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalar_one_or_none()
 
     if not ticket:
@@ -167,12 +169,14 @@ async def admin_update_ticket(
     if body.status:
         ticket.status = body.status
     if body.admin_response is not None:
-        session.add(TicketMessage(
-            ticket_id=ticket.id,
-            sender_type="admin",
-            admin_name=str(admin.id),
-            content=body.admin_response,
-        ))
+        session.add(
+            TicketMessage(
+                ticket_id=ticket.id,
+                sender_type="admin",
+                admin_name=str(admin.id),
+                content=body.admin_response,
+            )
+        )
         ticket.admin_response = body.admin_response
 
     ticket.updated_at = utcnow()
@@ -192,9 +196,7 @@ async def admin_delete_ticket(
 ):
     """Admin: Delete a ticket"""
 
-    result = await session.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
-    )
+    result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalar_one_or_none()
 
     if not ticket:

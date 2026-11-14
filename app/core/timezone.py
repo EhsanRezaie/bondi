@@ -5,7 +5,7 @@ Daily-limit keys/counters use the Tehran calendar day (product decision:
 limits reset at Tehran midnight, regardless of the user's travel timezone).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 TEHRAN = ZoneInfo("Asia/Tehran")
@@ -13,7 +13,7 @@ TEHRAN = ZoneInfo("Asia/Tehran")
 
 def utcnow() -> datetime:
     """Aware, UTC-normalized now — always safe to store in tz columns."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _tehran_now() -> datetime:

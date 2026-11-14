@@ -1,10 +1,12 @@
-
 # tests/test_public_profile.py - tests for GET /users/{user_id}
 
 import uuid
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -68,10 +70,7 @@ async def register_full(client, phone, payload, mock_verification_code):
 
 
 class TestPublicProfile:
-
-    async def test_get_public_profile_success(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_get_public_profile_success(self, client: AsyncClient, mock_verification_code):
         male_headers, _ = await register_full(
             client, _phone("pub_male@example.com"), PROFILE_MALE, mock_verification_code
         )
@@ -112,9 +111,7 @@ class TestPublicProfile:
             client, _phone("pub_female3@example.com"), PROFILE_FEMALE, mock_verification_code
         )
 
-        block_res = await client.post(
-            f"{BLOCKS_URL}/{female_id}/block", headers=male_headers
-        )
+        block_res = await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
         assert block_res.status_code == 204, block_res.text
 
         res = await client.get(f"{USERS_URL}/{female_id}", headers=male_headers)

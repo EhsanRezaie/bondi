@@ -1,29 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from datetime import datetime, timezone, timedelta
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from app.db.session import get_session
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.cache import TTL_SUB_PLANS, cache_get, cache_set, invalidate_auth_user, key_sub_plans
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.core.config import settings
+from app.core.logging import get_logger
 from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_sub_plans, TTL_SUB_PLANS, invalidate_auth_user
-from sqlalchemy.orm import selectinload
+from app.db.session import get_session
+from app.models.subscription import PendingPurchase, Subscription
 from app.models.user import User
-from app.models.subscription import Subscription, PendingPurchase
 from app.schemas.subscription import (
-    SubscriptionPlansResponse,
+    CancelSubscriptionResponse,
     PlanResponse,
     PurchaseRequest,
     PurchaseResponse,
-    VerifyResponse,
+    SubscriptionPlansResponse,
     SubscriptionStatusResponse,
-    CancelSubscriptionResponse
+    VerifyResponse,
 )
-
-from app.core.logging import get_logger
 
 logger = get_logger("subscriptions")
 
@@ -66,7 +66,7 @@ async def get_plans(request: Request, response: Response):
             ),
         ]
     )
-    await cache_set(redis_client, key_sub_plans(), plans.model_dump(mode='json'), TTL_SUB_PLANS)
+    await cache_set(redis_client, key_sub_plans(), plans.model_dump(mode="json"), TTL_SUB_PLANS)
     return plans
 
 
@@ -110,10 +110,7 @@ async def purchase_subscription(
 
     mock_redirect_url = f"https://sandbox.zarinpal.com/pg/StartPay/{authority}"
 
-    return PurchaseResponse(
-        redirect_url=mock_redirect_url,
-        authority=authority
-    )
+    return PurchaseResponse(redirect_url=mock_redirect_url, authority=authority)
 
 
 @router.get("/verify", response_model=VerifyResponse)
@@ -131,25 +128,15 @@ async def verify_payment(
     and each ``authority`` can be consumed only once.
     """
     if status != "OK":
-        return VerifyResponse(
-            success=False,
-            message="Payment was canceled or failed.",
-            ref_id=None
-        )
+        return VerifyResponse(success=False, message="Payment was canceled or failed.", ref_id=None)
 
     result = await session.execute(
-        select(PendingPurchase)
-        .where(PendingPurchase.authority == authority)
-        .with_for_update()
+        select(PendingPurchase).where(PendingPurchase.authority == authority).with_for_update()
     )
     purchase = result.scalar_one_or_none()
 
     if not purchase:
-        return VerifyResponse(
-            success=False,
-            message="Unknown payment reference.",
-            ref_id=None
-        )
+        return VerifyResponse(success=False, message="Unknown payment reference.", ref_id=None)
 
     if purchase.user_id != current_user.id:
         raise HTTPException(
@@ -158,11 +145,7 @@ async def verify_payment(
         )
 
     if purchase.status != "pending":
-        return VerifyResponse(
-            success=False,
-            message="Payment already processed.",
-            ref_id=None
-        )
+        return VerifyResponse(success=False, message="Payment already processed.", ref_id=None)
 
     plan_days = {
         "monthly": settings.SUBSCRIPTION_MONTHLY_DAYS,
@@ -171,25 +154,20 @@ async def verify_payment(
     }
     days = plan_days.get(purchase.plan, 0)
     if days <= 0:
-        return VerifyResponse(
-            success=False,
-            message="Invalid plan on payment.",
-            ref_id=None
-        )
+        return VerifyResponse(success=False, message="Invalid plan on payment.", ref_id=None)
 
     result = await session.execute(
-        select(User).options(selectinload(User.profile)).where(User.id == current_user.id).with_for_update()
+        select(User)
+        .options(selectinload(User.profile))
+        .where(User.id == current_user.id)
+        .with_for_update()
     )
     user = result.scalar_one_or_none()
 
     if not user or not user.profile:
-        return VerifyResponse(
-            success=False,
-            message="User not found.",
-            ref_id=None
-        )
+        return VerifyResponse(success=False, message="User not found.", ref_id=None)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if user.profile.premium_until is None or user.profile.premium_until < now:
         user.profile.premium_until = now + timedelta(days=days)
     else:
@@ -215,7 +193,7 @@ async def verify_payment(
     return VerifyResponse(
         success=True,
         message="Payment verified! Premium activated.",
-        ref_id="MOCK_REF_" + authority[:8]
+        ref_id="MOCK_REF_" + authority[:8],
     )
 
 
@@ -234,24 +212,19 @@ async def get_my_subscription(
         .limit(1)
     )
     subscription = result.scalar_one_or_none()
-    
+
     if not subscription or not current_user.profile.is_premium:
         return SubscriptionStatusResponse(
-            is_premium=False,
-            plan=None,
-            started_at=None,
-            expires_at=None,
-            source=None,
-            status=None
+            is_premium=False, plan=None, started_at=None, expires_at=None, source=None, status=None
         )
-    
+
     return SubscriptionStatusResponse(
         is_premium=True,
         plan=subscription.plan,
         started_at=subscription.started_at,
         expires_at=subscription.expires_at,
         source=subscription.source,
-        status=subscription.status
+        status=subscription.status,
     )
 
 
@@ -265,22 +238,18 @@ async def cancel_subscription(
     """Cancel auto-renewal (does not remove existing premium)."""
     result = await session.execute(
         select(Subscription)
-        .where(
-            Subscription.user_id == current_user.id,
-            Subscription.status == "active"
-        )
+        .where(Subscription.user_id == current_user.id, Subscription.status == "active")
         .order_by(Subscription.created_at.desc())
         .limit(1)
     )
     subscription = result.scalar_one_or_none()
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="No active subscription found")
-    
+
     subscription.status = "cancelled"
     await session.commit()
-    
+
     return CancelSubscriptionResponse(
-        success=True,
-        message="Auto-renewal cancelled. Your premium remains until expiry."
+        success=True, message="Auto-renewal cancelled. Your premium remains until expiry."
     )

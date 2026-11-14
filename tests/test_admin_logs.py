@@ -1,11 +1,11 @@
 # tests/done/test_admin_logs.py
 import uuid
-import pytest
-from httpx import AsyncClient
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from app.models.admin_log import AdminLog
+from httpx import AsyncClient
+
 from app.core.config import settings
+from app.models.admin_log import AdminLog
 
 ADMIN_LOGS_URL = "/api/v1/admin/logs"
 
@@ -15,7 +15,6 @@ def admin_headers() -> dict:
 
 
 class TestAdminLogs:
-
     async def test_list_logs_requires_auth(self, client: AsyncClient):
         res = await client.get(ADMIN_LOGS_URL)
         assert res.status_code == 403
@@ -29,6 +28,7 @@ class TestAdminLogs:
 
     async def test_list_logs_with_jwt(self, client: AsyncClient):
         from app.core.security import create_admin_token
+
         token = create_admin_token("some-admin")
         res = await client.get(
             ADMIN_LOGS_URL,
@@ -36,10 +36,8 @@ class TestAdminLogs:
         )
         assert res.status_code == 200
 
-    async def test_list_logs_filters_and_pagination(
-        self, client: AsyncClient, db_session
-    ):
-        now = datetime.now(timezone.utc)
+    async def test_list_logs_filters_and_pagination(self, client: AsyncClient, db_session):
+        now = datetime.now(UTC)
         rows = [
             AdminLog(
                 id=uuid.uuid4(),

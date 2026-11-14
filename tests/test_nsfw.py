@@ -1,19 +1,22 @@
-
 # tests/done/test_nsfw.py
 import io
+from unittest.mock import AsyncMock, patch
+
 import numpy as np
 import pytest
 import pytest_asyncio
 from PIL import Image
-from unittest.mock import patch, AsyncMock, MagicMock
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
+from app.schemas.nsfw import NSFWCheckResult, NSFWConfigResponse, NSFWMetricsResponse
 from app.services.nsfw_service import NSFWService, nsfw_service
-from app.schemas.nsfw import NSFWCheckResult, NSFWMetricsResponse, NSFWConfigResponse
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -30,6 +33,7 @@ async def _mock_face_check():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_image(color=(100, 150, 200), size=(300, 300)) -> bytes:
     """Create a test image and return as bytes."""
@@ -58,42 +62,54 @@ async def _register_user(client, phone):
     """Register a user via phone OTP flow and return access_token."""
     # Store the code in Redis (mirrors the mock_verification_code fixture)
     import json as _json
-    from app.core.redis import redis_client
-    await redis_client.setex(f"verification:{phone}", 300, _json.dumps({"code": "123456", "attempts": 0}))
 
-    res = await client.post("/api/v1/auth/verify-code", json={
-        "phone": phone, "code": "123456",
-    })
+    from app.core.redis import redis_client
+
+    await redis_client.setex(
+        f"verification:{phone}", 300, _json.dumps({"code": "123456", "attempts": 0})
+    )
+
+    res = await client.post(
+        "/api/v1/auth/verify-code",
+        json={
+            "phone": phone,
+            "code": "123456",
+        },
+    )
     assert res.status_code == 200, res.text
     token = res.json()["access_token"]
 
     # Complete profile
-    res = await client.post("/api/v1/auth/register/complete", json={
-        "name": "NSFW Test User",
-        "birth_date": "2000-01-01",
-        "gender": "male",
-        "lat": 35.6892,
-        "lng": 51.3890,
-        "sexual_orientation": "straight",
-        "bio": "Test",
-        "height": 180,
-        "weight": 75,
-        "body_type": "athletic",
-        "relationship_status": "single",
-        "living_situation": "alone",
-        "children_status": "open_to_children",
-        "smoking": "never",
-        "drinking": "socially",
-        "education": "bachelor",
-        "workplace": "Tech",
-        "religion": "islam",
-        "ethnicity": "persian",
-        "political_orientation": "moderate",
-        "languages": ["persian", "english"],
-        "country": "Iran",
-        "province": "Tehran",
-        "city": "Tehran",
-    }, headers={"Authorization": f"Bearer {token}"})
+    res = await client.post(
+        "/api/v1/auth/register/complete",
+        json={
+            "name": "NSFW Test User",
+            "birth_date": "2000-01-01",
+            "gender": "male",
+            "lat": 35.6892,
+            "lng": 51.3890,
+            "sexual_orientation": "straight",
+            "bio": "Test",
+            "height": 180,
+            "weight": 75,
+            "body_type": "athletic",
+            "relationship_status": "single",
+            "living_situation": "alone",
+            "children_status": "open_to_children",
+            "smoking": "never",
+            "drinking": "socially",
+            "education": "bachelor",
+            "workplace": "Tech",
+            "religion": "islam",
+            "ethnicity": "persian",
+            "political_orientation": "moderate",
+            "languages": ["persian", "english"],
+            "country": "Iran",
+            "province": "Tehran",
+            "city": "Tehran",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert res.status_code == 200, res.text
     return token
 
@@ -102,8 +118,8 @@ async def _register_user(client, phone):
 # Schema validation
 # ---------------------------------------------------------------------------
 
-class TestNSFWSchemas:
 
+class TestNSFWSchemas:
     def test_check_result_schema(self):
         result = NSFWCheckResult(is_safe=True, score=0.2, threshold=0.8)
         assert result.is_safe is True
@@ -112,8 +128,11 @@ class TestNSFWSchemas:
 
     def test_metrics_response_schema(self):
         metrics = NSFWMetricsResponse(
-            total_checked=10, total_rejected=2, reject_rate=0.2,
-            enabled=True, threshold=0.8,
+            total_checked=10,
+            total_rejected=2,
+            reject_rate=0.2,
+            enabled=True,
+            threshold=0.8,
         )
         assert metrics.total_checked == 10
         assert metrics.reject_rate == 0.2
@@ -128,8 +147,8 @@ class TestNSFWSchemas:
 # NSFWService unit tests
 # ---------------------------------------------------------------------------
 
-class TestNSFWService:
 
+class TestNSFWService:
     def test_init_default(self):
         service = NSFWService()
         assert service.threshold == 0.8
@@ -220,8 +239,8 @@ class TestNSFWService:
 # Endpoint integration tests
 # ---------------------------------------------------------------------------
 
-class TestNSFWEndpoint:
 
+class TestNSFWEndpoint:
     async def test_upload_safe_photo(self, client, mock_verification_code):
         """Should accept safe photo."""
         token = await _register_user(client, _phone("nsfw_safe@test.com"))
@@ -311,8 +330,8 @@ class TestNSFWEndpoint:
 # Singleton / global service tests
 # ---------------------------------------------------------------------------
 
-class TestNSFWMetrics:
 
+class TestNSFWMetrics:
     def test_singleton_has_metrics(self):
         metrics = nsfw_service.get_metrics()
         assert "total_checked" in metrics

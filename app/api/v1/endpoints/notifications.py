@@ -1,31 +1,31 @@
-from sqlalchemy.exc import IntegrityError
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from uuid import UUID
 
-from app.db.session import get_session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.pagination import (
     decode_cursor,
     encode_cursor,
     keyset_desc,
     parse_datetime_key,
 )
-from app.models.user import User
-from app.models.notification import Notification
+from app.db.session import get_session
 from app.models.device_token import DeviceToken
+from app.models.notification import Notification
+from app.models.user import User
 from app.schemas.notification import (
-    NotificationResponse,
-    NotificationListResponse,
-    MarkReadRequest,
     DeviceTokenRequest,
     DeviceTokenResponse,
+    MarkReadRequest,
     NotificationCountsResponse,
+    NotificationListResponse,
+    NotificationResponse,
 )
-
-from app.core.logging import get_logger
 
 logger = get_logger("notifications")
 
@@ -44,16 +44,14 @@ async def get_notifications(
     current_user: User = Depends(get_current_user),
 ):
     """Get user's notifications (most recent first)"""
-    
+
     # Query notifications
     filter_stmt = Notification.user_id == current_user.id
     if notif_type:
         filter_stmt = filter_stmt & (Notification.type == notif_type)
 
     # Count total — plain count, no ORDER BY or pagination
-    total = await session.scalar(
-        select(func.count(Notification.id)).where(filter_stmt)
-    )
+    total = await session.scalar(select(func.count(Notification.id)).where(filter_stmt))
 
     # Paginate (ORDER BY applied only on the data query)
     query = (
@@ -69,9 +67,7 @@ async def get_notifications(
         cursor_key = parse_datetime_key(raw_key)
         if cursor_key is not None and last_id is not None:
             query = query.where(
-                keyset_desc(
-                    Notification.created_at, Notification.id, cursor_key, last_id
-                )
+                keyset_desc(Notification.created_at, Notification.id, cursor_key, last_id)
             )
             used_cursor = True
 
@@ -107,17 +103,14 @@ async def get_notification_counts(
 
     # Total unread count
     total = await session.scalar(
-        select(func.count(Notification.id)).where(
-            filter_stmt, Notification.is_read == False
-        )
+        select(func.count(Notification.id)).where(filter_stmt, Notification.is_read == False)
     )
 
     # Unread counts by type
-    from sqlalchemy import case
     type_counts = await session.execute(
-        select(Notification.type, func.count(Notification.id)).where(
-            filter_stmt, Notification.is_read == False
-        ).group_by(Notification.type)
+        select(Notification.type, func.count(Notification.id))
+        .where(filter_stmt, Notification.is_read == False)
+        .group_by(Notification.type)
     )
     by_type = {row[0]: row[1] for row in type_counts.all()}
 
@@ -155,18 +148,17 @@ async def delete_notification(
     current_user_id: UUID = Depends(get_current_user_id),
 ):
     """Delete a notification"""
-    
+
     result = await session.execute(
         select(Notification).where(
-            Notification.id == notification_id,
-            Notification.user_id == current_user_id
+            Notification.id == notification_id, Notification.user_id == current_user_id
         )
     )
     notification = result.scalar_one_or_none()
-    
+
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    
+
     await session.delete(notification)
     await session.commit()
 
@@ -204,7 +196,9 @@ async def register_device_token(
             await session.flush()
         except IntegrityError as e:
             await session.rollback()
-            logger.warning("device_token_duplicate", user_id=str(current_user.id), error=str(e), exc_info=True)
+            logger.warning(
+                "device_token_duplicate", user_id=str(current_user.id), error=str(e), exc_info=True
+            )
             existing = await session.execute(
                 select(DeviceToken).where(
                     DeviceToken.user_id == current_user.id,

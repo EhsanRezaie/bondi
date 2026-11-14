@@ -1,26 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from app.db.session import get_session
-from app.core.deps import get_admin_user, AdminIdentity
-from app.core.limiter import limiter
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from app.core.deps import AdminIdentity, get_admin_user
+from app.core.limiter import limiter
+from app.core.logging import get_logger
+from app.core.redis import redis_client
+from app.db.session import get_session
+from app.models.notification import Notification
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.models.notification import Notification
 from app.schemas.admin import (
+    AdminAnnouncementRequest,
+    AdminAnnouncementResponse,
     AdminMessageRequest,
     AdminMessageResponse,
-    AdminAnnouncementRequest,
-    AdminAnnouncementResponse
 )
-from app.services.websocket_manager import websocket_manager
-from app.core.redis import redis_client
-
-from app.core.logging import get_logger
 from app.services.admin_log_service import log_admin_action
+from app.services.websocket_manager import websocket_manager
 from app.tasks.notifications import dispatch_announcement_push_to_celery
 
 logger = get_logger("admin_announcements")
@@ -38,6 +38,7 @@ async def _dispatch_announcement_push(
     otherwise inline). Announcements use `type=system` so the app renders them
     in the Announcements section with a compact notification (no avatar)."""
     from app.tasks.notifications import dispatch_push_to_celery
+
     if not dispatch_push_to_celery(
         user_id=user_id,
         title=title,
@@ -45,6 +46,7 @@ async def _dispatch_announcement_push(
         data={"type": "system", "is_announcement": True},
     ):
         from app.services.push_service import PushService
+
         await PushService.send_to_user(
             user_id=user_id,
             title=title,
@@ -64,38 +66,38 @@ async def admin_send_announcement(
     admin: AdminIdentity = Depends(get_admin_user),
 ):
     """Admin: Send announcement to all active users (or premium only)"""
-    
+
     # Build query for target users
     query = select(User).options(selectinload(User.profile)).where(User.is_active == True)
-    
+
     if body.to_premium_only:
-        query = query.join(User.profile).where(UserProfile.premium_until > datetime.now(timezone.utc))
-    
+        query = query.join(User.profile).where(UserProfile.premium_until > datetime.now(UTC))
+
     result = await session.execute(query)
     users = result.scalars().all()
-    
+
     if not users:
         return AdminAnnouncementResponse(
-            success=True,
-            message="No users to send announcement to",
-            recipient_count=0
+            success=True, message="No users to send announcement to", recipient_count=0
         )
-    
+
     # Create notifications for all users
     notifications = []
     for user in users:
-        notifications.append(Notification(
-            user_id=user.id,
-            type="system",
-            title=body.title,
-            body=body.message,
-            data={"is_announcement": True, "to_premium_only": body.to_premium_only},
-            is_read=False
-        ))
-    
+        notifications.append(
+            Notification(
+                user_id=user.id,
+                type="system",
+                title=body.title,
+                body=body.message,
+                data={"is_announcement": True, "to_premium_only": body.to_premium_only},
+                is_read=False,
+            )
+        )
+
     session.add_all(notifications)
     await session.commit()
-    
+
     # Publish WS events for real-time delivery
     for n in notifications:
         try:
@@ -131,19 +133,18 @@ async def admin_send_announcement(
         user_ids=user_ids, title=body.title, body=body.message
     ):
         from app.services.push_service import PushService
+
         await PushService.send_to_users(
             user_ids=user_ids,
             title=body.title,
             body=body.message,
             data={"type": "system", "is_announcement": True},
         )
-    
+
     await log_admin_action(str(admin.id), "announcement_send", "system", None, request, session)
 
     return AdminAnnouncementResponse(
-        success=True,
-        message=f"Announcement sent to {len(users)} users",
-        recipient_count=len(users)
+        success=True, message=f"Announcement sent to {len(users)} users", recipient_count=len(users)
     )
 
 
@@ -183,11 +184,11 @@ async def admin_send_test_announcement(
         title=f"[TEST] {body.title}",
         body=body.message,
         data={"is_announcement": True, "is_test": True},
-        is_read=False
+        is_read=False,
     )
     session.add(notification)
     await session.commit()
-    
+
     # Publish WS event for real-time delivery
     try:
         await websocket_manager.send_personal_message(
@@ -200,7 +201,9 @@ async def admin_send_test_announcement(
                     "title": notification.title,
                     "body": notification.body,
                     "is_read": notification.is_read,
-                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                    "created_at": notification.created_at.isoformat()
+                    if notification.created_at
+                    else None,
                     "user_id": (notification.data or {}).get("user_id"),
                     "match_id": (notification.data or {}).get("match_id"),
                     "chat_id": (notification.data or {}).get("chat_id"),
@@ -216,12 +219,14 @@ async def admin_send_test_announcement(
         await _dispatch_announcement_push(session, target.id, f"[TEST] {body.title}", body.message)
     except Exception as e:
         logger.warning("push_test_announcement_failed", user_id=str(target.id), error=str(e))
-    
-    await log_admin_action(str(admin.id), "announcement_test", "system", target.id, request, session)
+
+    await log_admin_action(
+        str(admin.id), "announcement_test", "system", target.id, request, session
+    )
 
     return AdminMessageResponse(
         success=True,
         message="Test announcement sent",
         user_id=target.id,
-        user_name=target.profile.name if target.profile else None
+        user_name=target.profile.name if target.profile else None,
     )

@@ -8,7 +8,9 @@ logical prompt exists as separate rows for each language.
 Each test seeds its own rows via db_session since conftest.reset_state
 wipes the prompts table after every test.
 """
+
 import uuid
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,7 @@ PROMPTS_URL = "/api/v1/prompts"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def seed_prompts(db_session: AsyncSession, rows: list[dict]) -> list[Prompt]:
     """Insert prompt rows directly and return the created objects."""
@@ -50,7 +53,11 @@ FA_PROMPTS = [
 EN_PROMPTS = [
     {"question": "Two truths and a lie about me are...", "category": "about_me", "language": "en"},
     {"question": "My friends would describe me as...", "category": "about_me", "language": "en"},
-    {"question": "A typical Sunday for me looks like...", "category": "lifestyle", "language": "en"},
+    {
+        "question": "A typical Sunday for me looks like...",
+        "category": "lifestyle",
+        "language": "en",
+    },
     {"question": "I'm looking for someone who...", "category": "relationships", "language": "en"},
     {"question": "Worst gift I ever received...", "category": "fun", "language": "en"},
 ]
@@ -62,8 +69,8 @@ BOTH_LANGUAGES = FA_PROMPTS + EN_PROMPTS
 # Basic response shape
 # ---------------------------------------------------------------------------
 
-class TestPromptsResponseShape:
 
+class TestPromptsResponseShape:
     async def test_returns_200(self, client: AsyncClient, db_session: AsyncSession):
         await seed_prompts(db_session, FA_PROMPTS)
         res = await client.get(PROMPTS_URL)
@@ -120,8 +127,8 @@ class TestPromptsResponseShape:
 # Language filtering
 # ---------------------------------------------------------------------------
 
-class TestPromptsLanguageFilter:
 
+class TestPromptsLanguageFilter:
     async def test_defaults_to_fa(self, client: AsyncClient, db_session: AsyncSession):
         """?language param defaults to 'fa' — no explicit param = Persian."""
         await seed_prompts(db_session, BOTH_LANGUAGES)
@@ -181,9 +188,9 @@ class TestPromptsLanguageFilter:
         """Smoke-test that the actual Persian text round-trips correctly
         through Postgres and the JSON serializer without corruption."""
         fa_question = "دو تا راست یکی دروغ درباره‌ام..."
-        await seed_prompts(db_session, [
-            {"question": fa_question, "category": "about_me", "language": "fa"}
-        ])
+        await seed_prompts(
+            db_session, [{"question": fa_question, "category": "about_me", "language": "fa"}]
+        )
         res = await client.get(PROMPTS_URL, params={"language": "fa"})
         questions = [item["question"] for item in res.json()]
         assert fa_question in questions
@@ -191,9 +198,16 @@ class TestPromptsLanguageFilter:
     async def test_en_response_contains_english_text(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        await seed_prompts(db_session, [
-            {"question": "Two truths and a lie about me are...", "category": "about_me", "language": "en"}
-        ])
+        await seed_prompts(
+            db_session,
+            [
+                {
+                    "question": "Two truths and a lie about me are...",
+                    "category": "about_me",
+                    "language": "en",
+                }
+            ],
+        )
         res = await client.get(PROMPTS_URL, params={"language": "en"})
         questions = [item["question"] for item in res.json()]
         assert "Two truths and a lie about me are..." in questions
@@ -203,8 +217,12 @@ class TestPromptsLanguageFilter:
     ):
         """Each category should be present in both language responses."""
         await seed_prompts(db_session, BOTH_LANGUAGES)
-        fa_cats = {i["category"] for i in (await client.get(PROMPTS_URL, params={"language": "fa"})).json()}
-        en_cats = {i["category"] for i in (await client.get(PROMPTS_URL, params={"language": "en"})).json()}
+        fa_cats = {
+            i["category"] for i in (await client.get(PROMPTS_URL, params={"language": "fa"})).json()
+        }
+        en_cats = {
+            i["category"] for i in (await client.get(PROMPTS_URL, params={"language": "en"})).json()
+        }
         assert fa_cats == en_cats
 
 
@@ -212,18 +230,29 @@ class TestPromptsLanguageFilter:
 # is_active filtering
 # ---------------------------------------------------------------------------
 
-class TestPromptsActiveFilter:
 
-    async def test_inactive_prompts_excluded(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+class TestPromptsActiveFilter:
+    async def test_inactive_prompts_excluded(self, client: AsyncClient, db_session: AsyncSession):
         """Deactivated prompts must not appear in the list — they're kept
         in the DB so existing UserPrompt answers still reference valid rows,
         but they should no longer be offered to new users."""
-        await seed_prompts(db_session, [
-            {"question": "active prompt", "category": "fun", "language": "fa", "is_active": True},
-            {"question": "hidden prompt", "category": "fun", "language": "fa", "is_active": False},
-        ])
+        await seed_prompts(
+            db_session,
+            [
+                {
+                    "question": "active prompt",
+                    "category": "fun",
+                    "language": "fa",
+                    "is_active": True,
+                },
+                {
+                    "question": "hidden prompt",
+                    "category": "fun",
+                    "language": "fa",
+                    "is_active": False,
+                },
+            ],
+        )
         res = await client.get(PROMPTS_URL)
         questions = [item["question"] for item in res.json()]
         assert "active prompt" in questions
@@ -232,10 +261,23 @@ class TestPromptsActiveFilter:
     async def test_only_inactive_prompts_returns_empty(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        await seed_prompts(db_session, [
-            {"question": "hidden prompt 1", "category": "fun", "language": "fa", "is_active": False},
-            {"question": "hidden prompt 2", "category": "deep", "language": "fa", "is_active": False},
-        ])
+        await seed_prompts(
+            db_session,
+            [
+                {
+                    "question": "hidden prompt 1",
+                    "category": "fun",
+                    "language": "fa",
+                    "is_active": False,
+                },
+                {
+                    "question": "hidden prompt 2",
+                    "category": "deep",
+                    "language": "fa",
+                    "is_active": False,
+                },
+            ],
+        )
         res = await client.get(PROMPTS_URL)
         assert res.json() == []
 
@@ -252,14 +294,31 @@ class TestPromptsActiveFilter:
         self, client: AsyncClient, db_session: AsyncSession
     ):
         """Active/inactive filtering works independently per language."""
-        await seed_prompts(db_session, [
-            {"question": "active fa", "category": "fun", "language": "fa", "is_active": True},
-            {"question": "inactive fa", "category": "fun", "language": "fa", "is_active": False},
-            {"question": "active en", "category": "fun", "language": "en", "is_active": True},
-            {"question": "inactive en", "category": "fun", "language": "en", "is_active": False},
-        ])
-        fa_questions = [i["question"] for i in (await client.get(PROMPTS_URL, params={"language": "fa"})).json()]
-        en_questions = [i["question"] for i in (await client.get(PROMPTS_URL, params={"language": "en"})).json()]
+        await seed_prompts(
+            db_session,
+            [
+                {"question": "active fa", "category": "fun", "language": "fa", "is_active": True},
+                {
+                    "question": "inactive fa",
+                    "category": "fun",
+                    "language": "fa",
+                    "is_active": False,
+                },
+                {"question": "active en", "category": "fun", "language": "en", "is_active": True},
+                {
+                    "question": "inactive en",
+                    "category": "fun",
+                    "language": "en",
+                    "is_active": False,
+                },
+            ],
+        )
+        fa_questions = [
+            i["question"] for i in (await client.get(PROMPTS_URL, params={"language": "fa"})).json()
+        ]
+        en_questions = [
+            i["question"] for i in (await client.get(PROMPTS_URL, params={"language": "en"})).json()
+        ]
         assert fa_questions == ["active fa"]
         assert en_questions == ["active en"]
 
@@ -268,8 +327,8 @@ class TestPromptsActiveFilter:
 # Categories
 # ---------------------------------------------------------------------------
 
-class TestPromptsCategories:
 
+class TestPromptsCategories:
     async def test_all_seeded_categories_present(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -284,9 +343,9 @@ class TestPromptsCategories:
         assert returned_cats == set(all_categories)
 
     async def test_category_can_be_null(self, client: AsyncClient, db_session: AsyncSession):
-        await seed_prompts(db_session, [
-            {"question": "uncategorized prompt", "category": None, "language": "fa"}
-        ])
+        await seed_prompts(
+            db_session, [{"question": "uncategorized prompt", "category": None, "language": "fa"}]
+        )
         res = await client.get(PROMPTS_URL)
         assert res.status_code == 200
         assert res.json()[0]["category"] is None
@@ -311,8 +370,8 @@ class TestPromptsCategories:
 # Composite unique constraint behavior
 # ---------------------------------------------------------------------------
 
-class TestPromptsCompositeUnique:
 
+class TestPromptsCompositeUnique:
     async def test_same_question_exists_in_both_languages(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -321,10 +380,13 @@ class TestPromptsCompositeUnique:
         CAN exist in both 'fa' and 'en'. This is the core design decision
         that enables bilingual prompts without a separate translation table."""
         question = "My favorite prompt question"
-        await seed_prompts(db_session, [
-            {"question": question, "category": "fun", "language": "fa"},
-            {"question": question, "category": "fun", "language": "en"},
-        ])
+        await seed_prompts(
+            db_session,
+            [
+                {"question": question, "category": "fun", "language": "fa"},
+                {"question": question, "category": "fun", "language": "en"},
+            ],
+        )
         fa_items = (await client.get(PROMPTS_URL, params={"language": "fa"})).json()
         en_items = (await client.get(PROMPTS_URL, params={"language": "en"})).json()
         assert any(item["question"] == question for item in fa_items)
@@ -337,22 +399,29 @@ class TestPromptsCompositeUnique:
         question can't exist twice in the same language. Inserting a
         duplicate should raise a DB error, not silently create two rows."""
         from sqlalchemy.exc import IntegrityError
+
         question = "This prompt will be duplicated"
-        await seed_prompts(db_session, [
-            {"question": question, "category": "fun", "language": "fa"},
-        ])
+        await seed_prompts(
+            db_session,
+            [
+                {"question": question, "category": "fun", "language": "fa"},
+            ],
+        )
         with pytest.raises(IntegrityError):
-            await seed_prompts(db_session, [
-                {"question": question, "category": "deep", "language": "fa"},
-            ])
+            await seed_prompts(
+                db_session,
+                [
+                    {"question": question, "category": "deep", "language": "fa"},
+                ],
+            )
 
 
 # ---------------------------------------------------------------------------
 # Access control — public endpoint
 # ---------------------------------------------------------------------------
 
-class TestPromptsAccessControl:
 
+class TestPromptsAccessControl:
     async def test_no_auth_header_required(self, client: AsyncClient, db_session: AsyncSession):
         await seed_prompts(db_session, FA_PROMPTS[:1])
         res = await client.get(PROMPTS_URL)
@@ -373,14 +442,11 @@ class TestPromptsAccessControl:
 # Scale — mimics the real 116-row bilingual seed
 # ---------------------------------------------------------------------------
 
-class TestPromptsScale:
 
-    async def test_handles_full_58_fa_prompts(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
+class TestPromptsScale:
+    async def test_handles_full_58_fa_prompts(self, client: AsyncClient, db_session: AsyncSession):
         rows = [
-            {"question": f"سوال {i}", "category": "about_me", "language": "fa"}
-            for i in range(58)
+            {"question": f"سوال {i}", "category": "about_me", "language": "fa"} for i in range(58)
         ]
         await seed_prompts(db_session, rows)
         res = await client.get(PROMPTS_URL, params={"language": "fa"})
@@ -391,8 +457,7 @@ class TestPromptsScale:
         self, client: AsyncClient, db_session: AsyncSession
     ):
         fa_rows = [
-            {"question": f"سوال {i}", "category": "about_me", "language": "fa"}
-            for i in range(58)
+            {"question": f"سوال {i}", "category": "about_me", "language": "fa"} for i in range(58)
         ]
         en_rows = [
             {"question": f"Question {i}", "category": "about_me", "language": "en"}

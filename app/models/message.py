@@ -1,11 +1,24 @@
 # app/models/message.py
 import uuid
-from sqlalchemy import Column, Text, Boolean, DateTime, ForeignKey, func, Integer, String, Index, text
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from app.db.base import Base
-from app.core.encryption import encrypt_message, decrypt_message
+
+from app.core.encryption import decrypt_message, encrypt_message
 from app.core.logging import get_logger
+from app.db.base import Base
 
 logger = get_logger("models.message")
 
@@ -13,10 +26,25 @@ logger = get_logger("models.message")
 class Message(Base):
     __tablename__ = "messages"
     __table_args__ = (
-        Index('idx_messages_chat_sent', 'chat_id', 'sent_at'),
-        Index('idx_messages_receiver_delivered', 'receiver_id', 'is_delivered', postgresql_where=text("is_delivered = false")),
-        Index('idx_messages_receiver_read', 'receiver_id', 'is_read', postgresql_where=text("is_read = false")),
-        Index('idx_messages_chat_recent', 'chat_id', 'sent_at', postgresql_where=text("is_deleted_for_all = false")),
+        Index("idx_messages_chat_sent", "chat_id", "sent_at"),
+        Index(
+            "idx_messages_receiver_delivered",
+            "receiver_id",
+            "is_delivered",
+            postgresql_where=text("is_delivered = false"),
+        ),
+        Index(
+            "idx_messages_receiver_read",
+            "receiver_id",
+            "is_read",
+            postgresql_where=text("is_read = false"),
+        ),
+        Index(
+            "idx_messages_chat_recent",
+            "chat_id",
+            "sent_at",
+            postgresql_where=text("is_deleted_for_all = false"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -26,15 +54,25 @@ class Message(Base):
     # echo races the HTTP response.
     client_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
-    chat_id = Column(UUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE", name="fk_messages_chat_id"), nullable=False)
+    chat_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("chats.id", ondelete="CASCADE", name="fk_messages_chat_id"),
+        nullable=False,
+    )
 
-    sender_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    receiver_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    receiver_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
 
     # Message content
     message_type = Column(String(20), default="text")  # 'text' | 'photo' | 'voice'
     _content = Column("content", Text, nullable=True)  # Stores encrypted content
-    reply_to_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    reply_to_id = Column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Media files
     media_url = Column(Text, nullable=True)

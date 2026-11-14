@@ -1,51 +1,50 @@
 # app/api/v1/endpoints/chats.py
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Response
-from sqlalchemy import select, func, or_, and_, tuple_
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
-from typing import Optional
-from datetime import datetime
 import base64
 import json
+from datetime import datetime
+from uuid import UUID
 
-from app.db.session import get_session
-from app.models.user import User
-from app.models.chat import Chat
-from app.models.message import Message
-from app.models.block import Block
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import app.core.redis as redis_module
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.core.config import settings
+from app.core.logging import get_logger
+from app.db.session import get_session
+from app.models.block import Block
+from app.models.chat import Chat
+from app.models.message import Message
+from app.models.user import User
 from app.schemas.chat import (
+    ChatAcceptResponse,
     ChatCreateRequest,
     ChatCreateResponse,
-    ChatAcceptResponse,
-    ChatListResponse,
-    ChatItemResponse,
     ChatDetailResponse,
-    ChatUserResponse,
+    ChatItemResponse,
     ChatLastMessage,
+    ChatListResponse,
+    ChatUserResponse,
 )
 from app.services.chat_service import (
-    find_chat_for_pair,
-    pair_lock_key,
-    get_user_chat,
-    create_chat_for_pair,
-    have_mutual_like,
     can_start_new_chat,
-    consume_new_chat,
-    create_encrypted_message,
-    get_last_messages_for_chats,
     chat_is_ended,
+    consume_new_chat,
+    create_chat_for_pair,
+    create_encrypted_message,
+    find_chat_for_pair,
+    get_last_messages_for_chats,
+    get_user_chat,
+    have_mutual_like,
+    pair_lock_key,
 )
 from app.services.notification_service import NotificationService
-from app.services.reward_service import RewardService
 from app.services.photo_service import PhotoService
+from app.services.reward_service import RewardService
 from app.services.websocket_manager import websocket_manager
-import app.core.redis as redis_module
-
-from app.core.logging import get_logger
 
 logger = get_logger("chats")
 
@@ -54,10 +53,12 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 def _encode_chat_cursor(updated_at, chat_id):
     """Encode a keyset cursor for the chat list (updated_at + chat_id)."""
-    payload = json.dumps({
-        "k": updated_at.isoformat() if updated_at else None,
-        "id": str(chat_id),
-    })
+    payload = json.dumps(
+        {
+            "k": updated_at.isoformat() if updated_at else None,
+            "id": str(chat_id),
+        }
+    )
     return base64.urlsafe_b64encode(payload.encode()).decode()
 
 
@@ -73,19 +74,19 @@ def _decode_chat_cursor(cursor: str):
         return None, None
 
 
-async def _main_photo_url(session: AsyncSession, photo) -> Optional[str]:
+async def _main_photo_url(session: AsyncSession, photo) -> str | None:
     if not photo:
         return None
     return await PhotoService.get_photo_url(photo.url, photo.status)
 
 
-async def _main_photo_thumb_url(session: AsyncSession, photo) -> Optional[str]:
+async def _main_photo_thumb_url(session: AsyncSession, photo) -> str | None:
     if not photo:
         return None
     return await PhotoService.get_photo_thumb_url(photo.url, photo.status)
 
 
-async def _load_user_with_media(session: AsyncSession, user_id: UUID) -> Optional[User]:
+async def _load_user_with_media(session: AsyncSession, user_id: UUID) -> User | None:
     if not user_id:
         return None
     result = await session.execute(
@@ -158,12 +159,14 @@ async def create_chat(
 
     # ── Blocked users (either direction) ─────────────────────────────
     blocked = await session.scalar(
-        select(Block.id).where(
+        select(Block.id)
+        .where(
             or_(
                 (Block.blocker_id == user_id) & (Block.blocked_id == target_user_id),
                 (Block.blocker_id == target_user_id) & (Block.blocked_id == user_id),
             )
-        ).limit(1)
+        )
+        .limit(1)
     )
     if blocked:
         raise HTTPException(status_code=403, detail="You cannot start a chat with this user")
@@ -369,7 +372,7 @@ async def list_chats(
     request: Request,
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
-    status: Optional[str] = Query(None, pattern="^(accepted|pending)$"),
+    status: str | None = Query(None, pattern="^(accepted|pending)$"),
     cursor: str = Query(None, description="Opaque keyset cursor for stable pagination"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
@@ -378,9 +381,13 @@ async def list_chats(
     user_id = current_user.id
 
     blocked_ids = set(
-        (await session.execute(select(Block.blocked_id).where(Block.blocker_id == user_id))).scalars().all()
+        (await session.execute(select(Block.blocked_id).where(Block.blocker_id == user_id)))
+        .scalars()
+        .all()
     ) | set(
-        (await session.execute(select(Block.blocker_id).where(Block.blocked_id == user_id))).scalars().all()
+        (await session.execute(select(Block.blocker_id).where(Block.blocked_id == user_id)))
+        .scalars()
+        .all()
     )
 
     # Deleted-by-me chats are filtered in SQL so LIMIT/OFFSET pagination is
@@ -411,9 +418,7 @@ async def list_chats(
     )
     activity = func.coalesce(last_msg_subq.c.last_sent_at, Chat.updated_at)
 
-    total = await session.scalar(
-        select(func.count()).select_from(Chat).where(*base_filters)
-    ) or 0
+    total = await session.scalar(select(func.count()).select_from(Chat).where(*base_filters)) or 0
 
     stmt = (
         select(Chat, activity.label("activity"))
@@ -438,10 +443,10 @@ async def list_chats(
     if cursor:
         cursor_ts, cursor_raw_id = _decode_chat_cursor(cursor)
         if cursor_raw_id and cursor_ts is not None:
-            cursor_id = UUID(cursor_raw_id) if not isinstance(cursor_raw_id, UUID) else cursor_raw_id
-            stmt = stmt.where(
-                tuple_(activity, Chat.id) < tuple_(cursor_ts, cursor_id)
+            cursor_id = (
+                UUID(cursor_raw_id) if not isinstance(cursor_raw_id, UUID) else cursor_raw_id
             )
+            stmt = stmt.where(tuple_(activity, Chat.id) < tuple_(cursor_ts, cursor_id))
 
     use_cursor = cursor_id is not None
     if use_cursor:
@@ -453,9 +458,7 @@ async def list_chats(
     fetched = result.all()
     chats = [row[0] for row in fetched]
 
-    last_messages = await get_last_messages_for_chats(
-        session, [c.id for c in chats]
-    )
+    last_messages = await get_last_messages_for_chats(session, [c.id for c in chats])
 
     # Batch unread counts for the page (was one COUNT(*) per chat → N+1).
     unread_map: dict = {}
@@ -483,7 +486,8 @@ async def list_chats(
         # flagged so the client can show "This conversation is over."
         is_blocked = other.id in blocked_ids
         peer_deleted = (
-            chat.deleted_for_recipient if user_id == chat.initiator_id
+            chat.deleted_for_recipient
+            if user_id == chat.initiator_id
             else chat.deleted_for_initiator
         )
         is_ended = bool(chat.is_ended or peer_deleted or is_blocked)
@@ -511,19 +515,21 @@ async def list_chats(
         main_photo_url = await _main_photo_url(session, main_photo)
         main_photo_thumb_url = await _main_photo_thumb_url(session, main_photo)
 
-        rows.append({
-            "chat_id": chat.id,
-            "status": chat.status,
-            "initiator_id": chat.initiator_id,
-            "other": other,
-            "main_photo_url": main_photo_url,
-            "main_photo_thumb_url": main_photo_thumb_url,
-            "last_message": last_message,
-            "unread_count": unread,
-            "updated_at": updated_at,
-            "is_blocked": is_blocked,
-            "is_ended": is_ended,
-        })
+        rows.append(
+            {
+                "chat_id": chat.id,
+                "status": chat.status,
+                "initiator_id": chat.initiator_id,
+                "other": other,
+                "main_photo_url": main_photo_url,
+                "main_photo_thumb_url": main_photo_thumb_url,
+                "last_message": last_message,
+                "unread_count": unread,
+                "updated_at": updated_at,
+                "is_blocked": is_blocked,
+                "is_ended": is_ended,
+            }
+        )
 
     # Rows are already filtered, ordered and limited by SQL — this is the page.
     page = rows
@@ -623,9 +629,7 @@ async def get_chat_detail(
             main_photo_thumb_url=main_photo_thumb_url,
             is_online=online_map.get(str(other.id), False),
             last_seen_at=(
-                None
-                if (other.settings and other.settings.hide_last_seen)
-                else other.last_seen_at
+                None if (other.settings and other.settings.hide_last_seen) else other.last_seen_at
             ),
         ),
         created_at=chat.created_at,
@@ -664,10 +668,7 @@ async def delete_chat(
         chat.ended_by = current_user.id
         chat.ended_at = func.now()
 
-    other_user_id = (
-        chat.recipient_id if chat.initiator_id == current_user.id
-        else chat.initiator_id
-    )
+    other_user_id = chat.recipient_id if chat.initiator_id == current_user.id else chat.initiator_id
 
     await session.commit()
 

@@ -42,6 +42,7 @@ def bind_request_context(request: Request) -> None:
     if auth_header.startswith("Bearer "):
         try:
             from app.core.security import decode_access_token
+
             decoded = decode_access_token(auth_header[7:])
             if decoded:
                 user_id = decoded
@@ -107,9 +108,8 @@ def setup_sentry_handlers(app: FastAPI) -> None:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.logging import LoggingIntegration
-    from sentry_sdk.integrations.starlette import StarletteIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-    from sentry_sdk.scope import Scope
+    from sentry_sdk.integrations.starlette import StarletteIntegration
 
     def before_send(event, hint):
         exc_info = hint.get("exc_info")

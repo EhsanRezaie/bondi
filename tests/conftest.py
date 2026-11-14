@@ -1,21 +1,21 @@
 # tests/conftest.py
+import asyncio
+import json
 import os
 import sys
-import asyncio
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import NullPool
-from sqlalchemy import text, bindparam
-import redis.asyncio as aioredis
-from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
 import uuid
-import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit, urlunsplit
 
+import pytest_asyncio
+import redis.asyncio as aioredis
 from dotenv import load_dotenv
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import bindparam, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
 _env_test = ".env.test" if os.path.exists(".env.test") else ".env.test.example"
 load_dotenv(_env_test, override=True)
 
@@ -50,14 +50,11 @@ os.environ["REDIS_URL"] = _url_with_path(os.environ["REDIS_URL"], f"/{_WORKER_NU
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from app.main import app
-from app.db.base import Base
-from app.db.session import get_session
 import app.core.redis as redis_module
 from app.core.limiter import limiter
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_settings import UserSettings
+from app.db.base import Base
+from app.db.session import get_session
+from app.main import app
 
 # Keep the master URL for admin DB ops (CREATE/DROP the per-worker DB).
 BASE_DATABASE_URL = ORIGINAL_DATABASE_URL
@@ -148,6 +145,7 @@ async def _drop_worker_database():
 # Seed interests into the database
 # ---------------------------------------------------------------------------
 
+
 async def seed_interests(conn):
     """Seed interests from JSON file into the database."""
     json_path = Path(__file__).parent.parent / "app" / "db" / "seed_data" / "interests.json"
@@ -156,7 +154,7 @@ async def seed_interests(conn):
         print(f"⚠️ Interests file not found: {json_path}")
         return
 
-    with open(json_path, "r", encoding="utf-8") as f:
+    with open(json_path, encoding="utf-8") as f:
         interests_data = json.load(f)
 
     # First, delete all existing interests (clean slate)
@@ -173,7 +171,7 @@ async def seed_interests(conn):
                 "category": item["category"],
                 "icon": item.get("icon"),
                 "translations": json.dumps(item.get("translations")),
-            }
+            },
         )
 
     print(f"✅ Seeded {len(interests_data)} interests")
@@ -247,7 +245,7 @@ async def setup_database(db_engine):
                     NOW()
                 )
             """),
-            {"id": admin_id}
+            {"id": admin_id},
         )
 
         # Insert into user_profiles table
@@ -265,7 +263,7 @@ async def setup_database(db_engine):
                     NOW()
                 )
             """),
-            {"id": uuid.uuid4(), "user_id": admin_id}
+            {"id": uuid.uuid4(), "user_id": admin_id},
         )
 
         # Insert into user_settings table
@@ -281,7 +279,7 @@ async def setup_database(db_engine):
                     NOW()
                 )
             """),
-            {"id": uuid.uuid4(), "user_id": admin_id}
+            {"id": uuid.uuid4(), "user_id": admin_id},
         )
 
     yield
@@ -293,6 +291,7 @@ async def setup_database(db_engine):
 # ---------------------------------------------------------------------------
 # Per-test: truncate all tables + flush Redis
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture(autouse=True)
 async def reset_state(db_engine):
@@ -307,19 +306,29 @@ async def reset_state(db_engine):
         # Remove interests inserted by tests, keeping the seeded 158 in place.
         if SEED_INTEREST_NAMES:
             await conn.execute(
-                text("DELETE FROM interests WHERE name NOT IN :names")
-                .bindparams(bindparam("names", expanding=True)),
+                text("DELETE FROM interests WHERE name NOT IN :names").bindparams(
+                    bindparam("names", expanding=True)
+                ),
                 {"names": SEED_INTEREST_NAMES},
             )
         # Delete non-admin users and their related rows.
-        await conn.execute(text("DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
-        await conn.execute(text("DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"))
+        await conn.execute(
+            text(
+                "DELETE FROM user_profiles WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"
+            )
+        )
+        await conn.execute(
+            text(
+                "DELETE FROM user_settings WHERE user_id IN (SELECT id FROM users WHERE phone != '+989100000000')"
+            )
+        )
         await conn.execute(text("DELETE FROM users WHERE phone != '+989100000000'"))
 
 
 # ---------------------------------------------------------------------------
 # Per-test DB session
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def db_session(db_engine) -> AsyncSession:
@@ -331,6 +340,7 @@ async def db_session(db_engine) -> AsyncSession:
 # ---------------------------------------------------------------------------
 # Per-test Redis — patches the app's redis_client for this test
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture(autouse=True)
 async def patch_redis(redis_client):
@@ -345,6 +355,7 @@ async def patch_redis(redis_client):
 # Disable rate limiting for tests
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture(autouse=True)
 def disable_rate_limiting():
     original_enabled = getattr(limiter, "enabled", True)
@@ -357,6 +368,7 @@ def disable_rate_limiting():
 # Mock WebSocket manager for tests
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture(autouse=True)
 def mock_websocket_manager():
     async def _online_bulk(user_ids, redis=None):
@@ -366,10 +378,12 @@ def mock_websocket_manager():
         results = await pipe.execute()
         return {uid: bool(r) for uid, r in zip(user_ids, results)}
 
-    with (patch("app.api.v1.endpoints.swipes.websocket_manager") as mock,
-          patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs,
-          patch("app.api.v1.endpoints.chats.websocket_manager") as mock_chats,
-          patch("app.api.v1.endpoints.blocks.websocket_manager") as mock_blocks):
+    with (
+        patch("app.api.v1.endpoints.swipes.websocket_manager") as mock,
+        patch("app.api.v1.endpoints.messages.websocket_manager") as mock_msgs,
+        patch("app.api.v1.endpoints.chats.websocket_manager") as mock_chats,
+        patch("app.api.v1.endpoints.blocks.websocket_manager") as mock_blocks,
+    ):
         for m in (mock, mock_msgs, mock_chats, mock_blocks):
             m.broadcast_match = AsyncMock()
             m.send_to_match = AsyncMock()
@@ -383,10 +397,13 @@ def mock_websocket_manager():
 # Mock SMS service for tests
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture(autouse=True)
 def mock_sms_service():
     """Mock the SMS service to avoid real SMS calls in tests."""
-    with patch("app.api.v1.endpoints.auth.send_verification_code", new_callable=AsyncMock) as mock_send:
+    with patch(
+        "app.api.v1.endpoints.auth.send_verification_code", new_callable=AsyncMock
+    ) as mock_send:
         yield mock_send
 
 
@@ -394,29 +411,35 @@ def mock_sms_service():
 # Mock Redis verification code for tests
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def mock_verification_code():
     """Helper fixture to store a verification code in Redis for testing."""
+
     async def _store_code(phone: str, code: str = "123456"):
         r = redis_module.redis_client
         await r.setex(f"verification:{phone}", 300, json.dumps({"code": code, "attempts": 0}))
         return code
+
     return _store_code
 
 
 @pytest_asyncio.fixture
 async def mock_delete_code():
     """Helper fixture to store a delete-account confirmation code in Redis."""
+
     async def _store_code(user_id: str, code: str = "123456"):
         r = redis_module.redis_client
         await r.setex(f"delete_verify:{user_id}", 300, json.dumps({"code": code, "attempts": 0}))
         return code
+
     return _store_code
 
 
 # ---------------------------------------------------------------------------
 # HTTP client
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncClient:
@@ -433,8 +456,10 @@ async def client(db_session: AsyncSession) -> AsyncClient:
 
     app.dependency_overrides.clear()
 
+
 @pytest_asyncio.fixture
 def admin_headers() -> dict:
     """Create admin auth headers."""
     from app.core.config import settings
+
     return {"X-Admin-Key": settings.ADMIN_SECRET_KEY}

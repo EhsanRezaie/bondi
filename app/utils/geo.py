@@ -1,6 +1,5 @@
 import random
 
-
 # ±500m = ±0.5 km — enough to prevent triangulation while keeping
 # the displayed distance useful for the user.
 FUZZ_RADIUS_KM = 0.5

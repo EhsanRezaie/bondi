@@ -1,34 +1,53 @@
 # app/api/v1/endpoints/users.py
-import uuid
 import random
 import string
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select ,delete 
-from app.models.user_interest import UserInterest 
-from app.models.user_prompt import UserPrompt
-from app.models.user_profile import UserProfile
-from app.models.block import Block
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta, timezone  
-from app.models.interest import Interest
-from app.db.session import get_session
-from app.models.user import User
+
+import app.core.redis as redis_module
+from app.core.cache import (
+    TTL_PUBLIC_PROFILE,
+    TTL_USER_PROFILE,
+    cache_get,
+    cache_set,
+    invalidate_auth_user,
+    invalidate_user_cache,
+    key_public_profile,
+    key_user_profile,
+)
+from app.core.config import settings
 from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
-from app.core.config import settings
-from app.services.location_service import LocationService
-from app.schemas.user import UserProfileResponse, UserUpdateRequest, LocationTextUpdateRequest, LocationTextUpdateResponse,InterestUpdateRequest,PromptUpdateRequest, DeleteAccountRequest, DeleteAccountResponse
-from app.schemas.settings import UserSettingsUpdateRequest, UserSettingsResponse
-from app.models.user_settings import UserSettings
-from app.core.redis import redis_client
-from app.core.cache import cache_get, cache_set, key_user_profile, TTL_USER_PROFILE, key_public_profile, TTL_PUBLIC_PROFILE, invalidate_user_cache, invalidate_auth_user
-from app.schemas.discover import ProfileResponse
-from app.services.profile_service import serialize_profile, haversine_km
-from app.services.sms_service import send_verification_code
-import app.core.redis as redis_module
-
 from app.core.logging import get_logger
+from app.core.redis import redis_client
+from app.db.session import get_session
+from app.models.block import Block
+from app.models.interest import Interest
+from app.models.user import User
+from app.models.user_interest import UserInterest
+from app.models.user_profile import UserProfile
+from app.models.user_prompt import UserPrompt
+from app.models.user_settings import UserSettings
+from app.schemas.discover import ProfileResponse
+from app.schemas.settings import UserSettingsResponse, UserSettingsUpdateRequest
+from app.schemas.user import (
+    DeleteAccountRequest,
+    DeleteAccountResponse,
+    InterestUpdateRequest,
+    LocationTextUpdateRequest,
+    LocationTextUpdateResponse,
+    PromptUpdateRequest,
+    UserProfileResponse,
+    UserUpdateRequest,
+)
+from app.services.location_service import LocationService
+from app.services.profile_service import haversine_km, serialize_profile
+from app.services.sms_service import send_verification_code
 
 logger = get_logger("users")
 
@@ -63,15 +82,12 @@ async def get_me(
         .where(User.id == current_user.id)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     response = UserProfileResponse.model_validate(user)
-    await cache_set(redis_client, cache_key, response.model_dump(mode='json'), TTL_USER_PROFILE)
+    await cache_set(redis_client, cache_key, response.model_dump(mode="json"), TTL_USER_PROFILE)
     return response
 
 
@@ -88,13 +104,13 @@ async def update_me(
     All fields are optional - only provided fields will be updated.
     """
     update_dict = update_data.model_dump(exclude_unset=True)
-    
+
     if not update_dict:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fields to update",
         )
-    
+
     # Lock user row for update to prevent lost-update race conditions
     result = await session.execute(
         select(User)
@@ -109,13 +125,10 @@ async def update_me(
         .with_for_update()
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     # Update profile fields (they are in UserProfile, not User)
     profile = user.profile
     if not profile:
@@ -123,28 +136,47 @@ async def update_me(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User profile not found",
         )
-    
+
     # Fields that belong to UserProfile
-    profile_fields = ['name', 'bio', 'birth_date', 'gender', 'height', 'weight', 
-                  'body_type', 'relationship_status', 'living_situation',
-                  'children_status', 'smoking', 'drinking', 'education',
-                  'workplace', 'religion', 'ethnicity', 'political_orientation',
-                  'sexual_orientation', 'languages', 'here_for', 'pets',
-                  'workout_frequency', 'zodiac_sign']
-    
+    profile_fields = [
+        "name",
+        "bio",
+        "birth_date",
+        "gender",
+        "height",
+        "weight",
+        "body_type",
+        "relationship_status",
+        "living_situation",
+        "children_status",
+        "smoking",
+        "drinking",
+        "education",
+        "workplace",
+        "religion",
+        "ethnicity",
+        "political_orientation",
+        "sexual_orientation",
+        "languages",
+        "here_for",
+        "pets",
+        "workout_frequency",
+        "zodiac_sign",
+    ]
+
     for field, value in update_dict.items():
         if field in profile_fields:
             setattr(profile, field, value)
         else:
             # Fields that belong to User (like age is computed from birth_date)
             setattr(user, field, value)
-    
+
     # Update last_seen
-    user.last_seen_at = datetime.now(timezone.utc)
-    
+    user.last_seen_at = datetime.now(UTC)
+
     await session.commit()
     await session.refresh(user)
-    
+
     await invalidate_user_cache(redis_client, current_user.id)
     await invalidate_auth_user(redis_client, current_user.id)
 
@@ -161,7 +193,7 @@ async def update_me(
         .where(User.id == current_user.id)
     )
     user = result.scalar_one_or_none()
-    
+
     return UserProfileResponse.model_validate(user)
 
 
@@ -181,33 +213,33 @@ async def update_settings(
         select(UserSettings).where(UserSettings.user_id == current_user.id).with_for_update()
     )
     settings = result.scalar_one_or_none()
-    
+
     if not settings:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User settings not found",
         )
-    
+
     update_dict = update_data.model_dump(exclude_unset=True)
-    
+
     # Filter out None values — they mean "don't change"
     update_dict = {k: v for k, v in update_dict.items() if v is not None}
-    
+
     if not update_dict:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fields to update",
         )
-    
+
     for field, value in update_dict.items():
         setattr(settings, field, value)
-    
+
     await session.commit()
     await session.refresh(settings)
-    
+
     await invalidate_user_cache(redis_client, current_user.id)
     await invalidate_auth_user(redis_client, current_user.id)
-    
+
     return settings
 
 
@@ -231,7 +263,7 @@ async def request_delete_code(
             detail=f"Please wait {remaining} seconds before requesting a new code.",
         )
 
-    code = ''.join(random.choices(string.digits, k=6))
+    code = "".join(random.choices(string.digits, k=6))
     await redis_module.store_delete_code(str(current_user.id), code)
     await redis_module.store_otp_cooldown(cooldown_key, DELETE_CODE_COOLDOWN_TTL)
     await send_verification_code(current_user.phone, code)
@@ -256,7 +288,7 @@ async def delete_me(
     """
     await redis_module.verify_delete_code(str(current_user.id), body.code)
 
-    deleted_at = datetime.now(timezone.utc)
+    deleted_at = datetime.now(UTC)
     current_user.is_active = False
     current_user.deleted_at = deleted_at
     current_user.deleted_reason = body.reason
@@ -292,13 +324,13 @@ async def update_location(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Latitude must be between -90 and 90",
         )
-    
+
     if lng < -180 or lng > 180:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Longitude must be between -180 and 180",
         )
-    
+
     # Update location in UserProfile
     profile = current_user.profile
     if not profile:
@@ -306,11 +338,11 @@ async def update_location(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User profile not found",
         )
-    
+
     profile.lat = lat
     profile.lng = lng
-    current_user.last_seen_at = datetime.now(timezone.utc)
-    
+    current_user.last_seen_at = datetime.now(UTC)
+
     # Auto-fill location text from coordinates (only if user didn't manually set)
     if not profile.location_manual:
         location_data = await LocationService.reverse_geocode(lat, lng)
@@ -321,7 +353,7 @@ async def update_location(
                 profile.province = location_data.get("province")
             if location_data.get("city"):
                 profile.city = location_data.get("city")
-    
+
     await session.commit()
     await invalidate_user_cache(redis_client, current_user.id)
     await invalidate_auth_user(redis_client, current_user.id)
@@ -344,7 +376,7 @@ async def update_location_text(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User profile not found",
         )
-    
+
     # Update fields - no validation needed
     if body.country is not None:
         profile.country = body.country
@@ -352,22 +384,22 @@ async def update_location_text(
         profile.province = body.province
     if body.city is not None:
         profile.city = body.city
-    
+
     # Set location_manual to True if any text field was updated
     if body.province is not None or body.city is not None or body.country is not None:
         if body.province or body.city or body.country:
             profile.location_manual = True
-    
+
     await session.commit()
     await session.refresh(current_user)
     await invalidate_user_cache(redis_client, current_user.id)
     await invalidate_auth_user(redis_client, current_user.id)
-    
+
     return LocationTextUpdateResponse(
         country=profile.country,
         province=profile.province,
         city=profile.city,
-        location_manual=profile.location_manual
+        location_manual=profile.location_manual,
     )
 
 
@@ -384,26 +416,22 @@ async def update_interests(
     Replaces all existing interests with the new list.
     """
     # Get all interest names from database
-    result = await session.execute(
-        select(Interest).where(Interest.name.in_(update_data.interests))
-    )
+    result = await session.execute(select(Interest).where(Interest.name.in_(update_data.interests)))
     existing_interests = result.scalars().all()
-    
+
     # Check if all provided interests exist
     existing_names = {i.name for i in existing_interests}
     provided_names = set(update_data.interests)
     missing_names = provided_names - existing_names
-    
+
     if missing_names:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid interests: {', '.join(missing_names)}"
+            detail=f"Invalid interests: {', '.join(missing_names)}",
         )
-    
+
     # Lock user row to prevent lost-update race conditions on interests/ prompts
-    result = await session.execute(
-        select(User).where(User.id == current_user.id).with_for_update()
-    )
+    result = await session.execute(select(User).where(User.id == current_user.id).with_for_update())
     locked_user = result.scalar_one_or_none()
     if not locked_user:
         raise HTTPException(
@@ -412,9 +440,7 @@ async def update_interests(
         )
 
     # Delete all existing user interests
-    await session.execute(
-        delete(UserInterest).where(UserInterest.user_id == current_user.id)
-    )
+    await session.execute(delete(UserInterest).where(UserInterest.user_id == current_user.id))
 
     # Create new user interests
     for interest in existing_interests:
@@ -441,7 +467,7 @@ async def update_interests(
         .where(User.id == current_user.id)
     )
     user = result.scalar_one_or_none()
-    
+
     return UserProfileResponse.model_validate(user)
 
 
@@ -458,9 +484,7 @@ async def update_prompts(
     Replaces all existing prompts with the new list.
     """
     # Lock user row to prevent lost-update race conditions on prompts
-    result = await session.execute(
-        select(User).where(User.id == current_user.id).with_for_update()
-    )
+    result = await session.execute(select(User).where(User.id == current_user.id).with_for_update())
     locked_user = result.scalar_one_or_none()
     if not locked_user:
         raise HTTPException(
@@ -469,9 +493,7 @@ async def update_prompts(
         )
 
     # Delete all existing user prompts
-    await session.execute(
-        delete(UserPrompt).where(UserPrompt.user_id == current_user.id)
-    )
+    await session.execute(delete(UserPrompt).where(UserPrompt.user_id == current_user.id))
 
     # Create new user prompts
     for prompt_data in update_data.prompts:
@@ -499,7 +521,7 @@ async def update_prompts(
         .where(User.id == current_user.id)
     )
     user = result.scalar_one_or_none()
-    
+
     return UserProfileResponse.model_validate(user)
 
 

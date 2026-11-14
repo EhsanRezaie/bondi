@@ -1,21 +1,19 @@
-
 # tests/done/test_chat_features.py
 # Covers the phase-1 backend work end to end:
 #   1A message edit, 1B message reports, 1C block chat-not-hidden, 1D delete/end chat.
 import uuid
+
 from sqlalchemy import select
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
-from httpx import AsyncClient
-
-from app.models.chat import Chat
-from app.models.message import Message
 from app.models.report import Report
-from app.models.block import Block
 
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
 REGISTER_COMPLETE_URL = "/api/v1/auth/register/complete"
@@ -67,8 +65,12 @@ async def register_and_get_headers(client, phone, complete_payload, mock_verific
 
 
 async def make_match(client, male_headers, female_id, female_headers, male_id):
-    await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-    await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+    await client.post(
+        SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+    )
+    await client.post(
+        SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+    )
     res = await client.post(
         CHATS_URL, json={"user_id": female_id, "content": "Hi!"}, headers=male_headers
     )
@@ -107,9 +109,7 @@ class TestMessageEdit:
         assert body["edited_at"] is not None
 
     async def test_edit_without_auth_401(self, client, mock_verification_code):
-        res = await client.put(
-            f"{MESSAGES_URL}/{uuid.uuid4()}", json={"content": "x"}
-        )
+        res = await client.put(f"{MESSAGES_URL}/{uuid.uuid4()}", json={"content": "x"})
         assert res.status_code == 401
 
     async def test_non_owner_cannot_edit(self, client, mock_verification_code):
@@ -199,9 +199,9 @@ class TestMessageReport:
         assert body["message_id"] == str(msg_id)
         assert body["is_message_report"] is True
 
-        report = (await db_session.execute(
-            select(Report).where(Report.message_id == uuid.UUID(msg_id))
-        )).scalar_one()
+        report = (
+            await db_session.execute(select(Report).where(Report.message_id == uuid.UUID(msg_id)))
+        ).scalar_one()
         assert report.is_message_report is True
         assert report.description == "offensive words"
 
@@ -219,7 +219,9 @@ class TestMessageReport:
         msg = await send_text(client, male_headers, chat_id, "secret")
 
         res = await client.post(
-            f"{REPORTS_URL}/message/{msg['id']}", json={"reason": "not mine"}, headers=stranger_headers
+            f"{REPORTS_URL}/message/{msg['id']}",
+            json={"reason": "not mine"},
+            headers=stranger_headers,
         )
         assert res.status_code == 403
 
@@ -240,14 +242,18 @@ class TestMessageReport:
         )
         assert res.status_code == 400
 
-    async def test_admin_view_reported_message(self, client, mock_verification_code, db_session, admin_headers):
+    async def test_admin_view_reported_message(
+        self, client, mock_verification_code, db_session, admin_headers
+    ):
         male_headers, female_headers, msg_id = await self._make_msg(client, mock_verification_code)
         await client.post(
-            f"{REPORTS_URL}/message/{msg_id}", json={"reason": "spam report"}, headers=female_headers
+            f"{REPORTS_URL}/message/{msg_id}",
+            json={"reason": "spam report"},
+            headers=female_headers,
         )
-        report = (await db_session.execute(
-            select(Report).where(Report.message_id == uuid.UUID(msg_id))
-        )).scalar_one()
+        report = (
+            await db_session.execute(select(Report).where(Report.message_id == uuid.UUID(msg_id)))
+        ).scalar_one()
         res = await client.get(
             f"/api/v1/admin/messages/reports/{report.id}/message", headers=admin_headers
         )
@@ -268,7 +274,9 @@ class TestBlockChatNotHidden:
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
 
-        res = await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "hello"}, headers=male_headers)
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "hello"}, headers=male_headers
+        )
         assert res.status_code == 403
 
     async def test_detail_flags_ended_chat(self, client, mock_verification_code):
@@ -286,10 +294,9 @@ class TestBlockChatNotHidden:
         assert detail.json()["is_blocked"] is True
         assert detail.json()["is_ended"] is True
 
-    async def test_block_broadcasts_blocked_event(
-        self, client, mock_verification_code
-    ):
+    async def test_block_broadcasts_blocked_event(self, client, mock_verification_code):
         from app.api.v1.endpoints import blocks as blocks_endpoint
+
         male_headers, male_id = await register_and_get_headers(
             client, _phone("b3_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )
@@ -349,13 +356,14 @@ class TestDeleteChat:
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
         await client.delete(f"{CHATS_URL}/{chat_id}", headers=male_headers)
 
-        res = await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "late"}, headers=male_headers)
+        res = await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "late"}, headers=male_headers
+        )
         assert res.status_code == 403
 
-    async def test_delete_chat_broadcasts_chat_ended(
-        self, client, mock_verification_code
-    ):
+    async def test_delete_chat_broadcasts_chat_ended(self, client, mock_verification_code):
         from app.api.v1.endpoints import chats as chats_endpoint
+
         male_headers, male_id = await register_and_get_headers(
             client, _phone("d7_male@example.com"), PAYLOAD_MALE, mock_verification_code
         )

@@ -1,8 +1,7 @@
 # app/core/config.py
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from typing import Optional
-
 
 # ============================================
 # Hardware constants (not env-configurable)
@@ -106,7 +105,7 @@ class Settings(BaseSettings):
     # the phone is locked (no re-registration) and the user can restore the
     # account by logging in again.
     DELETE_ACCOUNT_GRACE_DAYS: int = 30
-    
+
     # ============================================
     # Chat Media Settings
     # ============================================
@@ -114,7 +113,7 @@ class Settings(BaseSettings):
     MAX_CHAT_VOICE_SIZE_MB: int = 2
     MAX_CHAT_VOICE_DURATION: int = 120
     ALLOWED_CHAT_IMAGE_FORMATS: str = "JPEG,PNG,WEBP,JPG"
-    
+
     # ============================================
     # MinIO / S3 Settings (NO DEFAULTS - MUST BE IN .env)
     # ============================================
@@ -126,21 +125,21 @@ class Settings(BaseSettings):
     S3_PRIVATE_BUCKET: str
     S3_PUBLIC_BASE_URL: str
     S3_SIGNED_URL_EXPIRE_SECONDS: int
-    
+
     # ===========================================
     # Encryption
     # ===========================================
     # Required: used to derive per-chat AES-256-GCM keys. A defaulted/placeholder
     # value would silently encrypt every message with a public key.
     ENCRYPTION_SECRET: str
-    
+
     # ============================================
     # App Version
     # ============================================
     APP_VERSION: str = "1.0.0"
     MIN_ANDROID_VERSION: str = "1.0.0"
     MIN_IOS_VERSION: str = "1.0.0"
-    
+
     # ============================================
     # App Store Links
     # ============================================
@@ -151,7 +150,9 @@ class Settings(BaseSettings):
     # Force Update
     # ============================================
     FORCE_UPDATE_ENABLED: bool = False
-    FORCE_UPDATE_MESSAGE: str = "A critical update is available. Please update to continue using the app."
+    FORCE_UPDATE_MESSAGE: str = (
+        "A critical update is available. Please update to continue using the app."
+    )
 
     # ============================================
     # Error Tracking (Bugsink)
@@ -198,9 +199,7 @@ class Settings(BaseSettings):
     @classmethod
     def _admin_secret_must_be_set(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError(
-                "ADMIN_SECRET_KEY must be set to a non-empty value"
-            )
+            raise ValueError("ADMIN_SECRET_KEY must be set to a non-empty value")
         return v
 
     @field_validator("ENCRYPTION_SECRET")
@@ -211,9 +210,7 @@ class Settings(BaseSettings):
             "change-this-to-32-byte-key",
         }
         if not v or not v.strip() or v in weak:
-            raise ValueError(
-                "ENCRYPTION_SECRET must be set to a strong, non-default value"
-            )
+            raise ValueError("ENCRYPTION_SECRET must be set to a strong, non-default value")
         return v
 
     # ============================================

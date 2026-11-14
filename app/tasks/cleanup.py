@@ -4,6 +4,7 @@
 Each task reuses existing async services/Redis helpers and opens its own
 session in the worker process (`asyncio.run` in the task body).
 """
+
 import asyncio
 from datetime import timedelta
 
@@ -22,15 +23,19 @@ def expire_lapsed_premium(self):
     """Sweep profiles whose premium_until has passed. `is_premium` is a derived
     property (premium_until > now), so this is a safety net that optionally
     drops the row's premium marker if we ever add one. Logs counts only."""
+
     async def _sweep():
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
+
         from app.db.session import AsyncSessionLocal
         from app.models.user_profile import UserProfile
 
         async with AsyncSessionLocal() as session:
-            total = (await session.execute(select(func.count()).select_from(UserProfile)))
+            total = await session.execute(select(func.count()).select_from(UserProfile))
             lapsed = await session.execute(
-                select(func.count()).select_from(UserProfile).where(
+                select(func.count())
+                .select_from(UserProfile)
+                .where(
                     UserProfile.premium_until.is_not(None),
                     UserProfile.premium_until < func.now(),
                 )
@@ -52,8 +57,10 @@ def cleanup_stale_onlines(self):
     """Best-effort cleanup of stale `online:*` keys left by crashed workers.
     NOTE: keys carry a 60s TTL (`ONLINE_TTL`), so this normally clears nothing;
     kept as an idempotent safety net for key bloat."""
+
     async def _clean():
         import app.core.redis as redis_local
+
         redis = redis_local.redis_client
         async for key in redis.scan_iter("online:*", count=1000):
             await redis.delete(key)
@@ -73,25 +80,28 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
     own event-loop-local engine (the global AsyncSessionLocal's engine is created
     at import time, which mismatches pytest-asyncio's per-test event loops).
     """
-    from sqlalchemy import select, or_
-    from app.db.session import AsyncSessionLocal
-    from app.models.user import User
-    from app.models.photo import Photo
-    from app.models.message import Message
-    from app.services.photo_service import PhotoService
-    from app.services.media_service import MediaService
+    from sqlalchemy import or_, select
+
     from app.core.timezone import utcnow
+    from app.db.session import AsyncSessionLocal
+    from app.models.message import Message
+    from app.models.photo import Photo
+    from app.models.user import User
+    from app.services.media_service import MediaService
+    from app.services.photo_service import PhotoService
 
     session_factory = session_factory or AsyncSessionLocal
     cutoff = utcnow() - timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
     purged = 0
     async with session_factory() as session:
         result = await session.execute(
-            select(User).where(
+            select(User)
+            .where(
                 User.is_active.is_(False),
                 User.deleted_at.is_not(None),
                 User.deleted_at < cutoff,
-            ).limit(100)
+            )
+            .limit(100)
         )
         for user in result.scalars().all():
             photos = await session.execute(select(Photo).where(Photo.user_id == user.id))
@@ -116,9 +126,7 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
             )
             for msg in messages.scalars().all():
                 try:
-                    await MediaService.delete_media(
-                        str(msg.chat_id), str(msg.id), msg.message_type
-                    )
+                    await MediaService.delete_media(str(msg.chat_id), str(msg.id), msg.message_type)
                 except Exception:
                     logger.exception(
                         "purge_chat_media_delete_failed",
@@ -157,20 +165,24 @@ def purge_deleted_accounts(self):
 def inactive_user_nudge(self):
     """Send a 'we miss you' push to users who haven't been seen for ≥ 7 days
     (only fires when FCM is configured; enqueues nothing if disabled)."""
+
     async def _nudge():
         from sqlalchemy import select
+
+        from app.core.timezone import utcnow
         from app.db.session import AsyncSessionLocal
         from app.models.user import User
         from app.services.push_service import PushService
-        from app.core.timezone import utcnow
 
         cutoff = utcnow() - timedelta(days=7)
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(User).where(
+                select(User)
+                .where(
                     User.is_active.is_(True),
-                    (User.last_seen_at.is_(None)) | (User.last_seen_at < cutoff)
-                ).limit(500)
+                    (User.last_seen_at.is_(None)) | (User.last_seen_at < cutoff),
+                )
+                .limit(500)
             )
             users = result.scalars().all()
             for u in users:
@@ -192,4 +204,9 @@ def inactive_user_nudge(self):
         return None
 
 
-__all__ = ["expire_lapsed_premium", "cleanup_stale_onlines", "purge_deleted_accounts", "inactive_user_nudge"]
+__all__ = [
+    "cleanup_stale_onlines",
+    "expire_lapsed_premium",
+    "inactive_user_nudge",
+    "purge_deleted_accounts",
+]

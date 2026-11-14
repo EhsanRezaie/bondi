@@ -1,11 +1,10 @@
 import asyncio
+from uuid import UUID
 
 import firebase_admin
 from firebase_admin import credentials, messaging
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from uuid import UUID
-from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -40,14 +39,13 @@ BATCH_SIZE = 500
 
 
 class PushService:
-
     @staticmethod
     async def send_to_users(
         user_ids: list,
         title: str,
         body: str,
-        data: Optional[dict] = None,
-        image_url: Optional[str] = None,
+        data: dict | None = None,
+        image_url: str | None = None,
     ):
         """Send an FCM push to many users at once.
 
@@ -78,10 +76,7 @@ class PushService:
         payload = PushService._build_data(title, body, data, image_url)
         android = messaging.AndroidConfig(priority="high")
 
-        chunks = [
-            tokens[i:i + BATCH_SIZE]
-            for i in range(0, len(tokens), BATCH_SIZE)
-        ]
+        chunks = [tokens[i : i + BATCH_SIZE] for i in range(0, len(tokens), BATCH_SIZE)]
 
         # Bounded concurrency: a 1000-user announcement is just ~2 chunk calls,
         # but without a cap a huge campaign would open unbounded FCM requests +
@@ -98,13 +93,9 @@ class PushService:
                     apns=PushService._apns(title, body),
                 )
                 try:
-                    response = await asyncio.to_thread(
-                        messaging.send_each_for_multicast, message
-                    )
+                    response = await asyncio.to_thread(messaging.send_each_for_multicast, message)
                 except Exception:
-                    logger.exception(
-                        "push_batch_failed", chunk_size=len(chunk)
-                    )
+                    logger.exception("push_batch_failed", chunk_size=len(chunk))
                     return 0, len(chunk), []
                 bad = [
                     chunk[idx]
@@ -136,10 +127,9 @@ class PushService:
         if invalid_tokens:
             async with AsyncSessionLocal() as cleanup_session:
                 from sqlalchemy import delete
+
                 await cleanup_session.execute(
-                    delete(DeviceToken).where(
-                        DeviceToken.token.in_(invalid_tokens)
-                    )
+                    delete(DeviceToken).where(DeviceToken.token.in_(invalid_tokens))
                 )
                 await cleanup_session.commit()
                 logger.info("invalid_tokens_cleaned", count=len(invalid_tokens))
@@ -149,9 +139,9 @@ class PushService:
         user_id: UUID,
         title: str,
         body: str,
-        data: Optional[dict] = None,
-        db: Optional[AsyncSession] = None,
-        image_url: Optional[str] = None,
+        data: dict | None = None,
+        db: AsyncSession | None = None,
+        image_url: str | None = None,
     ):
         if not _initialized:
             _initialize_firebase()
@@ -195,8 +185,8 @@ class PushService:
     def _build_data(
         title: str,
         body: str,
-        data: Optional[dict],
-        image_url: Optional[str],
+        data: dict | None,
+        image_url: str | None,
     ) -> dict:
         payload = {k: v for k, v in (data or {}).items()}
         payload.setdefault("title", title)
@@ -223,9 +213,8 @@ class PushService:
     @staticmethod
     async def _get_user_tokens(user_id: UUID, db: AsyncSession) -> list[str]:
         from app.models.device_token import DeviceToken
-        result = await db.execute(
-            select(DeviceToken.token).where(DeviceToken.user_id == user_id)
-        )
+
+        result = await db.execute(select(DeviceToken.token).where(DeviceToken.user_id == user_id))
         return [row[0] for row in result.all()]
 
     @staticmethod
@@ -245,13 +234,10 @@ class PushService:
                     invalid_tokens.append(tokens[idx])
 
         if invalid_tokens:
-            await db.execute(
-                select(DeviceToken).where(DeviceToken.token.in_(invalid_tokens))
-            )
+            await db.execute(select(DeviceToken).where(DeviceToken.token.in_(invalid_tokens)))
             # Delete invalid tokens
             from sqlalchemy import delete
-            await db.execute(
-                delete(DeviceToken).where(DeviceToken.token.in_(invalid_tokens))
-            )
+
+            await db.execute(delete(DeviceToken).where(DeviceToken.token.in_(invalid_tokens)))
             await db.flush()
             logger.info("invalid_tokens_cleaned", count=len(invalid_tokens))

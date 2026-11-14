@@ -1,16 +1,16 @@
-
 # tests/test_search.py
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, update
-from sqlalchemy.orm import selectinload
 
 from app.models.user import User
 from tests.photo_visibility_helper import grant_approved_photo
@@ -165,10 +165,7 @@ COMPLETE_PROFILE_PAYLOAD_MALE2 = {
 
 
 async def register_user_full(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> dict:
     """Complete full registration via phone OTP - returns user data with tokens."""
     await mock_verification_code(phone, VALID_CODE)
@@ -189,10 +186,7 @@ async def register_user_full(
 
 
 async def register_and_get_headers(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user via phone OTP and return headers with user_id."""
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
@@ -204,12 +198,8 @@ async def register_and_get_headers(
 
 class TestSearch:
     """Test search functionality with all filters."""
-    
-    async def test_search_returns_users(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_search_returns_users(self, client: AsyncClient, mock_verification_code):
         """Should return users list."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -217,7 +207,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(SEARCH_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
@@ -225,11 +215,7 @@ class TestSearch:
         assert "total" in data
         assert isinstance(data["users"], list)
 
-    async def test_search_age_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_age_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by age range."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -240,7 +226,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"age_min": 20, "age_max": 25},
@@ -248,15 +234,11 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert 20 <= user["age"] <= 25
 
-    async def test_search_gender_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_gender_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by gender."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -264,7 +246,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"gender": "female"},
@@ -272,15 +254,11 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["gender"] == "female"
 
-    async def test_search_height_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_height_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by height range."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -288,7 +266,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"height_min": 160, "height_max": 175},
@@ -300,11 +278,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
 
-    async def test_search_height_greater_than(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_height_greater_than(self, client: AsyncClient, mock_verification_code):
         """Should filter by height >= 180."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -312,7 +286,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"height_min": 180},
@@ -324,11 +298,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female_id not in user_ids
 
-    async def test_search_weight_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_weight_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by weight range."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -336,7 +306,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"weight_min": 55, "weight_max": 65},
@@ -348,11 +318,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
 
-    async def test_search_weight_greater_than(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_weight_greater_than(self, client: AsyncClient, mock_verification_code):
         """Should filter by weight >= 70."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -360,7 +326,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"weight_min": 70},
@@ -372,11 +338,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female_id not in user_ids
 
-    async def test_search_country_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_country_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by country."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -384,7 +346,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"country": "Iran"},
@@ -396,11 +358,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
 
-    async def test_search_province_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_province_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by province."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -408,7 +366,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"province": "Isfahan"},
@@ -420,11 +378,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_city_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_city_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by city."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -432,7 +386,7 @@ class TestSearch:
         _, female3_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE3, COMPLETE_PROFILE_PAYLOAD_FEMALE3, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"city": "Shiraz"},
@@ -444,11 +398,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female3_id in user_ids
 
-    async def test_search_religion_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_religion_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by religion."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -456,7 +406,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"religion": "christian"},
@@ -468,11 +418,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_ethnicity_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_ethnicity_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by ethnicity."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -480,7 +426,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"ethnicity": "kurdish"},
@@ -493,9 +439,7 @@ class TestSearch:
         assert female2_id in user_ids
 
     async def test_search_relationship_status_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by relationship status."""
         male_headers, _ = await register_and_get_headers(
@@ -504,7 +448,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"relationship_status": "divorced"},
@@ -516,11 +460,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_body_type_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_body_type_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by body type."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -528,7 +468,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"body_type": "curvy"},
@@ -540,11 +480,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_education_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_education_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by education level."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -552,7 +488,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"education": "phd"},
@@ -564,11 +500,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_smoking_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_smoking_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by smoking status."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -576,7 +508,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"smoking": "occasionally"},
@@ -588,11 +520,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_drinking_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_drinking_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by drinking status."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -600,7 +528,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"drinking": "regularly"},
@@ -613,9 +541,7 @@ class TestSearch:
         assert female2_id in user_ids
 
     async def test_search_political_orientation_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by political orientation."""
         male_headers, _ = await register_and_get_headers(
@@ -624,7 +550,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"political_orientation": "liberal"},
@@ -636,11 +562,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-    async def test_search_languages_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_languages_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by languages (single language)."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -648,7 +570,7 @@ class TestSearch:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"languages": "french"},
@@ -661,9 +583,7 @@ class TestSearch:
         assert female_id in user_ids
 
     async def test_search_languages_multiple_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by multiple languages (AND condition)."""
         male_headers, _ = await register_and_get_headers(
@@ -675,7 +595,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"languages": "persian,english"},
@@ -688,34 +608,30 @@ class TestSearch:
         assert female_id in user_ids
         assert female2_id in user_ids
 
-    async def test_search_interests_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_interests_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by single interest."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Create female user with "pop music" interest
         female_payload_with_music = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE,
-            "interests": ["pop music", "football"]
+            "interests": ["pop music", "football"],
         }
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, female_payload_with_music, mock_verification_code
         )
-        
+
         # Create another female user with "traveling" interest
         female_payload_with_travel = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE2,
-            "interests": ["traveling", "painting"]
+            "interests": ["traveling", "painting"],
         }
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, female_payload_with_travel, mock_verification_code
         )
-        
+
         # Search by "pop music" interest
         res = await client.get(
             SEARCH_URL,
@@ -724,39 +640,37 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
         assert female2_id not in user_ids
 
     async def test_search_interests_multiple_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by multiple interests (AND condition)."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Create female user with "pop music" and "football" interests
         female_payload_with_both = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE,
-            "interests": ["pop music", "football", "traveling"]
+            "interests": ["pop music", "football", "traveling"],
         }
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, female_payload_with_both, mock_verification_code
         )
-        
+
         # Create another female user with only "pop music"
         female_payload_with_music_only = {
             **COMPLETE_PROFILE_PAYLOAD_FEMALE2,
-            "interests": ["pop music", "painting"]
+            "interests": ["pop music", "painting"],
         }
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, female_payload_with_music_only, mock_verification_code
         )
-        
+
         # Search by "pop music" AND "football" (must have both)
         res = await client.get(
             SEARCH_URL,
@@ -765,28 +679,22 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
         assert female2_id not in user_ids
 
-    async def test_search_distance_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_distance_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by distance."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Set current user's location
         await client.post(
-            LOCATION_URL,
-            params={"lat": 35.6892, "lng": 51.3890},
-            headers=male_headers
+            LOCATION_URL, params={"lat": 35.6892, "lng": 51.3890}, headers=male_headers
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"distance_km": 100},
@@ -794,11 +702,7 @@ class TestSearch:
         )
         assert res.status_code == 200
 
-    async def test_search_sort_by_age(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_sort_by_age(self, client: AsyncClient, mock_verification_code):
         """Should sort results by age."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -809,7 +713,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"sort_by": "age", "sort_order": "asc"},
@@ -817,15 +721,11 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         ages = [user["age"] for user in data["users"]]
         assert ages == sorted(ages)
 
-    async def test_search_sort_by_name(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_sort_by_name(self, client: AsyncClient, mock_verification_code):
         """Should sort results by name."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -833,7 +733,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={"sort_by": "name", "sort_order": "asc"},
@@ -841,15 +741,11 @@ class TestSearch:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         names = [user["name"] for user in data["users"]]
         assert names == sorted(names)
 
-    async def test_search_pagination(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_pagination(self, client: AsyncClient, mock_verification_code):
         """Should support pagination."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -866,7 +762,7 @@ class TestSearch:
         await register_and_get_headers(
             client, VALID_EMAIL_MALE2, COMPLETE_PROFILE_PAYLOAD_MALE2, mock_verification_code
         )
-        
+
         # First page
         res1 = await client.get(
             SEARCH_URL,
@@ -876,7 +772,7 @@ class TestSearch:
         assert res1.status_code == 200
         data1 = res1.json()
         assert len(data1["users"]) <= 2
-        
+
         # Second page
         res2 = await client.get(
             SEARCH_URL,
@@ -885,17 +781,13 @@ class TestSearch:
         )
         assert res2.status_code == 200
         data2 = res2.json()
-        
+
         # Different results
         ids1 = [u["id"] for u in data1["users"]]
         ids2 = [u["id"] for u in data2["users"]]
         assert len(set(ids1).intersection(set(ids2))) == 0
 
-    async def test_search_combined_filters(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_combined_filters(self, client: AsyncClient, mock_verification_code):
         """Should combine multiple filters."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -906,7 +798,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         # Female, age 25-30, height 160-175
         res = await client.get(
             SEARCH_URL,
@@ -930,9 +822,7 @@ class TestSearch:
             assert 25 <= user["age"] <= 30
 
     async def test_search_combined_location_filters(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by country, province, and city together."""
         male_headers, _ = await register_and_get_headers(
@@ -941,7 +831,7 @@ class TestSearch:
         _, female3_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE3, COMPLETE_PROFILE_PAYLOAD_FEMALE3, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={
@@ -957,11 +847,7 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female3_id in user_ids
 
-    async def test_search_lifestyle_filters(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_search_lifestyle_filters(self, client: AsyncClient, mock_verification_code):
         """Should filter by lifestyle preferences."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -969,7 +855,7 @@ class TestSearch:
         _, female2_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             SEARCH_URL,
             params={
@@ -985,72 +871,66 @@ class TestSearch:
         user_ids = [u["id"] for u in data["users"]]
         assert female2_id in user_ids
 
-
-
     async def test_search_excludes_users_who_blocked_you(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Users who blocked you should NOT appear in search results."""
         # Create user A
         user_a_headers, user_a_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Create user B (will block user A)
         user_b_headers, user_b_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Search from user A's perspective - should see user B
         search_res_before = await client.get(SEARCH_URL, headers=user_a_headers)
         users_before = search_res_before.json().get("users", [])
         user_ids_before = [u["id"] for u in users_before]
         assert user_b_id in user_ids_before
-        
+
         # User B blocks User A
         await client.post(f"{BLOCKS_URL}/{user_a_id}/block", headers=user_b_headers)
-        
+
         # Search from user A's perspective - should NOT see user B
         search_res_after = await client.get(SEARCH_URL, headers=user_a_headers)
         users_after = search_res_after.json().get("users", [])
         user_ids_after = [u["id"] for u in users_after]
-        
+
         assert user_b_id not in user_ids_after
 
     async def test_search_excludes_both_block_directions(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Both users who you blocked and users who blocked you are excluded."""
         # Create user A
         user_a_headers, user_a_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Create user B (will block User A)
         user_b_headers, user_b_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Create user C (will be blocked by User A)
         user_c_headers, user_c_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         # User B blocks User A
         await client.post(f"{BLOCKS_URL}/{user_a_id}/block", headers=user_b_headers)
-        
+
         # User A blocks User C
         await client.post(f"{BLOCKS_URL}/{user_c_id}/block", headers=user_a_headers)
-        
+
         # Search from user A's perspective
         search_res = await client.get(SEARCH_URL, headers=user_a_headers)
         users = search_res.json().get("users", [])
         user_ids = [u["id"] for u in users]
-        
+
         assert user_b_id not in user_ids  # User B blocked you
         assert user_c_id not in user_ids  # You blocked User C
 
@@ -1062,12 +942,8 @@ class TestSearch:
 
 class TestBlocks:
     """Test block functionality (included with search)."""
-    
-    async def test_block_user_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_block_user_success(self, client: AsyncClient, mock_verification_code):
         """Should block a user."""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -1075,28 +951,20 @@ class TestBlocks:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=headers)
         assert res.status_code == 204
-    
-    async def test_block_self_fails(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_block_self_fails(self, client: AsyncClient, mock_verification_code):
         """Cannot block yourself."""
         headers, user_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.post(f"{BLOCKS_URL}/{user_id}/block", headers=headers)
         assert res.status_code == 400
-    
-    async def test_unblock_user_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_unblock_user_success(self, client: AsyncClient, mock_verification_code):
         """Should unblock a user."""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -1104,16 +972,12 @@ class TestBlocks:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=headers)
         res = await client.post(f"{BLOCKS_URL}/{female_id}/unblock", headers=headers)
         assert res.status_code == 204
-    
-    async def test_list_blocks(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_list_blocks(self, client: AsyncClient, mock_verification_code):
         """Should list blocked users."""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -1121,44 +985,40 @@ class TestBlocks:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=headers)
-        
+
         res = await client.get(BLOCKS_URL, headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert len(data) >= 1
-    
-    async def test_blocked_user_not_in_search(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_blocked_user_not_in_search(self, client: AsyncClient, mock_verification_code):
         """Blocked user should not appear in search results."""
         # Create blocker
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Create user to block
         _, block_user_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Search before block - should see the user
         search_res_before = await client.get(SEARCH_URL, headers=headers)
         users_before = search_res_before.json().get("users", [])
         user_ids_before = [u["id"] for u in users_before]
         assert block_user_id in user_ids_before
-        
+
         # Block the user
         await client.post(f"{BLOCKS_URL}/{block_user_id}/block", headers=headers)
-        
+
         # Search after block - should NOT see the user
         search_res_after = await client.get(SEARCH_URL, headers=headers)
         users_after = search_res_after.json().get("users", [])
         user_ids_after = [u["id"] for u in users_after]
-        
+
         assert block_user_id not in user_ids_after
 
 
@@ -1259,9 +1119,7 @@ class TestSearchOnlineSort:
         result_ids = [u["id"] for u in data["users"]]
         last_seen_times = []
         for uid in result_ids:
-            row = await db_session.execute(
-                select(User.last_seen_at).where(User.id == uid)
-            )
+            row = await db_session.execute(select(User.last_seen_at).where(User.id == uid))
             last_seen_times.append(row.scalar_one_or_none())
 
         non_null = [t for t in last_seen_times if t is not None]
@@ -1288,9 +1146,7 @@ class TestSearchOnlineSort:
         female_user = next(u for u in data["users"] if u["id"] == female_id)
         assert female_user["is_online"] is True
 
-    async def test_is_offline_when_no_redis_key(
-        self, client, db_session, mock_verification_code
-    ):
+    async def test_is_offline_when_no_redis_key(self, client, db_session, mock_verification_code):
         """Should show is_online=false when no Redis presence key."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -1354,8 +1210,7 @@ class TestSearchCursorPagination:
     ) -> tuple[dict, list[str]]:
         male_headers = await self._register_searcher(client, mock_verification_code)
         ids = [
-            await self._register_candidate(client, mock_verification_code, i)
-            for i in range(count)
+            await self._register_candidate(client, mock_verification_code, i) for i in range(count)
         ]
         return male_headers, ids
 
@@ -1438,8 +1293,7 @@ class TestSearchCursorPagination:
         'recent' order, offset page 2 would return rows already seen on page 1."""
         male_headers = await self._register_searcher(client, mock_verification_code)
         originals = [
-            await self._register_candidate(client, mock_verification_code, i)
-            for i in range(4)
+            await self._register_candidate(client, mock_verification_code, i) for i in range(4)
         ]
 
         res1 = await client.get(
@@ -1478,7 +1332,7 @@ class TestSearchCursorPagination:
         male_headers, candidate_ids = await self._register_candidates(
             client, mock_verification_code, count=4
         )
-        fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        fixed = datetime(2024, 1, 1, tzinfo=UTC)
         await db_session.execute(
             update(User).where(User.id.in_(candidate_ids)).values(created_at=fixed)
         )
@@ -1513,9 +1367,7 @@ class TestSearchCursorPagination:
         birth_dates = ["2000-01-01", "1996-02-03", "1992-04-05", "1998-08-09", "1994-12-25"]
         male_headers = await self._register_searcher(client, mock_verification_code)
         for i, bd in enumerate(birth_dates):
-            await self._register_candidate(
-                client, mock_verification_code, i, birth_date=bd
-            )
+            await self._register_candidate(client, mock_verification_code, i, birth_date=bd)
 
         data, all_ids = await self._walk_pages(
             client,
@@ -1527,17 +1379,17 @@ class TestSearchCursorPagination:
         assert len(all_ids) == 5
         assert len(set(all_ids)) == 5
 
-    async def test_cursor_sort_by_last_seen(self, client: AsyncClient, db_session, mock_verification_code):
+    async def test_cursor_sort_by_last_seen(
+        self, client: AsyncClient, db_session, mock_verification_code
+    ):
         """Cursor pages stay consistent when sorting by live last_seen_at."""
         male_headers, candidate_ids = await self._register_candidates(
             client, mock_verification_code, count=4
         )
-        base = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 6, 1, tzinfo=UTC)
         for i, uid in enumerate(candidate_ids):
             await db_session.execute(
-                update(User)
-                .where(User.id == uid)
-                .values(last_seen_at=base - timedelta(days=i))
+                update(User).where(User.id == uid).values(last_seen_at=base - timedelta(days=i))
             )
         await db_session.commit()
 
@@ -1551,9 +1403,7 @@ class TestSearchCursorPagination:
         assert len(set(all_ids)) == 4
         seen_values = []
         for uid in all_ids:
-            row = await db_session.execute(
-                select(User.last_seen_at).where(User.id == uid)
-            )
+            row = await db_session.execute(select(User.last_seen_at).where(User.id == uid))
             seen_values.append(row.scalar_one_or_none())
         assert seen_values == sorted(seen_values, reverse=True)
 
@@ -1570,9 +1420,7 @@ class TestSearchCursorPagination:
         assert len(all_ids) == 5
         assert len(set(all_ids)) == 5
 
-    async def test_cursor_none_when_no_results(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_cursor_none_when_no_results(self, client: AsyncClient, mock_verification_code):
         """An empty result set returns users=[], total=0 and no cursor."""
         male_headers, _ = await self._register_candidates(client, mock_verification_code, count=2)
         res = await client.get(

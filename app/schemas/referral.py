@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional
 
 
 class ReferralCodeResponse(BaseModel):
@@ -24,4 +23,4 @@ class ReferralStatsResponse(BaseModel):
     inviter_reward_days: int
     invited_reward_days: int
     is_premium: bool
-    premium_until: Optional[str] = None
+    premium_until: str | None = None

@@ -1,10 +1,10 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Index, UniqueConstraint
+import uuid
+
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy import func
 
 from app.db.base import Base
-import uuid
 
 
 class DeviceToken(Base):

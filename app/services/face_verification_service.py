@@ -20,7 +20,7 @@ import threading
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import ClassVar, Optional, Tuple
+from typing import ClassVar, Optional
 
 import cv2
 import numpy as np
@@ -40,9 +40,7 @@ YU_NET_URL = (
 # ArcFace MobileFaceNet@WebFace600K (512-d). Mirrors InsightFace's `buffalo_sc`
 # pack recognition model. The ONNX file is bundled inside `buffalo_sc.zip`
 # (v0.7 release) — there is no standalone `w600k_mbf.onnx` release asset.
-BUFFALO_SC_URL = (
-    "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-)
+BUFFALO_SC_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
 # Name of the recognition model inside buffalo_sc.zip (the other member,
 # det_500m.onnx, is not used — YuNet handles detection).
 REC_MODEL_MEMBER = "w600k_mbf.onnx"
@@ -71,8 +69,8 @@ class FaceVerificationService:
 
     _instance: ClassVar[Optional["FaceVerificationService"]] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
-    _face_detector: Optional[object] = None
-    _rec: Optional[ort.InferenceSession] = None
+    _face_detector: object | None = None
+    _rec: ort.InferenceSession | None = None
 
     def __new__(cls) -> "FaceVerificationService":
         if cls._instance is None:
@@ -154,7 +152,7 @@ class FaceVerificationService:
             return []
         return list(faces)
 
-    def _align(self, frame: np.ndarray, det) -> Optional[np.ndarray]:
+    def _align(self, frame: np.ndarray, det) -> np.ndarray | None:
         """Warp the detected face to the canonical 112x112 ArcFace crop."""
         # FaceDetectorYN row: [x, y, w, h, l1..l5 (2 each), score]. The
         # landmark order already matches the template:
@@ -169,11 +167,15 @@ class FaceVerificationService:
             return None
         return cv2.warpAffine(frame, tform[0], (INPUT_SIZE, INPUT_SIZE), borderValue=0.0)
 
-    def _embed(self, aligned: np.ndarray) -> Optional[np.ndarray]:
+    def _embed(self, aligned: np.ndarray) -> np.ndarray | None:
         """Return an L2-normalized ArcFace embedding, or None."""
         blob = cv2.dnn.blobFromImage(
-            aligned, 1.0 / INPUT_STD, (INPUT_SIZE, INPUT_SIZE),
-            (INPUT_STD, INPUT_STD, INPUT_STD), swapRB=True, crop=False,
+            aligned,
+            1.0 / INPUT_STD,
+            (INPUT_SIZE, INPUT_SIZE),
+            (INPUT_STD, INPUT_STD, INPUT_STD),
+            swapRB=True,
+            crop=False,
         )
         out = self._rec.run(None, {self._rec.get_inputs()[0].name: blob})[0]
         emb = out[0].astype(np.float32)
@@ -185,14 +187,10 @@ class FaceVerificationService:
     # ------------------------------------------------------------------
     # Public API (called by verify / photos endpoints)
     # ------------------------------------------------------------------
-    async def extract_image_embedding(
-        self, image_bytes: bytes
-    ) -> Tuple[Optional[np.ndarray], str]:
+    async def extract_image_embedding(self, image_bytes: bytes) -> tuple[np.ndarray | None, str]:
         """Decode an image and return a face embedding (exactly one face)."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self._extract_image_embedding_sync, image_bytes
-        )
+        return await loop.run_in_executor(None, self._extract_image_embedding_sync, image_bytes)
 
     def _extract_image_embedding_sync(self, image_bytes: bytes):
         nparr = np.frombuffer(image_bytes, np.uint8)
@@ -217,7 +215,7 @@ class FaceVerificationService:
 
     async def extract_single_photo_embedding(
         self, photo_bytes: bytes
-    ) -> Tuple[Optional[np.ndarray], str]:
+    ) -> tuple[np.ndarray | None, str]:
         """Extract a face embedding from a single image (no selfie heuristics)."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -247,7 +245,7 @@ class FaceVerificationService:
 
     async def extract_photo_embeddings(
         self, photo_bytes_list: list
-    ) -> Tuple[Optional[np.ndarray], str]:
+    ) -> tuple[np.ndarray | None, str]:
         """Average face embeddings across photos (for face-reference matching)."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -285,7 +283,7 @@ class FaceVerificationService:
         self,
         embedding_a: np.ndarray,
         embedding_b: np.ndarray,
-    ) -> Tuple[bool, float]:
+    ) -> tuple[bool, float]:
         """Cosine similarity comparison against FACE_MATCH_THRESHOLD."""
         if embedding_a is None or embedding_b is None:
             return False, 0.0

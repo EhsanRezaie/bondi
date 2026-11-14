@@ -1,6 +1,6 @@
-from pydantic import BaseModel
-from typing import Optional, List
 from datetime import datetime
+
+from pydantic import BaseModel
 
 
 class PlanResponse(BaseModel):
@@ -13,7 +13,7 @@ class PlanResponse(BaseModel):
 
 
 class SubscriptionPlansResponse(BaseModel):
-    plans: List[PlanResponse]
+    plans: list[PlanResponse]
 
 
 class PurchaseRequest(BaseModel):
@@ -28,16 +28,16 @@ class PurchaseResponse(BaseModel):
 class VerifyResponse(BaseModel):
     success: bool
     message: str
-    ref_id: Optional[str] = None
+    ref_id: str | None = None
 
 
 class SubscriptionStatusResponse(BaseModel):
     is_premium: bool
-    plan: Optional[str] = None
-    started_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
-    source: Optional[str] = None
-    status: Optional[str] = None
+    plan: str | None = None
+    started_at: datetime | None = None
+    expires_at: datetime | None = None
+    source: str | None = None
+    status: str | None = None
 
 
 class CancelSubscriptionResponse(BaseModel):

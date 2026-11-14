@@ -1,9 +1,10 @@
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Request
 
-from app.models.admin_log import AdminLog
+from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.logging import get_logger
+from app.models.admin_log import AdminLog
 
 logger = get_logger("admin_log")
 

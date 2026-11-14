@@ -1,15 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from app.db.session import get_session
-from app.models.user import User
 from app.core.config import settings
 from app.core.limiter import limiter
-from app.core.security import verify_password, create_admin_token
-
 from app.core.logging import get_logger
+from app.core.security import create_admin_token, verify_password
 
 logger = get_logger("admin_auth")
 

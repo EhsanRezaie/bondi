@@ -1,13 +1,9 @@
 # tests/done/test_celery_tasks.py
-import pytest
 
-import app.tasks.notifications  # noqa: F401  (registers tasks)
-import app.tasks.cleanup  # noqa: F401  (registers tasks)
 from app.tasks.celery_app import celery_app
 
 
 class TestCeleryRegistration:
-
     def test_queue_task_registered(self):
         names = set(celery_app.tasks.keys())
         assert "app.tasks.notifications.send_push" in names
@@ -30,17 +26,20 @@ class TestCeleryRegistration:
         assert getattr(task, "autoretry_for", None) == (Exception,)
 
     def test_dispatch_disabled_runs_inline(self):
-        from app.tasks.notifications import dispatch_push_to_celery
         from app.core.config import settings
+        from app.tasks.notifications import dispatch_push_to_celery
 
         was_enabled = settings.CELERY_ENABLED
         try:
             settings.CELERY_ENABLED = False
-            assert dispatch_push_to_celery(
-                user_id="00000000-0000-0000-0000-000000000001",
-                title="t",
-                body="b",
-                data={},
-            ) is False
+            assert (
+                dispatch_push_to_celery(
+                    user_id="00000000-0000-0000-0000-000000000001",
+                    title="t",
+                    body="b",
+                    data={},
+                )
+                is False
+            )
         finally:
             settings.CELERY_ENABLED = was_enabled

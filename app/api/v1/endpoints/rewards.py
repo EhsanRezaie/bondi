@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.models.user import User
-from app.services.reward_service import RewardService
-from app.schemas.rewards import AdRewardResponse, DailyLimitsResponse
-
 from app.core.logging import get_logger
+from app.db.session import get_session
+from app.models.user import User
+from app.schemas.rewards import AdRewardResponse, DailyLimitsResponse
+from app.services.reward_service import RewardService
 
 logger = get_logger("rewards")
 
@@ -24,19 +23,16 @@ async def claim_ad_reward(
 ):
     """
     Claim reward for watching a rewarded ad.
-    
+
     Each ad gives bonus likes and chats for the current day.
     Limited to MAX_AD_REWARDS_PER_DAY (from .env).
     """
     reward_service = RewardService(session)
     result = await reward_service.claim_ad_reward(current_user)
-    
-    if not result['success']:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=result['message']
-        )
-    
+
+    if not result["success"]:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=result["message"])
+
     return result
 
 
@@ -49,7 +45,7 @@ async def get_my_limits(
 ):
     """
     Get current user's daily limits and usage.
-    
+
     Returns:
     - For free users: shows remaining likes/chats for today
     - For premium users: shows unlimited (-1)

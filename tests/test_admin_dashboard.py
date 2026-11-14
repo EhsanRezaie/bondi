@@ -1,10 +1,12 @@
-
-import pytest
 from httpx import AsyncClient
+
 from app.core.config import settings
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -45,7 +47,9 @@ class TestAdminDashboard:
     async def test_dashboard_overview_success(self, client: AsyncClient, mock_verification_code):
         """Admin should get dashboard overview stats"""
         for i in range(3):
-            await register_user(client, _phone(f"dashboard_{i}@example.com"), mock_verification_code)
+            await register_user(
+                client, _phone(f"dashboard_{i}@example.com"), mock_verification_code
+            )
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(ADMIN_DASHBOARD_URL, headers=admin_headers)
@@ -71,9 +75,7 @@ class TestAdminDashboard:
         """Admin should get user growth chart data"""
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
-            f"{ADMIN_DASHBOARD_URL}/stats/users",
-            params={"days": 7},
-            headers=admin_headers
+            f"{ADMIN_DASHBOARD_URL}/stats/users", params={"days": 7}, headers=admin_headers
         )
         assert res.status_code == 200
         body = res.json()
@@ -89,9 +91,7 @@ class TestAdminDashboard:
         """Admin should get activity chart data"""
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.get(
-            f"{ADMIN_DASHBOARD_URL}/stats/activity",
-            params={"days": 7},
-            headers=admin_headers
+            f"{ADMIN_DASHBOARD_URL}/stats/activity", params={"days": 7}, headers=admin_headers
         )
         assert res.status_code == 200
         body = res.json()
@@ -105,10 +105,7 @@ class TestAdminDashboard:
     async def test_report_stats(self, client: AsyncClient):
         """Admin should get report statistics"""
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
-        res = await client.get(
-            f"{ADMIN_DASHBOARD_URL}/stats/reports",
-            headers=admin_headers
-        )
+        res = await client.get(f"{ADMIN_DASHBOARD_URL}/stats/reports", headers=admin_headers)
         assert res.status_code == 200
         body = res.json()
 
@@ -119,10 +116,7 @@ class TestAdminDashboard:
     async def test_ticket_stats(self, client: AsyncClient):
         """Admin should get ticket statistics"""
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
-        res = await client.get(
-            f"{ADMIN_DASHBOARD_URL}/stats/tickets",
-            headers=admin_headers
-        )
+        res = await client.get(f"{ADMIN_DASHBOARD_URL}/stats/tickets", headers=admin_headers)
         assert res.status_code == 200
         body = res.json()
 

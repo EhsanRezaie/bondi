@@ -1,5 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+
 from app.core.config import settings
 from app.core.logging import get_logger
 

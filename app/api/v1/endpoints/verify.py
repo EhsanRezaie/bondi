@@ -1,24 +1,23 @@
 """Face Verification API endpoints (image-based selfie flow)."""
-import uuid
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.core.redis as redis_module
+from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.core.config import settings
 from app.core.deps import get_current_user, get_current_user_db
 from app.core.limiter import limiter
 from app.core.logging import get_logger
-import app.core.redis as redis_module
-from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.db.session import get_session
 from app.models.photo import Photo
 from app.models.user import User
-from app.models.user_profile import UserProfile
 from app.schemas.verify import (
-    VerifyResponse,
     VerificationStatusResponse,
+    VerifyResponse,
 )
 from app.services.face_verification_service import face_verification_service
 from app.services.nsfw_service import nsfw_service
@@ -34,7 +33,7 @@ COOLDOWN_PREFIX = "verify_cooldown:"
 
 
 def _increment_attempts(user_id: str) -> None:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     attempts_key = f"{ATTEMPTS_PREFIX}{user_id}:{today}"
     pipe = redis_module.redis_client.pipeline()
     pipe.incr(attempts_key)
@@ -63,9 +62,7 @@ async def verify_selfie(
     # and stay "verified" forever. Cooldown/daily-attempt limits only gate
     # fresh verification attempts, so an already-verified user can always
     # re-confirm (and a mismatch below revokes the stale badge).
-    already_verified = bool(
-        current_user.profile and current_user.profile.is_verified
-    )
+    already_verified = bool(current_user.profile and current_user.profile.is_verified)
 
     if not already_verified:
         # Check cooldown
@@ -78,7 +75,7 @@ async def verify_selfie(
             )
 
         # Check daily attempts
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         attempts_key = f"{ATTEMPTS_PREFIX}{current_user.id}:{today}"
         attempts = await redis_module.redis_client.get(attempts_key)
         if attempts and int(attempts) >= settings.FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY:
@@ -149,7 +146,9 @@ async def verify_selfie(
             logger.warning("photo_download_failed", photo_id=str(photo.id), error=str(e))
             continue
 
-        photo_embedding, _ = await face_verification_service.extract_single_photo_embedding(photo_bytes)
+        photo_embedding, _ = await face_verification_service.extract_single_photo_embedding(
+            photo_bytes
+        )
         if photo_embedding is None:
             continue
 
@@ -196,7 +195,7 @@ async def verify_selfie(
     # Success — mark user as verified, face-verify only the photos that were
     # just checked, and auto-approve (publish) any that were still pending so
     # the profile becomes visible. Already-verified photos are left untouched.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     current_user.profile.is_verified = True
     current_user.profile.verified_at = now
 
@@ -215,7 +214,9 @@ async def verify_selfie(
     # Cooldown + attempt counter only apply to fresh verification attempts.
     if not already_verified:
         cooldown_key = f"{COOLDOWN_PREFIX}{current_user.id}"
-        await redis_module.redis_client.set(cooldown_key, "1", ex=settings.FACE_VERIFICATION_COOLDOWN_TTL)
+        await redis_module.redis_client.set(
+            cooldown_key, "1", ex=settings.FACE_VERIFICATION_COOLDOWN_TTL
+        )
         await _increment_attempts(str(current_user.id)).execute()
 
     logger.info(

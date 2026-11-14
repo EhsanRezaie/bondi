@@ -1,10 +1,12 @@
-
-import pytest
 from httpx import AsyncClient
+
 from app.core.config import settings
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -43,15 +45,19 @@ class TestAdminReports:
     async def test_admin_list_reports_success(self, client: AsyncClient, mock_verification_code):
         """Admin should list all reports"""
         # Create a report first
-        reporter_data = await register_user(client, _phone("report_reporter@example.com"), mock_verification_code)
+        reporter_data = await register_user(
+            client, _phone("report_reporter@example.com"), mock_verification_code
+        )
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, _phone("report_target@example.com"), mock_verification_code)
+        target_data = await register_user(
+            client, _phone("report_target@example.com"), mock_verification_code
+        )
 
         await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
             json={"reason": "Inappropriate behavior"},
-            headers=reporter_headers
+            headers=reporter_headers,
         )
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
@@ -65,24 +71,26 @@ class TestAdminReports:
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
 
         res = await client.get(
-            ADMIN_REPORTS_URL,
-            params={"status_filter": "pending"},
-            headers=admin_headers
+            ADMIN_REPORTS_URL, params={"status_filter": "pending"}, headers=admin_headers
         )
         assert res.status_code == 200
 
     async def test_admin_get_report_detail(self, client: AsyncClient, mock_verification_code):
         """Admin should view report details"""
         # Create a report
-        reporter_data = await register_user(client, _phone("detail_reporter@example.com"), mock_verification_code)
+        reporter_data = await register_user(
+            client, _phone("detail_reporter@example.com"), mock_verification_code
+        )
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, _phone("detail_target@example.com"), mock_verification_code)
+        target_data = await register_user(
+            client, _phone("detail_target@example.com"), mock_verification_code
+        )
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
             json={"reason": "Testing report detail"},
-            headers=reporter_headers
+            headers=reporter_headers,
         )
         report_id = report_res.json()["id"]
 
@@ -98,15 +106,19 @@ class TestAdminReports:
     async def test_admin_review_report(self, client: AsyncClient, mock_verification_code):
         """Admin should review and take action on report"""
         # Create a report
-        reporter_data = await register_user(client, _phone("review_reporter@example.com"), mock_verification_code)
+        reporter_data = await register_user(
+            client, _phone("review_reporter@example.com"), mock_verification_code
+        )
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, _phone("review_target@example.com"), mock_verification_code)
+        target_data = await register_user(
+            client, _phone("review_target@example.com"), mock_verification_code
+        )
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
             json={"reason": "Report for review"},
-            headers=reporter_headers
+            headers=reporter_headers,
         )
         report_id = report_res.json()["id"]
 
@@ -114,7 +126,7 @@ class TestAdminReports:
         res = await client.patch(
             f"{ADMIN_REPORTS_URL}/{report_id}",
             json={"status": "action_taken", "admin_note": "User warned"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -124,15 +136,19 @@ class TestAdminReports:
     async def test_admin_delete_report(self, client: AsyncClient, mock_verification_code):
         """Admin should delete a report"""
         # Create a report
-        reporter_data = await register_user(client, _phone("delete_reporter@example.com"), mock_verification_code)
+        reporter_data = await register_user(
+            client, _phone("delete_reporter@example.com"), mock_verification_code
+        )
         reporter_headers = {"Authorization": f"Bearer {reporter_data['access_token']}"}
 
-        target_data = await register_user(client, _phone("delete_target@example.com"), mock_verification_code)
+        target_data = await register_user(
+            client, _phone("delete_target@example.com"), mock_verification_code
+        )
 
         report_res = await client.post(
             f"/api/v1/reports/{target_data['user']['id']}",
             json={"reason": "Report to delete"},
-            headers=reporter_headers
+            headers=reporter_headers,
         )
         report_id = report_res.json()["id"]
 

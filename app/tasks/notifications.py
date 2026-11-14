@@ -7,8 +7,8 @@ with its own DB session so it survives component restarts and retries.
 wrapped with `asyncio.run(...)` / a new loop. Do NOT run them from a running
 event loop's process.
 """
+
 import asyncio
-from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
@@ -18,7 +18,9 @@ from app.tasks.celery_app import celery_app
 logger = get_logger("tasks.notifications")
 
 
-def dispatch_push_to_celery(*, user_id, title: str, body: str, data: dict, image_url: Optional[str] = None) -> bool:
+def dispatch_push_to_celery(
+    *, user_id, title: str, body: str, data: dict, image_url: str | None = None
+) -> bool:
     """Enqueue an FCM push to the worker. Returns True if dispatched, False if
     Celery is disabled (in which case the caller must send inline)."""
     if not settings.CELERY_ENABLED:
@@ -44,8 +46,16 @@ def dispatch_announcement_push_to_celery(*, user_ids: list, title: str, body: st
     retry_backoff=True,
     max_retries=3,
 )
-def send_push(self, user_id: str, title: str, body: str, data: dict | None = None, image_url: Optional[str] = None):
+def send_push(
+    self,
+    user_id: str,
+    title: str,
+    body: str,
+    data: dict | None = None,
+    image_url: str | None = None,
+):
     """Send an FCM push (with retry) from the worker, using its own session."""
+
     async def _run():
         from app.db.session import AsyncSessionLocal
         from app.services.push_service import PushService
@@ -78,6 +88,7 @@ def send_announcement_push(self, user_ids: list, title: str, body: str):
     task per recipient saturates the pgbouncer pool because each task holds a
     pooled DB connection in an open transaction across the slow synchronous FCM
     round-trip. This single task releases the connection before any FCM work."""
+
     async def _run():
         from app.services.push_service import PushService
 
@@ -100,24 +111,23 @@ def send_announcement_push(self, user_ids: list, title: str, body: str):
 )
 def send_match(self, user1_id: str, user2_id: str, match_id: str):
     """Send the match notifications + pushes (worker-owned session)."""
+
     async def _match():
         from app.db.session import AsyncSessionLocal
         from app.services.notification_service import NotificationService
 
         async with AsyncSessionLocal() as session:
             nsvc = NotificationService(session)
-            await nsvc.notify_match(
-                UUID(user1_id), UUID(user2_id), UUID(match_id)
-            )
+            await nsvc.notify_match(UUID(user1_id), UUID(user2_id), UUID(match_id))
             await session.commit()
 
     return asyncio.run(_match())
 
 
 __all__ = [
-    "send_push",
-    "send_match",
-    "send_announcement_push",
-    "dispatch_push_to_celery",
     "dispatch_announcement_push_to_celery",
+    "dispatch_push_to_celery",
+    "send_announcement_push",
+    "send_match",
+    "send_push",
 ]

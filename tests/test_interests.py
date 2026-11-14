@@ -4,8 +4,9 @@ Tests for GET /api/v1/interests
 Public endpoint, no auth required. Interests are seeded reference data.
 Each test gets a fresh DB with the 158 seeded interests.
 """
+
 import uuid
-import pytest
+
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,7 @@ INTERESTS_URL = "/api/v1/interests"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def seed_interests(db_session: AsyncSession, rows: list[dict]) -> list[Interest]:
     """Insert interest rows directly and return the created objects."""
@@ -65,8 +67,8 @@ SAMPLE_INTERESTS = [
 # Basic response shape
 # ---------------------------------------------------------------------------
 
-class TestInterestsResponseShape:
 
+class TestInterestsResponseShape:
     async def test_returns_200(self, client: AsyncClient, db_session: AsyncSession):
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
         res = await client.get(INTERESTS_URL)
@@ -84,7 +86,9 @@ class TestInterestsResponseShape:
         data = res.json()
         assert len(data) > 0
 
-    async def test_each_item_has_required_fields(self, client: AsyncClient, db_session: AsyncSession):
+    async def test_each_item_has_required_fields(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
         res = await client.get(INTERESTS_URL)
         items = res.json()
@@ -93,7 +97,9 @@ class TestInterestsResponseShape:
         assert "id" in test_item
         assert "name" in test_item
 
-    async def test_each_item_has_category_field(self, client: AsyncClient, db_session: AsyncSession):
+    async def test_each_item_has_category_field(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
         res = await client.get(INTERESTS_URL)
         items = res.json()
@@ -119,7 +125,9 @@ class TestInterestsResponseShape:
 
     async def test_name_is_stable_english_key(self, client: AsyncClient, db_session: AsyncSession):
         """name must be the stable English key."""
-        await seed_interests(db_session, [{"name": "test_football", "category": "sports_fitness", "icon": "⚽"}])
+        await seed_interests(
+            db_session, [{"name": "test_football", "category": "sports_fitness", "icon": "⚽"}]
+        )
         res = await client.get(INTERESTS_URL)
         items = res.json()
         test_item = next((i for i in items if i["name"] == "test_football"), None)
@@ -127,7 +135,9 @@ class TestInterestsResponseShape:
         assert test_item["name"] == "test_football"
 
     async def test_icon_is_emoji_string(self, client: AsyncClient, db_session: AsyncSession):
-        await seed_interests(db_session, [{"name": "test_football", "category": "sports_fitness", "icon": "⚽"}])
+        await seed_interests(
+            db_session, [{"name": "test_football", "category": "sports_fitness", "icon": "⚽"}]
+        )
         res = await client.get(INTERESTS_URL)
         items = res.json()
         test_item = next((i for i in items if i["name"] == "test_football"), None)
@@ -139,9 +149,11 @@ class TestInterestsResponseShape:
 # Count and content
 # ---------------------------------------------------------------------------
 
-class TestInterestsCount:
 
-    async def test_returns_all_seeded_interests_plus_test(self, client: AsyncClient, db_session: AsyncSession):
+class TestInterestsCount:
+    async def test_returns_all_seeded_interests_plus_test(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
         await seed_interests(db_session, SAMPLE_INTERESTS)
         res = await client.get(INTERESTS_URL)
         # Should have 158 seeded + 5 test = 163
@@ -165,7 +177,9 @@ class TestInterestsCount:
     async def test_single_interest_returned_correctly(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        await seed_interests(db_session, [{"name": "test_yoga", "category": "sports_fitness", "icon": "🧘"}])
+        await seed_interests(
+            db_session, [{"name": "test_yoga", "category": "sports_fitness", "icon": "🧘"}]
+        )
         res = await client.get(INTERESTS_URL)
         items = res.json()
         test_item = next((i for i in items if i["name"] == "test_yoga"), None)
@@ -178,8 +192,8 @@ class TestInterestsCount:
 # Ordering
 # ---------------------------------------------------------------------------
 
-class TestInterestsOrdering:
 
+class TestInterestsOrdering:
     async def test_ordered_by_category_then_name(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -198,8 +212,8 @@ class TestInterestsOrdering:
 # Nullable fields
 # ---------------------------------------------------------------------------
 
-class TestInterestsNullableFields:
 
+class TestInterestsNullableFields:
     async def test_category_can_be_null(self, client: AsyncClient, db_session: AsyncSession):
         """category is nullable in the model — should serialize to null."""
         await seed_interests(db_session, [{"name": "test_mystery", "category": None, "icon": "❓"}])
@@ -211,7 +225,9 @@ class TestInterestsNullableFields:
 
     async def test_icon_can_be_null(self, client: AsyncClient, db_session: AsyncSession):
         """icon is nullable — should serialize to null."""
-        await seed_interests(db_session, [{"name": "test_noicon", "category": "lifestyle", "icon": None}])
+        await seed_interests(
+            db_session, [{"name": "test_noicon", "category": "lifestyle", "icon": None}]
+        )
         res = await client.get(INTERESTS_URL)
         items = res.json()
         test_item = next((i for i in items if i["name"] == "test_noicon"), None)
@@ -233,8 +249,8 @@ class TestInterestsNullableFields:
 # Access control — public endpoint
 # ---------------------------------------------------------------------------
 
-class TestInterestsAccessControl:
 
+class TestInterestsAccessControl:
     async def test_no_auth_header_required(self, client: AsyncClient, db_session: AsyncSession):
         """Interests must be accessible without any Authorization header."""
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
@@ -263,8 +279,8 @@ class TestInterestsAccessControl:
 # Localization — language param + translated labels
 # ---------------------------------------------------------------------------
 
-class TestInterestsLocalization:
 
+class TestInterestsLocalization:
     async def test_default_language_is_english(self, client: AsyncClient, db_session: AsyncSession):
         await seed_interests(db_session, SAMPLE_INTERESTS[:2])
         res = await client.get(INTERESTS_URL)
@@ -284,7 +300,9 @@ class TestInterestsLocalization:
         assert football["name"] == "test_football"
         assert football["category"] == "sports_fitness"
 
-    async def test_localized_cache_per_language(self, client: AsyncClient, db_session: AsyncSession):
+    async def test_localized_cache_per_language(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
         """fa and en responses are cached separately."""
         await seed_interests(db_session, SAMPLE_INTERESTS[:1])
         res_fa = await client.get(INTERESTS_URL, params={"language": "fa"})
@@ -331,11 +349,9 @@ class TestInterestsLocalization:
 # Scale — verifies the 158 seeded interests are returned
 # ---------------------------------------------------------------------------
 
-class TestInterestsScale:
 
-    async def test_handles_full_production_count(
-        self, client: AsyncClient
-    ):
+class TestInterestsScale:
+    async def test_handles_full_production_count(self, client: AsyncClient):
         """Endpoint must return all 158 seeded interests."""
         res = await client.get(INTERESTS_URL)
         assert res.status_code == 200
@@ -343,14 +359,22 @@ class TestInterestsScale:
         # Should have the 158 seeded interests
         assert len(data) >= 158
 
-    async def test_all_13_categories_present_in_response(
-        self, client: AsyncClient
-    ):
+    async def test_all_13_categories_present_in_response(self, client: AsyncClient):
         """All 13 categories from the seed should be present."""
         expected_categories = {
-            "sports_fitness", "music", "food_drink", "arts_creative",
-            "lifestyle", "gaming_tech", "movies_tv", "outdoors_nature",
-            "learning", "travel", "fashion_beauty", "social_causes", "pets_animals",
+            "sports_fitness",
+            "music",
+            "food_drink",
+            "arts_creative",
+            "lifestyle",
+            "gaming_tech",
+            "movies_tv",
+            "outdoors_nature",
+            "learning",
+            "travel",
+            "fashion_beauty",
+            "social_causes",
+            "pets_animals",
         }
         res = await client.get(INTERESTS_URL)
         data = res.json()

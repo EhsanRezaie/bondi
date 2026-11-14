@@ -1,7 +1,5 @@
 import asyncio
 import json
-from typing import Dict, Set, Optional
-from uuid import UUID
 
 from fastapi import WebSocket
 from redis.asyncio import Redis
@@ -27,7 +25,7 @@ def _chat_channel(chat_id: str) -> str:
 
 def _chat_id_from_channel(channel: str) -> str:
     if channel.startswith(_CHAT_PREFIX):
-        return channel[len(_CHAT_PREFIX):]
+        return channel[len(_CHAT_PREFIX) :]
     return channel
 
 
@@ -47,15 +45,15 @@ class WebSocketManager:
 
     def __init__(self):
         # user_id -> set of live sockets (normally 1 per device)
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        self.active_connections: dict[str, set[WebSocket]] = {}
         # user_id -> {chat_id: peer_user_id}  (open chats / topic subscriptions)
-        self.user_subscriptions: Dict[str, Dict[str, str]] = {}
+        self.user_subscriptions: dict[str, dict[str, str]] = {}
         # Reverse indexes so presence/fan-out don't scan every subscription:
         #   chat_id -> set of locally subscribed user_ids
         #   peer_user_id -> set of chat_ids where that peer is the other side
-        self._chat_subscribers: Dict[str, Set[str]] = {}
-        self.peer_index: Dict[str, Set[str]] = {}
-        self._listener_tasks: Dict[str, asyncio.Task] = {}
+        self._chat_subscribers: dict[str, set[str]] = {}
+        self.peer_index: dict[str, set[str]] = {}
+        self._listener_tasks: dict[str, asyncio.Task] = {}
 
     # ── Session Socket ─────────────────────────────────────────────────
 
@@ -83,9 +81,7 @@ class WebSocketManager:
 
         task_key = f"notify:{user_id}"
         if task_key not in self._listener_tasks:
-            task = asyncio.create_task(
-                self._listen_user_channel(user_id, redis)
-            )
+            task = asyncio.create_task(self._listen_user_channel(user_id, redis))
             task.add_done_callback(lambda t: self._log_listener_failure(task_key, t))
             self._listener_tasks[task_key] = task
 
@@ -118,9 +114,7 @@ class WebSocketManager:
 
     # ── Chat Channel Resolution ───────────────────────────────────────
 
-    def conversation_channel(
-        self, identifier, current_user_id=None, other_user_id=None
-    ) -> str:
+    def conversation_channel(self, identifier, current_user_id=None, other_user_id=None) -> str:
         """Resolve the canonical Redis pub/sub channel for a chat.
         Always ws:chat:{chat_id}. The id is a chat id."""
         return _chat_channel(str(identifier))
@@ -170,9 +164,7 @@ class WebSocketManager:
 
     # ── Presence ───────────────────────────────────────────────────────
 
-    async def broadcast_peer_presence(
-        self, user_id: str, payload: dict, redis: Redis
-    ):
+    async def broadcast_peer_presence(self, user_id: str, payload: dict, redis: Redis):
         """Push a presence event (online/offline) to every open chat whose
         peer is `user_id`, so that peer's open screens update in real time."""
         for chat_id in list(self.peer_index.get(user_id, ())):
@@ -266,7 +258,7 @@ class WebSocketManager:
         self,
         channel: str,
         message: dict,
-        target_user: Optional[str] = None,
+        target_user: str | None = None,
     ):
         """Forward a chat-channel event only to users currently subscribed to
         that chat, pruning dead sockets as it goes (fixes send-after-close)."""
@@ -284,9 +276,7 @@ class WebSocketManager:
                 try:
                     await ws.send_text(data)
                 except Exception as e:
-                    logger.warning(
-                        "Chat send failed", user_id=user_id, error=str(e)
-                    )
+                    logger.warning("Chat send failed", user_id=user_id, error=str(e))
                     sockets.discard(ws)
 
     # ── Publish Methods (cross-worker delivery) ────────────────────────
@@ -303,14 +293,16 @@ class WebSocketManager:
         user2_data: dict,
         redis: Redis,
     ):
-        await self.send_personal_message(user1_id, {
-            "type": "new_match",
-            "data": {"match_id": match_id, "user": user2_data}
-        }, redis)
-        await self.send_personal_message(user2_id, {
-            "type": "new_match",
-            "data": {"match_id": match_id, "user": user1_data}
-        }, redis)
+        await self.send_personal_message(
+            user1_id,
+            {"type": "new_match", "data": {"match_id": match_id, "user": user2_data}},
+            redis,
+        )
+        await self.send_personal_message(
+            user2_id,
+            {"type": "new_match", "data": {"match_id": match_id, "user": user1_data}},
+            redis,
+        )
         logger.info("Match broadcast published", match_id=match_id)
 
     async def send_to_match(
@@ -354,7 +346,7 @@ class WebSocketManager:
         channel: str,
         user_id: str,
         redis: Redis,
-        target_user: Optional[str] = None,
+        target_user: str | None = None,
     ):
         # Normalize so a raw chat id can never publish to the wrong channel.
         # NOTE: typing is purely ephemeral — we only PUBLISH (never persisted to
@@ -375,7 +367,7 @@ class WebSocketManager:
         channel: str,
         user_id: str,
         redis: Redis,
-        target_user: Optional[str] = None,
+        target_user: str | None = None,
     ):
         # See set_typing: publish-only, no persisted key.
         channel = _chat_channel(_chat_id_from_channel(channel))
