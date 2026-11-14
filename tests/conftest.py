@@ -463,3 +463,32 @@ def admin_headers() -> dict:
     from app.core.config import settings
 
     return {"X-Admin-Key": settings.ADMIN_SECRET_KEY}
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.4 — blocking-call detection (blockbuster)
+# ---------------------------------------------------------------------------
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def blockbuster_guard(request, reset_state, patch_redis):
+    """Fail a test when blocking I/O runs inside the event loop.
+
+    Opt-in for now via ``@pytest.mark.blockbuster`` so the existing 852-test
+    suite is untouched. Once the app is clean (Phase 2), remove the marker
+    check and let this run for every test.
+
+    Depends on reset_state/patch_redis so activation happens AFTER their
+    setup (their blocking engine/redis calls must not trip the guard) and
+    deactivation happens BEFORE their teardown.
+    """
+    if request.node.get_closest_marker("blockbuster") is None:
+        yield
+        return
+    from blockbuster import BlockBuster
+
+    bb = BlockBuster()
+    bb.activate()
+    yield
+    bb.deactivate()
