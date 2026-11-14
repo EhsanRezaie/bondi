@@ -66,6 +66,33 @@ markers = [
     "blockbuster: fail test if blocking IO runs on the event loop",
 ]
 
+[tool.deptry.package_module_name_map]
+python-jose = ["jose"]
+pillow = ["PIL"]
+opencv-python-headless = ["cv2"]
+"aioboto3" = ["aioboto3"]
+
+[tool.deptry.per_rule_ignores]
+# DEP002: used indirectly — asyncpg via SQLAlchemy URL string, bcrypt via passlib,
+# email-validator via pydantic EmailStr, python-multipart via FastAPI Form/File,
+# python-dotenv via pydantic-settings, uvicorn is the server binary,
+# httptools/uvloop/watchfiles/websockets are pinned uvicorn[standard] extras.
+DEP002 = [
+    "asyncpg",
+    "bcrypt",
+    "email-validator",
+    "httptools",
+    "opencv-python-headless",
+    "pillow",
+    "python-dotenv",
+    "python-jose",
+    "python-multipart",
+    "uvicorn",
+    "uvloop",
+    "watchfiles",
+    "websockets",
+]
+
 [tool.coverage.run]
 source = ["app"]
 
