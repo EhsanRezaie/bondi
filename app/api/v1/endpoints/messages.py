@@ -1,4 +1,5 @@
 # app/api/v1/endpoints/messages.py
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from uuid import UUID
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.core.redis as redis
 from app.core.deps import get_current_user, get_current_user_id
+from app.core.encryption import derive_chat_key
 from app.core.limiter import limiter
 from app.core.logging import get_logger
 from app.core.redis import redis_client
@@ -194,6 +196,10 @@ async def get_chat_history(
                  Client passes the `sent_at` of the oldest loaded message as `before` for the next page.
     """
     await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm the per-chat encryption key off the event loop (Phase 2.1): a cold
+    # LRU miss triggers a ~100ms PBKDF2-100k derivation. The message model's
+    # sync content property then hits the cache instantly.
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     query = select(Message).where(
         Message.chat_id == chat_id,
@@ -316,6 +322,8 @@ async def send_text_message(
 ) -> SendMessageResponse:
     """Send a text message in a chat."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")
@@ -325,6 +333,9 @@ async def send_text_message(
         raise HTTPException(status_code=403, detail=reason)
 
     # Per-chat message rate limit (30/min per sender per chat)
+    # Warm per-chat encryption key off the loop BEFORE content is assigned —
+    # cold miss = ~100ms PBKDF2 on the event loop (Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
     rate_key = f"msg_rate:{current_user.id}:{chat.id}"
     try:
         pipe = redis.redis_client.pipeline()
@@ -423,6 +434,8 @@ async def send_photo_message(
 ) -> SendMessageResponse:
     """Send a photo message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")
@@ -522,6 +535,8 @@ async def send_voice_message(
 ) -> SendMessageResponse:
     """Send a voice message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")

@@ -38,8 +38,6 @@ async def test_parallel_calls_runs_concurrently():
         await asyncio.sleep(0.05)
         return i
 
-    import time
-
     start = time.monotonic()
     results = await parallel_calls(10, one)
     elapsed = time.monotonic() - start
@@ -50,9 +48,20 @@ async def test_parallel_calls_runs_concurrently():
 
 
 @pytest.mark.blockbuster
-async def test_blockbuster_marker_detects_blocking_io():
-    """Pure time.sleep on the event loop must raise BlockingError."""
+async def test_blockbuster_marker_detects_blocking_io(tmp_path):
+    """Blocking I/O in app code must raise BlockingError.
+
+    Guard scans app/ frames only (3rd-party internals excluded).
+    Probe is ``_delete_file`` — the one system.py file helper without an
+    ``except Exception`` block (the read/write helpers log on failure,
+    which swallows the guard's error under pytest's excluded stdout).
+    """
     from blockbuster import BlockingError
 
+    from app.api.v1.endpoints.system import _delete_file
+
+    probe = tmp_path / "blockbuster_probe.json"
+    probe.write_text('{"a": 1}')
+
     with pytest.raises(BlockingError):
-        time.sleep(0.01)  # noqa: ASYNC251 — deliberate: this IS the blocking-call test
+        _delete_file(probe)  # sync unlink on event loop → guard must catch

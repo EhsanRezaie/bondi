@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -39,7 +40,9 @@ async def admin_login(
             detail="Admin login not configured.",
         )
 
-    if body.username != admin_username or not verify_password(body.password, admin_password_hash):
+    if body.username != admin_username or not await run_in_threadpool(
+        verify_password, body.password, admin_password_hash
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials.",

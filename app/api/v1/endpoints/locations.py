@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.core.cache import (
     TTL_LOCATIONS,
@@ -50,7 +51,8 @@ async def list_countries(request: Request, response: Response):
     cached = await cache_get(redis_client, key_countries())
     if cached:
         return cached
-    data = LocationService.get_countries()
+    # Library's first dataset load does blocking file IO — keep off the loop
+    data = await run_in_threadpool(LocationService.get_countries)
     await cache_set(redis_client, key_countries(), data, TTL_LOCATIONS)
     return data
 
@@ -65,13 +67,13 @@ async def list_states(
 ):
     """States / provinces for a country."""
     country = country.upper()
-    if not get_country_by_iso2(country):
+    if not await run_in_threadpool(get_country_by_iso2, country):
         raise HTTPException(status_code=404, detail=f"Country '{country}' not found")
     cache_key = key_provinces(country)
     cached = await cache_get(redis_client, cache_key)
     if cached:
         return cached
-    data = LocationService.get_states(country)
+    data = await run_in_threadpool(LocationService.get_states, country)
     await cache_set(redis_client, cache_key, data, TTL_LOCATIONS)
     return data
 
@@ -100,7 +102,7 @@ async def list_cities(
         GET /api/v1/locations/cities?country=IR&state_name=Tehran
     """
     country = country.upper()
-    if not get_country_by_iso2(country):
+    if not await run_in_threadpool(get_country_by_iso2, country):
         raise HTTPException(status_code=404, detail=f"Country '{country}' not found")
 
     # Build cache key from available params
@@ -114,13 +116,15 @@ async def list_cities(
 
     if state_code:
         logger.info("Getting cities by state_code", country=country, state_code=state_code)
-        cities = LocationService.get_cities(country, state_code)
+        cities = await run_in_threadpool(LocationService.get_cities, country, state_code)
     elif state_name:
         logger.info("Getting cities by state_name", country=country, state_name=state_name)
-        cities = LocationService.get_cities_by_state_name(country, state_name)
+        cities = await run_in_threadpool(
+            LocationService.get_cities_by_state_name, country, state_name
+        )
     else:
         logger.info("Getting all cities", country=country)
-        cities = LocationService.get_cities(country)
+        cities = await run_in_threadpool(LocationService.get_cities, country)
 
     logger.info("Returning cities", country=country, count=len(cities))
 
@@ -161,10 +165,10 @@ async def search_cities_endpoint(
 ):
     """Search cities by name (autocomplete)."""
     country = country.upper()
-    if not get_country_by_iso2(country):
+    if not await run_in_threadpool(get_country_by_iso2, country):
         raise HTTPException(status_code=404, detail=f"Country '{country}' not found")
 
-    cities = LocationService.search_cities(country, query, state_code)
+    cities = await run_in_threadpool(LocationService.search_cities, country, query, state_code)
 
     return [
         CityResponse(
@@ -207,7 +211,8 @@ async def city_centroid(
 ):
     """Get lat/lng for a manually selected city."""
     country = country.upper()
-    centroid = LocationService.get_city_centroid(country, city, state_code)
+    # Dataset lookups read bundled files on first call — off the event loop
+    centroid = await run_in_threadpool(LocationService.get_city_centroid, country, city, state_code)
     if centroid is None:
         raise HTTPException(
             status_code=404,
@@ -299,12 +304,16 @@ async def update_location_manual(
     profile.city = city
     profile.location_manual = True
 
-    # Get state code by name if needed
-    state = LocationService.get_state_by_name(country_iso2.upper(), province)
+    # Get state code by name if needed (dataset file reads — off the loop)
+    state = await run_in_threadpool(
+        LocationService.get_state_by_name, country_iso2.upper(), province
+    )
     state_code = state["code"] if state else None
 
     # Get centroid for the city
-    centroid = LocationService.get_city_centroid(country_iso2.upper(), city, state_code)
+    centroid = await run_in_threadpool(
+        LocationService.get_city_centroid, country_iso2.upper(), city, state_code
+    )
     if centroid:
         profile.lat = centroid["latitude"]
         profile.lng = centroid["longitude"]

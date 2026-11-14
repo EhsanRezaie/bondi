@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 
 from app.core.cache import TTL_SYSTEM_STATUS, cache_get, cache_set, key_system_status
 from app.core.config import settings
@@ -38,40 +39,100 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 MAINTENANCE_FILE = Path("maintenance.json")
 
+# Phase 2.4: state moved to Redis (shared across workers); the JSON files remain
+# as durable bootstrap/backup so state survives Redis flush or restart.
+_MAINTENANCE_REDIS_KEY = "system:maintenance"
+_VERSION_OVERRIDE_REDIS_KEY = "system:version_override"
+
+
+def _read_file_json(path: Path) -> dict | None:
+    """Blocking file read — call ONLY via run_in_threadpool."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.warning("system_state_file_read_failed", file=path.name, error=str(e))
+        return None
+
+
+def _write_file_json(path: Path, data_dict: dict) -> None:
+    """Blocking atomic file write — call ONLY via run_in_threadpool."""
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data_dict, f, indent=2)
+        os.replace(tmp_path, str(path))
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.error("system_state_file_write_failed", file=path.name, error=str(e), exc_info=True)
+        raise
+
+
+def _delete_file(path: Path) -> None:
+    """Blocking file delete — call ONLY via run_in_threadpool."""
+    path.unlink(missing_ok=True)
+
+
+async def _redis_get(key: str) -> str | None:
+    try:
+        raw = await redis_client.get(key)
+        return str(raw) if raw is not None else None
+    except Exception as e:
+        logger.warning("system_state_redis_read_failed", key=key, error=str(e))
+        return None
+
+
+async def _redis_set(key: str, value: str) -> None:
+    try:
+        await redis_client.set(key, value)
+    except Exception as e:
+        logger.warning("system_state_redis_write_failed", key=key, error=str(e))
+
+
+async def _redis_delete(key: str) -> None:
+    try:
+        await redis_client.delete(key)
+    except Exception as e:
+        logger.warning("system_state_redis_delete_failed", key=key, error=str(e))
+
 
 async def get_maintenance_status() -> MaintenanceStatus:
-    """Read maintenance status from file."""
-    if not MAINTENANCE_FILE.exists():
-        return MaintenanceStatus(
-            enabled=False,
-            message=None,
-            start_time=None,
-            end_time=None,
-        )
+    """Read maintenance status — Redis primary, JSON file fallback."""
+    raw = await _redis_get(_MAINTENANCE_REDIS_KEY)
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+            return MaintenanceStatus(
+                enabled=data.get("maintenance_mode", False),
+                message=data.get("message"),
+                start_time=data.get("start_time"),
+                end_time=data.get("end_time"),
+            )
+        except Exception as e:
+            logger.warning("maintenance_status_parse_failed", error=str(e), exc_info=True)
 
-    try:
-        with open(MAINTENANCE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return MaintenanceStatus(
-            enabled=data.get("maintenance_mode", False),
-            message=data.get("message"),
-            start_time=data.get("start_time"),
-            end_time=data.get("end_time"),
+    # Redis miss/flush → bootstrap from the durable file (off the event loop).
+    data_file = await run_in_threadpool(_read_file_json, MAINTENANCE_FILE)
+    if data_file is not None:
+        status = MaintenanceStatus(
+            enabled=data_file.get("maintenance_mode", False),
+            message=data_file.get("message"),
+            start_time=data_file.get("start_time"),
+            end_time=data_file.get("end_time"),
         )
-    except Exception as e:
-        logger.warning("maintenance_status_read_failed", error=str(e), exc_info=True)
-        return MaintenanceStatus(
-            enabled=False,
-            message=None,
-            start_time=None,
-            end_time=None,
-        )
+        await _redis_set(_MAINTENANCE_REDIS_KEY, json.dumps(data_file))
+        return status
+
+    return MaintenanceStatus(enabled=False, message=None, start_time=None, end_time=None)
 
 
 async def set_maintenance_status(
     maintenance_mode: bool, message: str | None = None
 ) -> MaintenanceStatus:
-    """Set maintenance status."""
+    """Set maintenance status — Redis primary, durable file backup."""
     data = MaintenanceStatus(
         enabled=maintenance_mode,
         message=message
@@ -84,26 +145,19 @@ async def set_maintenance_status(
         end_time=None,
     )
 
+    data_dict = {
+        "maintenance_mode": data.enabled,
+        "message": data.message,
+        "start_time": data.start_time,
+        "end_time": data.end_time,
+    }
+    encoded = json.dumps(data_dict)
+    await _redis_set(_MAINTENANCE_REDIS_KEY, encoded)
+
     if maintenance_mode:
-        data_dict = {
-            "maintenance_mode": data.enabled,
-            "message": data.message,
-            "start_time": data.start_time,
-            "end_time": data.end_time,
-        }
-        fd, tmp_path = tempfile.mkstemp(dir=str(MAINTENANCE_FILE.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data_dict, f, indent=2)
-            os.replace(tmp_path, str(MAINTENANCE_FILE))
-        except Exception as e:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            logger.error("maintenance_status_write_failed", error=str(e), exc_info=True)
-            raise
+        await run_in_threadpool(_write_file_json, MAINTENANCE_FILE, data_dict)
     else:
-        if MAINTENANCE_FILE.exists():
-            MAINTENANCE_FILE.unlink()
+        await run_in_threadpool(_delete_file, MAINTENANCE_FILE)
 
     return data
 
@@ -360,30 +414,27 @@ VERSION_OVERRIDE_FILE = Path("version_override.json")
 
 
 async def get_version_override() -> dict:
-    """Read version override from file."""
-    if not VERSION_OVERRIDE_FILE.exists():
-        return {}
+    """Read version override — Redis primary, JSON file fallback."""
+    raw = await _redis_get(_VERSION_OVERRIDE_REDIS_KEY)
+    if raw is not None:
+        try:
+            return json.loads(raw)
+        except Exception as e:
+            logger.warning("version_override_parse_failed", error=str(e), exc_info=True)
 
-    try:
-        with open(VERSION_OVERRIDE_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning("version_override_read_failed", error=str(e), exc_info=True)
-        return {}
+    # Redis miss/flush → bootstrap from the durable file (off the event loop).
+    data_file = await run_in_threadpool(_read_file_json, VERSION_OVERRIDE_FILE)
+    if data_file is not None:
+        await _redis_set(_VERSION_OVERRIDE_REDIS_KEY, json.dumps(data_file))
+        return data_file
+
+    return {}
 
 
 async def set_version_override(data: dict) -> None:
-    """Write version override to file atomically."""
-    fd, tmp_path = tempfile.mkstemp(dir=str(VERSION_OVERRIDE_FILE.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp_path, str(VERSION_OVERRIDE_FILE))
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        logger.error("version_override_write_failed", error=str(e), exc_info=True)
-        raise
+    """Write version override — Redis primary, durable file backup (atomic)."""
+    await _redis_set(_VERSION_OVERRIDE_REDIS_KEY, json.dumps(data))
+    await run_in_threadpool(_write_file_json, VERSION_OVERRIDE_FILE, data)
 
 
 @router.post("/version/set-minimum")
@@ -479,8 +530,8 @@ async def clear_version_override(
     Clear all version overrides (revert to settings).
     Admin only endpoint.
     """
-    if VERSION_OVERRIDE_FILE.exists():
-        VERSION_OVERRIDE_FILE.unlink()
+    await _redis_delete(_VERSION_OVERRIDE_REDIS_KEY)
+    await run_in_threadpool(_delete_file, VERSION_OVERRIDE_FILE)
 
     return {
         "status": "ok",

@@ -56,7 +56,9 @@ class PushService:
         across slow FCM round-trips and starve pgbouncer.
         """
         if not _initialized:
-            _initialize_firebase()
+            # Credential file read + FCM SDK init are one-time blocking I/O
+            # (service-account JSON) — keep them off the event loop.
+            await asyncio.to_thread(_initialize_firebase)
         if not _initialized or not user_ids:
             return
 
@@ -144,7 +146,9 @@ class PushService:
         image_url: str | None = None,
     ):
         if not _initialized:
-            _initialize_firebase()
+            # Credential file read + FCM SDK init are one-time blocking I/O
+            # (service-account JSON) — keep them off the event loop.
+            await asyncio.to_thread(_initialize_firebase)
         if not _initialized:
             return
 

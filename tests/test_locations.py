@@ -197,9 +197,13 @@ class TestReverseGeocode:
 
     async def test_reverse_geocode_offline_resolves_tehran(self):
         """Offline reverse geocoding should resolve real coordinates deterministically."""
+        import asyncio
+
         from app.services.location_service import _offline_reverse
 
-        result = _offline_reverse(35.745483, 51.1954865)
+        # First call builds the dataset index (blocking file reads) — same
+        # offloading the production path uses via run_in_threadpool.
+        result = await asyncio.to_thread(_offline_reverse, 35.745483, 51.1954865)
         assert result is not None
         assert result["country"] == "Iran"
         assert result["country_iso2"] == "IR"

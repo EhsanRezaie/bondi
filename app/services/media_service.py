@@ -3,11 +3,17 @@ import io
 from urllib.parse import urlparse
 
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.redis import redis_client
 from app.services.storage import s3_client
+
+
+class MediaValidationError(Exception):
+    """Raised when uploaded media fails validation/decoding."""
+
 
 logger = get_logger("media_service")
 
@@ -82,49 +88,58 @@ class MediaService:
                 f"Photo too large. Max {MediaService.MAX_PHOTO_SIZE // (1024 * 1024)}MB",
             )
 
+        # CPU-bound decode/re-encode must not run on the event loop (Phase 2.1).
+        try:
+            full, thumb = await run_in_threadpool(MediaService._encode_photo_sync, file_data)
+        except MediaValidationError as e:
+            return False, None, str(e)
+        key = f"chat/photos/{chat_id}/{message_id}.webp"
+        thumb_key = MediaService.thumb_key(key)
+
+        async with s3_client() as s3:
+            await s3.put_object(
+                Bucket=settings.S3_PRIVATE_BUCKET,
+                Key=key,
+                Body=full,
+                ContentType="image/webp",
+            )
+            await s3.put_object(
+                Bucket=settings.S3_PRIVATE_BUCKET,
+                Key=thumb_key,
+                Body=thumb,
+                ContentType="image/webp",
+            )
+
+        # NOTE: we store the object KEY, not a presigned URL. URLs are
+        # signed fresh (and cached) at read time via resolve_media_url() —
+        # a stored presigned URL would expire after ~15 min and make old
+        # messages unopenable.
+        logger.info("Uploaded chat photo to MinIO", key=key)
+        return True, key, None
+
+    @staticmethod
+    def _encode_photo_sync(file_data: bytes) -> tuple[bytes, bytes]:
+        """CPU-bound decode + WebP re-encode — runs in the threadpool.
+
+        Raises MediaValidationError on unsupported format / decode failure.
+        """
         try:
             image = Image.open(io.BytesIO(file_data))
-
             if image.format not in MediaService.ALLOWED_IMAGE_FORMATS:
-                return (
-                    False,
-                    None,
-                    f"Invalid format. Allowed: {', '.join(MediaService.ALLOWED_IMAGE_FORMATS)}",
+                raise MediaValidationError(
+                    f"Invalid format. Allowed: {', '.join(MediaService.ALLOWED_IMAGE_FORMATS)}"
                 )
-
             rgb = MediaService._to_rgb(image)
             full = MediaService._encode_webp(rgb, MediaService.FULL_MAX, MediaService.IMAGE_QUALITY)
             thumb = MediaService._encode_webp(
                 rgb, MediaService.THUMB_MAX, MediaService.THUMB_QUALITY
             )
-
-            key = f"chat/photos/{chat_id}/{message_id}.webp"
-            thumb_key = MediaService.thumb_key(key)
-
-            async with s3_client() as s3:
-                await s3.put_object(
-                    Bucket=settings.S3_PRIVATE_BUCKET,
-                    Key=key,
-                    Body=full,
-                    ContentType="image/webp",
-                )
-                await s3.put_object(
-                    Bucket=settings.S3_PRIVATE_BUCKET,
-                    Key=thumb_key,
-                    Body=thumb,
-                    ContentType="image/webp",
-                )
-
-            # NOTE: we store the object KEY, not a presigned URL. URLs are
-            # signed fresh (and cached) at read time via resolve_media_url() —
-            # a stored presigned URL would expire after ~15 min and make old
-            # messages unopenable.
-            logger.info("Uploaded chat photo to MinIO", key=key)
-            return True, key, None
-
+            return full, thumb
+        except MediaValidationError:
+            raise
         except Exception as e:
             logger.error("Failed to save photo", error=str(e), exc_info=True)
-            return False, None, "Invalid image file"
+            raise MediaValidationError("Invalid image file") from e
 
     @staticmethod
     async def save_voice(

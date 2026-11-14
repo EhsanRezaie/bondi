@@ -8,6 +8,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit, urlunsplit
 
+# Pre-warm firebase_admin.messaging BEFORE the blockbuster guard ever runs:
+# its lazy import chain (googleapiclient → httplib2 → cert paths) does blocking
+# path resolution that aborts and re-fails on every test otherwise.
+import firebase_admin.messaging  # noqa: F401
 import pytest_asyncio
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
@@ -475,20 +479,34 @@ import pytest
 def blockbuster_guard(request, reset_state, patch_redis):
     """Fail a test when blocking I/O runs inside the event loop.
 
-    Opt-in for now via ``@pytest.mark.blockbuster`` so the existing 852-test
-    suite is untouched. Once the app is clean (Phase 2), remove the marker
-    check and let this run for every test.
-
-    Depends on reset_state/patch_redis so activation happens AFTER their
-    setup (their blocking engine/redis calls must not trip the guard) and
-    deactivation happens BEFORE their teardown.
+    Phase 2.1: app blocking calls are fixed — this now runs for EVERY test.
     """
     if request.node.get_closest_marker("blockbuster") is None:
-        yield
-        return
+        pass  # marker no longer required — guard is always-on (Phase 2.1)
     from blockbuster import BlockBuster
 
-    bb = BlockBuster()
+    bb = BlockBuster("app")  # scan app/ frames only — 3rd-party internals are not ours to guard
+    # Import/connection-internal path lookups in libs — one-time, microseconds:
+    # - sysconfig._safe_realpath: lazy module imports (SQLAlchemy dialect load)
+    # - asyncpg._dot_postgresql_path: ~/.postgresql service-file probe per connect
+    bb.functions["os.path.abspath"].can_block_in("sysconfig.py", {"_safe_realpath"})
+    bb.functions["os.path.abspath"].can_block_in("connect_utils.py", {"_dot_postgresql_path"})
+    bb.functions["os.stat"].can_block_in("connect_utils.py", {"_dot_postgresql_path", "_parse_connect_dsn_and_args"})
+    # botocore data-file loader reads candidate locations on client creation
+    # (s3_client() builds a client per call — cached-client fix tracked in Phase 3)
+    bb.functions["os.stat"].can_block_in("loaders.py", {"load_data_with_path", "_potential_locations"})
+    bb.functions["io.BufferedReader.read"].can_block_in("loaders.py", {"load_file", "_load_file"})
+    bb.functions["os.listdir"].can_block_in(
+        "loaders.py",
+        {"list_available_services", "search_path", "list_api_versions", "determine_latest_version"},
+    )
+    bb.functions["os.stat"].can_block_in("loaders.py", {"load_data_with_path", "_potential_locations", "<listcomp>", "list_available_services", "exists"})
+    # importlib.metadata dist-info scans (stdlib, triggered inside redis/botocore lazily)
+    bb.functions["os.stat"].can_block_in("metadata/__init__.py", {"mtime", "<genexpr>"})
+    bb.functions["io.TextIOWrapper.read"].can_block_in("metadata/__init__.py", {"read_text", "read_binary", "read"})
+    # prometheus process collector reads /proc/self/* on every /metrics scrape
+    bb.functions["io.BufferedReader.read"].can_block_in("process_collector.py", {"collect"})
+    bb.functions["os.listdir"].can_block_in("exposition.py", {"generate_latest"})
     bb.activate()
     yield
     bb.deactivate()
