@@ -1,14 +1,10 @@
-# Bondi — Master TODO (detailed)
+# Bondi — Master TODO
 
-> **Single source of truth for all remaining work.**
-> Merged from: `docs/dev.md`, `docs/performance_plan.md`, `docs/scale_plan.md`,
-> `docs/security_plan.md`, `docs/server_setup.md` + a senior-dev/system-designer audit
-> of the entire backend codebase.
->
-> The old docs have **stale checklists** — many unchecked boxes are already done
-> (WebSocket Pub/Sub, presence, typing, health checks, structlog, FCM, swipe dedup,
-> discover cache). This file reconciles all of that and adds the new issues the audit
-> found (several critical, none in any doc).
+> **Single source of truth for all remaining work** (done and not done).
+> Consolidated from the former `todo.md` and the pending items of the
+> performance/scale/security plans and the race-condition fix plan (all now merged
+> and deleted). Old stale checklists were reconciled against the code — see the
+> "stale checklist" appendix in [`WIKI.md`](WIKI.md#infrastructure-checklist-implemented).
 >
 > Each task lists: **Evidence** (file:line) → **Why** → **Fix** (step-by-step with code)
 > → **Files to touch** → **Commands** → **Verify** → **Gotchas**.
@@ -25,8 +21,8 @@
 | 🟡 P2 | Backend hardening / correctness |
 | 🟢 P3 | Security hardening |
 | 🔵 P4 | Observability & operations |
-| 🟣 P5 | Flutter app (from performance_plan Phase 5) |
-| ⚫ P6 | Deployment checklist (from dev.md) |
+| 🟣 P5 | Flutter app (from WIKI.md Part D — performance plan) |
+| ⚫ P6 | Deployment checklist (from DEPLOYMENT.md) |
 | ✅ | Already done (listed only to kill the stale checklist) |
 
 Effort: `XS` <1h · `S` ~1 session · `M` ~1–2 sessions · `L` multi-session.
@@ -510,10 +506,10 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [ ] Done
 
-**Evidence:** `app/services/subscriptions.py:67-94` returns a fake `authority` + sandbox URL; `:165` stores `mock_ref_id`. No `payment_service.py` exists. `scale_plan` Session F (unchecked). Users can "buy" premium for free right now.
+**Evidence:** `app/services/subscriptions.py:67-94` returns a fake `authority` + sandbox URL; `:165` stores `mock_ref_id`. No `payment_service.py` exists (WIKI.md Part D — scale plan, Session F was unchecked). Users can "buy" premium for free right now.
 
 **Fix (step-by-step):**
-1. Create `app/services/payment_service.py` (follow `scale_plan` Section 10):
+1. Create `app/services/payment_service.py` (follow WIKI.md Part D — scale plan, Session 10):
    ```python
    import httpx
    from app.core.config import settings
@@ -573,7 +569,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [ ] Done
 
-**Evidence:** `app/services/email_service.send_verification_code` is mocked in tests; in `auth.py` codes are only written to Redis and never sent. Users literally cannot register or reset passwords in prod. `scale_plan` lists email as ❌ Missing.
+**Evidence:** `app/services/email_service.send_verification_code` is mocked in tests; in `auth.py` codes are only written to Redis and never sent. Users literally cannot register or reset passwords in prod. WIKI.md Part D — scale plan lists email as ❌ Missing.
 
 **Fix (step-by-step):**
 1. Implement `app/services/email_service.py` with an async SMTP/SendGrid transport:
@@ -605,7 +601,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [x] Done
 
-**Evidence:** `.env:10` `SECRET_KEY=change-this-to-64-random-characters-in-production`, `.env:23` `ADMIN_SECRET_KEY=change-this-to-random-string`, `.env:84` a real `ENCRYPTION_SECRET`, `.env:125` a real `BUGSINK_SECRET_KEY`. No re-encryption script exists. `security_plan` Section 6 (unchecked).
+**Evidence:** `.env:10` `SECRET_KEY=change-this-to-64-random-characters-in-production`, `.env:23` `ADMIN_SECRET_KEY=change-this-to-random-string`, `.env:84` a real `ENCRYPTION_SECRET`, `.env:125` a real `BUGSINK_SECRET_KEY`. No re-encryption script exists. WIKI.md Part D — security plan Section 6 (was unchecked).
 
 **Why:** Placeholder `SECRET_KEY` means anyone can forge JWTs. Rotating `ENCRYPTION_SECRET` without re-encrypting **bricks every existing chat** (all `messages.content` becomes undecryptable).
 
@@ -627,9 +623,9 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
    # Key point: derive_chat_key() takes the secret from settings, so just re-encrypt the
    # content column: old = decrypt(content, old_secret), new = encrypt(plaintext, new_secret).
    ```
-4. Document the dual-key window in `docs/security_plan.md` (Section 6.3): during rotation, support both old+new secrets for a short read window, then cut over.
+4. Document the dual-key window in `docs/WIKI.md` (encryption section): during rotation, support both old+new secrets for a short read window, then cut over.
 
-**Files to touch:** server `.env`, new `scripts/rotate_encryption_secret.py`, `docs/security_plan.md`.
+**Files to touch:** server `.env`, new `scripts/rotate_encryption_secret.py`, `docs/WIKI.md`.
 **Commands:** `python -m scripts.rotate_encryption_secret --dry-run` then `--apply`.
 **Verify:** After rotation, load an old chat → messages still decrypt. Forge a JWT with the old `SECRET_KEY` → 401.
 **Gotchas:** Rotate `SECRET_KEY` first (cheap — just forces re-login). Rotate `ENCRYPTION_SECRET` only after the re-encrypt script is written and tested on a DB backup. **Always take a `pg_dump` before rotating.**
@@ -697,7 +693,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [x] Done
 
-**Evidence:** `docker-compose.yml:62-74` Redis has no `requirepass`; `:82-83` MinIO `minioadmin/minioadmin`. `security_plan` Session D (unchecked). Anyone on the Docker network (or host, since 6379/9000 are published) can read/write cache + tokens + photos.
+**Evidence:** `docker-compose.yml:62-74` Redis has no `requirepass`; `:82-83` MinIO `minioadmin/minioadmin`. WIKI.md Part D — security plan Session D (was unchecked). Anyone on the Docker network (or host, since 6379/9000 are published) can read/write cache + tokens + photos.
 
 **Fix (step-by-step):**
 1. Redis: add a password and use it in the URL:
@@ -728,7 +724,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [x] Done
 
-**Evidence:** `docker-compose.yml` uses the default bridge; db/redis/minio ports are published to the host. `security_plan` Section 9.1 (unchecked).
+**Evidence:** `docker-compose.yml` uses the default bridge; db/redis/minio ports are published to the host. WIKI.md Part D — security plan Section 9.1 (was unchecked).
 
 **Fix (step-by-step):**
 1. Define two networks in `docker-compose.yml`:
@@ -787,7 +783,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [ ] Done
 
-**Evidence:** `messages.py` uses `@limiter.limit("30/minute")` (SlowAPI keys on IP by default via `get_remote_address`). `security_plan` claims "per-match 30/min" but no `(user_id, match_id)` keying is visible.
+**Evidence:** `messages.py` uses `@limiter.limit("30/minute")` (SlowAPI keys on IP by default via `get_remote_address`). The old security plan claimed "per-match 30/min" but no `(user_id, match_id)` keying is visible.
 
 **Why:** Two users behind one NAT share a bucket → one throttles the other. A single abusive user on a clean IP is only IP-throttled, not per-match throttled — they can spam N matches at 30/min each.
 
@@ -1270,7 +1266,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [ ] Done
 
-**Evidence:** `app/api/v1/websocket/chat.py:62-87` parses client JSON (`json.loads(raw)`) and dispatches on `type` with no schema validation; `matches.py:40` similar. `security_plan` Section 8.2 (unchecked). Malformed input → unhandled exception → the WS loop breaks silently (`except Exception: break`).
+**Evidence:** `app/api/v1/websocket/chat.py:62-87` parses client JSON (`json.loads(raw)`) and dispatches on `type` with no schema validation; `matches.py:40` similar. WIKI.md Part D — security plan Section 8.2 (was unchecked). Malformed input → unhandled exception → the WS loop breaks silently (`except Exception: break`).
 
 **Fix (step-by-step):**
 1. Define Pydantic models for each inbound WS message (`ping`, `typing`, `typing_stopped`, `read`).
@@ -1305,7 +1301,7 @@ backend suite: **850 passed** (848 baseline + 2 new regression tests).
 
 - [x] Done
 
-**Evidence:** `security_plan` lists "Token theft detection ❌". `redis.py` stores opaque refresh tokens but no family/rotation tracking — a stolen refresh token works until 30-day expiry.
+**Evidence:** WIKI.md Part D — security plan lists "Token theft detection ❌". `redis.py` stores opaque refresh tokens but no family/rotation tracking — a stolen refresh token works until 30-day expiry.
 **Fix (step-by-step):**
 1. On each `/auth/refresh`, rotate the token and record the old jti as "rotated-from" within a family id (store `family:{family_id}` → set of jtis, plus `jti:{jti}` → family_id + status).
 2. If a "rotated-from" jti is ever presented again → it's reuse → revoke the **whole family** (delete all its jtis), forcing re-login everywhere. This is the OAuth2 refresh-rotation theft-detection pattern.
@@ -1416,10 +1412,10 @@ context.configure(connection=conn, target_metadata=target_metadata,
 **Verify:** CI fails if a model change isn't reflected in a migration.
 **Gotchas:** Keep the fast `Base.metadata` tests for speed; add the migration-apply job as a separate, slower stage.
 
-## 🟣 P5 — Flutter app (from performance_plan Phase 5 + dev.md)
+## 🟣 P5 — Flutter app (from WIKI.md Part D performance plan)
 
 > The Flutter source isn't in this repo, but these are the remaining unchecked items
-> from `performance_plan.md:958-966` and `dev.md:1632-1639`. Tracked here so the master
+> from WIKI.md Part D — Flutter performance plan. Tracked here so the master
 > file is complete. Effort assumes the Flutter app lives in a sibling repo.
 
 ### P5-1 — Add `dio_cache_interceptor` + Hive store · `S`
@@ -1464,7 +1460,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 
 ---
 
-## ⚫ P6 — Deployment checklist (from dev.md:2085-2091)
+## ⚫ P6 — Deployment checklist
 
 - [ ] P6-1 Purchase VPS (Hetzner CX22 / DigitalOcean droplet — 2 vCPU, 4GB RAM min)
 - [ ] P6-2 Install Docker + Docker Compose on VPS
@@ -1503,7 +1499,7 @@ context.configure(connection=conn, target_metadata=target_metadata,
 
 The following items are **unchecked in the old docs but already implemented** in code.
 Listed so you don't waste a session re-doing them. Delete the stale `[ ]` boxes in the
-source docs (`scale_plan.md`, `security_plan.md`, `performance_plan.md`) when you next
+source docs (merged into [`WIKI.md`](WIKI.md)) when you next
 touch them.
 
 - ✅ WebSocket rewrite / Redis Pub/Sub multi-worker — `websocket_manager.py` (scale §3.4, Session B)
@@ -1555,7 +1551,7 @@ touch them.
 | security §9.1/9.2/9.3 | network isolation / Redis pass / MinIO creds | P1-3, P1-4 |
 | security §5.2 | nginx security headers | ✅ done (+ HSTS P3-2) |
 | perf §5 (Phase 5) | Flutter items | P5-1 … P5-9 |
-| dev.md §13 | VPS/deploy checklist | P6-1 … P6-7 |
+| WIKI.md Part D | VPS/deploy checklist | P6-1 … P6-7 |
 
 ---
 

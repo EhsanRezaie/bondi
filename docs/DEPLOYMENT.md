@@ -900,5 +900,109 @@ Required GitHub secrets:
 
 ---
 
-_Generated 2026-08-09. Companion: `docs/server_setup.md` (older, less current),
-docs/deploy.md (secrets + pgbouncer notes), scripts/deploy.sh, scripts/backup.sh._
+## 14. Admin VPN (WireGuard) — secure remote access
+
+The admin panel **https://admin.bondiapp.ir** is locked to a WireGuard VPN. You
+must connect to the VPN first, then open it. The public website
+(`www.bondiapp.ir`), API (`api.bondiapp.ir`) and the Bugsink error tracker
+(`log.bondiapp.ir`) do **not** need the VPN.
+
+### 14.1 What you need
+
+| Item | Value |
+|------|-------|
+| VPN type | WireGuard |
+| Server | `87.107.5.88` (UDP port `51820`) |
+| VPN subnet | `10.8.0.0/24` |
+| Admin URL | `https://admin.bondiapp.ir` |
+| Bugsink URL | `https://log.bondiapp.ir` (public, no VPN) |
+| Host mapping | `admin.bondiapp.ir` → `10.8.0.1` (hosts file) |
+
+Config files (`admin-windows-pc.conf`, `admin-ubuntu-pc.conf`) contain
+**private keys**. Do not share or commit them.
+
+### 14.2 Ubuntu PC
+
+```bash
+# Install
+sudo apt update && sudo apt install -y wireguard
+
+# Install the config
+sudo install -m 600 ~/Desktop/bondi-wireguard/admin-ubuntu-pc.conf /etc/wireguard/wg0.conf
+
+# The config only tunnels the VPN subnet, so admin.bondiapp.ir must resolve
+# to the VPN server address 10.8.0.1:
+echo "10.8.0.1 admin.bondiapp.ir" | sudo tee -a /etc/hosts
+
+# Connect (optional: sudo systemctl enable wg-quick@wg0 for boot)
+sudo wg-quick up wg0
+
+# Verify
+sudo wg show                 # should show "latest handshake" and transfer
+ping -c2 10.8.0.1            # reply in a few ms
+```
+
+Then open **https://admin.bondiapp.ir**. Disconnect: `sudo wg-quick down wg0`.
+Optional one-shot installer: `sudo bash ~/Desktop/bondi-wireguard/setup-ubuntu.sh`.
+
+### 14.3 Windows PC
+
+1. Install the WireGuard client: https://www.wireguard.com/install/
+2. Open the WireGuard app → **Import tunnel(s) from file** → `admin-windows-pc.conf`.
+3. Add the hosts entry: open **Notepad as Administrator** →
+   `C:\Windows\System32\drivers\etc\hosts` → add `10.8.0.1 admin.bondiapp.ir`
+   and save (if blocked, use File → Save As → overwrite).
+4. Click **Activate** on the tunnel, then open **https://admin.bondiapp.ir**.
+   Disconnect: click **Deactivate**.
+
+### 14.4 How to confirm it is working
+
+| Check | Expected |
+|-------|----------|
+| `sudo wg show` (Ubuntu) | `latest handshake` a few seconds ago |
+| `ping 10.8.0.1` | replies (a few ms) |
+| Open `https://admin.bondiapp.ir` | admin login page loads |
+| Open `https://log.bondiapp.ir` | Bugsink login page loads (no VPN needed) |
+| Without VPN, open `https://admin.bondiapp.ir` | **403 Forbidden** (this is correct) |
+
+### 14.5 Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `403 Forbidden` on admin.bondiapp.ir | VPN not connected (`sudo wg-quick up wg0` / Activate) **or** the hosts entry is missing — verify `grep bondiapp.ir /etc/hosts` (Ubuntu) or the hosts file (Windows) + `ipconfig /flushdns` |
+| VPN connected but admin won't open | hosts entry missing — without it the browser reaches the public IP, which is intentionally blocked. Confirm a recent handshake in `wg show` |
+| No handshake / no connection | Check internet; some networks block UDP — try another network/hotspot; confirm the server is up (`wg show wg0` on the server) |
+| Closed the VPN but admin still loads | Browser cached the page — close the tab; a fresh request will be blocked |
+| Why the hosts entry? | The config tunnels only `10.8.0.0/24` (to avoid a routing loop); the hosts entry makes the browser use the VPN address `10.8.0.1` for the admin domain |
+
+### 14.6 Security notes
+
+- Treat the `.conf` files like passwords; never share or commit them.
+- If a laptop/phone is lost, the owner can remove that peer from the server and
+  issue a new config.
+- To revoke a device, the server admin removes the matching `[Peer]` from
+  `/etc/wireguard/wg0.conf` and runs `wg syncconf wg0 <(wg-quick strip wg0)`.
+
+### 14.7 Server-side reference (for the owner)
+
+| Setting | Value |
+|---------|-------|
+| Interface | `wg0` on the VPS |
+| Server address | `10.8.0.1/24` |
+| Listen port | `51820/udp` |
+| Config | `/etc/wireguard/wg0.conf` |
+| Client configs | `/root/bondi-wireguard/clients/` |
+| Firewall | UFW allows 22, 80, 443, 51820/udp |
+| Admin access rule | nginx `allow 10.8.0.0/24; deny all;` |
+
+```bash
+# on the server
+wg show wg0                 # peers + handshakes
+systemctl status wg-quick@wg0
+```
+
+---
+
+_Consolidated 2026-11-14. This is the single deployment guide (absorbs the former
+`server_setup.md` and `deploy.md`). Companion scripts: `scripts/deploy.sh`,
+`scripts/backup.sh`._
