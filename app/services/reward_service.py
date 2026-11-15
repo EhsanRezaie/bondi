@@ -171,7 +171,10 @@ class RewardService:
         if not updated:
             return False
 
-        await self.db.commit()
+        # No commit here: the caller owns the transaction boundary. Committing
+        # mid-request used to burn the like even when the caller's later work
+        # (e.g. the swipe insert) rolled back, and it released any pair
+        # advisory lock the caller held.
 
         # Update Redis cache
         cache_key = key_daily_limits(user_id, today.isoformat())
@@ -223,7 +226,9 @@ class RewardService:
         if not updated:
             return False
 
-        await self.db.commit()
+        # No commit here — same reasoning as consume_like: the caller
+        # (POST /chats) commits after its chat + first-message work so the
+        # whole operation is atomic.
 
         # Update Redis cache
         cache_key = key_daily_limits(user.id, today.isoformat())

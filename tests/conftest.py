@@ -462,6 +462,30 @@ async def client(db_session: AsyncSession) -> AsyncClient:
 
 
 @pytest_asyncio.fixture
+async def race_client(db_engine) -> AsyncClient:
+    """Like `client`, but EVERY request gets its own session and transaction.
+
+    `client` yields one shared session to all requests, so concurrent requests
+    through it never produce real DB-level races. Race tests need each
+    in-flight request to run against the DB with independent transaction
+    isolation — this fixture does that.
+    """
+    session_factory = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def override_get_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
 def admin_headers() -> dict:
     """Create admin auth headers."""
     from app.core.config import settings

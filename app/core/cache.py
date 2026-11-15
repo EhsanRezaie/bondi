@@ -88,6 +88,14 @@ async def cache_set(redis: Redis, key: str, value, ttl: int):
         logger.warning("cache_set_failed", key=key, error=str(e), exc_info=True)
 
 
+async def cache_delete(redis: Redis, key: str):
+    """Delete a cached value. Best-effort, like cache_get/cache_set."""
+    try:
+        await redis.delete(key)
+    except Exception as e:
+        logger.warning("cache_delete_failed", key=key, error=str(e), exc_info=True)
+
+
 async def invalidate_user_cache(redis: Redis, user_id: UUID):
     """Invalidate all cached data for a user."""
     keys = [

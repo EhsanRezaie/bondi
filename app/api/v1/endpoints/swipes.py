@@ -6,7 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.cache import get_swiped_ids, record_swipe_cache
+from app.core.cache import (
+    cache_delete,
+    get_swiped_ids,
+    key_daily_limits,
+    record_swipe_cache,
+)
 from app.core.config import settings
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
@@ -28,9 +33,10 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.schemas.discover import SwipeRequest, SwipeResponse
 from app.schemas.swipe import LikedUsersResponse, SwipeStatsResponse
+from app.services.chat_service import pair_lock_key
 from app.services.notification_service import NotificationService
 from app.services.photo_service import PhotoService
-from app.services.reward_service import RewardService
+from app.services.reward_service import RewardService, utc_today
 from app.services.websocket_manager import websocket_manager
 
 logger = get_logger("swipes")
@@ -168,6 +174,14 @@ async def swipe(
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # Serialize all pair-state reads/writes for this user pair. Without this,
+    # two concurrent mutual likes (A→B and B→A) each run in READ COMMITTED
+    # isolation, neither sees the other's uncommitted swipe, and NO match is
+    # created even though both liked each other. The lock is transaction-
+    # scoped and released at commit; same pattern as POST /chats.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(pair_lock_key(current_user_id, body.user_id)))
+    )
     # Check if already swiped (DB check first so a direction change is allowed)
     existing_result = await session.execute(
         select(Swipe).where(Swipe.from_user == current_user_id, Swipe.to_user == body.user_id)
@@ -251,6 +265,11 @@ async def swipe(
             error=str(e),
             exc_info=True,
         )
+        # consume_like already incremented the daily counter in the rolled-back
+        # transaction and pushed that value to Redis. Drop the cached row so
+        # the next read recomputes from the DB (the like is NOT consumed — the
+        # swipe failed).
+        await cache_delete(redis_client, key_daily_limits(current_user_id, utc_today().isoformat()))
         existing = await session.execute(
             select(Swipe).where(Swipe.from_user == current_user_id, Swipe.to_user == body.user_id)
         )
