@@ -65,7 +65,16 @@ async def test_list_endpoint_query_counts(
         await grant_approved_photo(peer_id)
         peer_ids.append(peer_id)
         if i >= N_PEERS:
-            continue  # last N_UNMATCHED_PEERS stay unswiped → discover/search candidates
+            if i == N_PEERS:
+                # This peer likes the male but gets no like-back → shows up
+                # in /swipes/likers so that probe has a real row.
+                res = await client.post(
+                    "/api/v1/swipes",
+                    json={"user_id": male_id, "direction": "like"},
+                    headers=peer_headers,
+                )
+                assert res.status_code in (200, 201), res.text
+            continue  # remaining peers stay unswiped → discover/search candidates
         # Peer likes the male first, so his like creates a match.
         res = await client.post(
             "/api/v1/swipes", json={"user_id": male_id, "direction": "like"}, headers=peer_headers
@@ -92,12 +101,20 @@ async def test_list_endpoint_query_counts(
 
     # Warm-up: token validation caches, redis state, etc. Query counters
     # measure only the second (steady-state) request below.
-    for url in ("/api/v1/discover", "/api/v1/search", "/api/v1/matches", "/api/v1/chats"):
+    probe_urls = (
+        "/api/v1/discover",
+        "/api/v1/search",
+        "/api/v1/matches",
+        "/api/v1/chats",
+        "/api/v1/swipes/liked",
+        "/api/v1/swipes/likers",
+    )
+    for url in probe_urls:
         res = await client.get(url, headers=male_headers)
         assert res.status_code == 200, res.text
 
     measured = {}
-    for url in ("/api/v1/discover", "/api/v1/search", "/api/v1/matches", "/api/v1/chats"):
+    for url in probe_urls:
         # Detach everything loaded by the warm-up request: SQLAlchemy skips
         # relationship queries for objects already in the identity map, which
         # would make every endpoint look N+1-free when it isn't.
@@ -106,13 +123,21 @@ async def test_list_endpoint_query_counts(
             res = await client.get(url, headers=male_headers)
             assert res.status_code == 200, res.text
         measured[url] = counter.count
+        assert res.json()["total"] > 0, (
+            f"{url} probe returned 0 rows — row-serialization path not measured"
+        )
 
-    # Notifications list too (empty dataset is fine — same serialization path).
+    # Notifications list: probe must have real rows (peers liking male created
+    # "like" notifications), otherwise the count proves nothing.
     db_session.expunge_all()
     with QueryCounter(db_session.get_bind()) as counter:
         res = await client.get("/api/v1/notifications", headers=male_headers)
         assert res.status_code == 200, res.text
     measured["/api/v1/notifications"] = counter.count
+    assert res.json()["total"] >= N_PEERS, (
+        f"notifications probe empty (total={res.json()['total']}) — "
+        "row-serialization path is not being measured"
+    )
 
     violations = [f"{url}={count}" for url, count in measured.items() if count > QUERY_CEILING]
     assert not violations, (
