@@ -144,8 +144,9 @@ async def run_rotation(
 ) -> None:
     label = DRY_RUN_BANNER if dry_run else "APPLY"
     logger.info("Starting ENCRYPTION_SECRET rotation [%s]", label)
-    logger.info("Old secret: %s*** (len=%d)", old_secret[:6], len(old_secret))
-    logger.info("New secret: %s*** (len=%d)", new_secret[:6], len(new_secret))
+    # Lengths only — even a 6-char prefix of a secret belongs nowhere in logs.
+    logger.info("Old secret: (len=%d)", len(old_secret))
+    logger.info("New secret: (len=%d)", len(new_secret))
 
     if dry_run and not dry_run:
         pass  # unreachable, kept for clarity

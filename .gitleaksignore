@@ -1,0 +1,21 @@
+# Phase 6 triage (full-review): throwaway TEST credentials only.
+# REAL secrets (deploy.yml prod passwords, firebase-service-account.json)
+# are deliberately NOT ignored — CI stays red until they are rotated
+# and removed. Same for .env (gitignored, local only).
+.env.test.example:generic-api-key:5
+.env.test.example:generic-api-key:8
+.env.test.example:generic-api-key:14
+.env.test.example:generic-api-key:31
+.env.test.example:generic-api-key:52
+.env.test.example:generic-api-key:55
+.env.test.example:generic-api-key:71
+.env.test:generic-api-key:5
+.env.test:generic-api-key:8
+.env.test:generic-api-key:14
+.env.test:generic-api-key:31
+.env.test:generic-api-key:52
+.env.test:generic-api-key:55
+.env.test:generic-api-key:71
+docker-compose.test.yml:generic-api-key:7
+docker-compose.test.yml:generic-api-key:39
+tests/test_admin_photos.py:generic-api-key:323

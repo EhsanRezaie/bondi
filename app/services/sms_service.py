@@ -116,5 +116,6 @@ async def send_verification_code(phone: str, code: str, language: str = "fa") ->
         logger.error("sms_send_failed", phone=phone, error=str(e), exc_info=True)
         return False
 
-    logger.info("sms_otp_sent", phone=phone, code=code)
+    # Never log the code itself: log access == account takeover of every user.
+    logger.info("sms_otp_sent", phone=phone)
     return True

@@ -232,6 +232,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ENCRYPTION_SECRET is too weak for production: use at least 32 random chars"
             )
+        # X-Admin-Key gates every admin endpoint; same strength bar as JWT key.
+        if len(self.ADMIN_SECRET_KEY) < 32:
+            raise ValueError(
+                "ADMIN_SECRET_KEY is too weak for production: use at least 32 random chars"
+            )
         return self
 
     # ============================================

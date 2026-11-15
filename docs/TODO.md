@@ -1,5 +1,26 @@
 # Bondi — Master TODO
 
+## 🔴 USER ACTIONS — secrets rotation (NOT code — only you can do these)
+> Found in the 2026-11 pre-launch review (Phase 6). Gitleaks stays red on
+> these **by design** until they're done. Do NOT allowlist them.
+
+- [ ] **Rotate the Firebase service-account key** — `firebase-service-account.json`
+      is committed to git (private key visible to anyone with repo access).
+      1. Google Cloud Console → IAM → Service Accounts → keys → create new key,
+         update the JSON wherever the server reads it.
+      2. Move the NEW json OUTSIDE the repo (e.g. `/etc/bondi/`) and point the
+         compose volume at that path — then `git rm --cached
+         firebase-service-account.json` (keep the file locally for compose).
+- [ ] **Rotate production Postgres + MinIO root passwords** — real-looking
+      credentials are hardcoded in `.github/workflows/deploy.yml` (POSTGRES_PASSWORD,
+      MINIO_ROOT_PASSWORD). Rotate both on the server, then move them to
+      GitHub Actions secrets (`secrets.POSTGRES_PASSWORD`, `secrets.MINIO_ROOT_PASSWORD`)
+      and reference those in deploy.yml.
+- [ ] (Optional, after both rotations) git-history purge (`gitleaks` findings in
+      history go quiet only via purge or allowlist) — rotate first, purge second.
+
+## Legend
+
 > **Single source of truth for all remaining work** (done and not done).
 > Consolidated from the former `todo.md` and the pending items of the
 > performance/scale/security plans and the race-condition fix plan (all now merged

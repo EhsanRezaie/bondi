@@ -8,7 +8,11 @@ import pytest
 
 
 def _make_settings(
-    monkeypatch: pytest.MonkeyPatch, environment: str, secret_key: str, encryption: str = "x" * 40
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+    secret_key: str,
+    encryption: str = "x" * 40,
+    admin_key: str = "k" * 40,
 ):
     from app.core.config import Settings
 
@@ -17,7 +21,7 @@ def _make_settings(
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("S3_SECRET_KEY", "x")
-    monkeypatch.setenv("ADMIN_SECRET_KEY", "k")
+    monkeypatch.setenv("ADMIN_SECRET_KEY", admin_key)
     monkeypatch.setenv("SECRET_KEY", secret_key)
     monkeypatch.setenv("ENCRYPTION_SECRET", encryption)
     return Settings()  # type: ignore[call-arg]
@@ -52,3 +56,13 @@ def test_development_allows_short_secret_key(monkeypatch: pytest.MonkeyPatch):
 def test_test_environment_allows_short_secret_key(monkeypatch: pytest.MonkeyPatch):
     s = _make_settings(monkeypatch, "test", "qMiVidSmH6dl508w")
     assert s.ENVIRONMENT == "test"
+def test_production_rejects_short_admin_secret(monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(Exception, match="ADMIN_SECRET_KEY"):
+        _make_settings(
+            monkeypatch, "production", "9rz5fZ6pcH7nUEouB7QWbDyFjVEABM2t7naqR_p7ars", admin_key="short"
+        )
+def test_development_allows_short_admin_secret(monkeypatch: pytest.MonkeyPatch):
+    s = _make_settings(
+        monkeypatch, "development", "qMiVidSmH6dl508w", admin_key="short-admin-key"
+    )
+    assert s.ENVIRONMENT == "development"
