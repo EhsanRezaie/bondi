@@ -1,11 +1,18 @@
 """Shared S3 client helpers.
 
 A single reusable aioboto3.Session is created at import time. Clients are
-cheap and connection-pooled, so every module reuses the same session instead
-of constructing a fresh one per object upload.
+cached per event loop: the first call enters the client context and keeps it
+open, so its HTTP connection pool (TCP keep-alive to MinIO) is reused across
+every later call instead of paying connect+TLS per request and re-scanning
+botocore loaders. Exiting the context manager deliberately does NOT close the
+cached client; it lives as long as its event loop.
 """
 
+import asyncio
 import json
+import threading
+import weakref
+from contextlib import asynccontextmanager
 
 import aioboto3
 from botocore.exceptions import ClientError
@@ -17,16 +24,51 @@ logger = get_logger("storage")
 
 _s3_session = aioboto3.Session()
 
+# Per-event-loop cache of *entered* clients (weak keys: loop death drops the
+# entry). Values are asyncio Futures so concurrent first-time callers on the
+# same loop share one creation instead of racing two clients.
+_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Future]" = (
+    weakref.WeakKeyDictionary()
+)
+_lock = threading.Lock()
 
-def s3_client():
-    """Return an async context-manager S3 client configured for MinIO/S3."""
-    return _s3_session.client(
+
+async def _create_client():
+    cm = _s3_session.client(
         "s3",
         endpoint_url=settings.S3_ENDPOINT_URL,
         aws_access_key_id=settings.S3_ACCESS_KEY,
         aws_secret_access_key=settings.S3_SECRET_KEY,
         region_name=settings.S3_REGION,
     )
+    return await cm.__aenter__()
+
+
+@asynccontextmanager
+async def s3_client():
+    """Yield the event loop's shared S3 client (created on first use)."""
+    loop = asyncio.get_running_loop()
+    with _lock:
+        fut = _clients.get(loop)
+        if fut is None:
+            fut = loop.create_future()
+            _clients[loop] = fut
+            owner = True
+        else:
+            owner = False
+    if owner:
+        try:
+            client = await _create_client()
+        except BaseException:
+            with _lock:
+                _clients.pop(loop, None)
+            fut.cancel()  # wake any concurrent waiters; next call starts fresh
+            raise
+        fut.set_result(client)
+    # Concurrent waiters on the same loop resolve here; a failed creation
+    # raises in every waiter and the next call starts fresh.
+    client = await fut
+    yield client
 
 
 def _missing_bucket(error: ClientError) -> bool:
