@@ -11,4 +11,8 @@ limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=settings.REDIS_URL,
     enabled=True,  # Can be disabled for tests via conftest.py
+    # If Redis is down, fall back to per-process in-memory counting instead of
+    # raising on EVERY authenticated request. Limits become per-worker during
+    # the outage (weaker, not stronger) — acceptable degraded mode.
+    in_memory_fallback_enabled=True,
 )

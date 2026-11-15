@@ -65,6 +65,9 @@ services:
       dockerfile: Dockerfile
     container_name: bondi_celery_worker
     restart: unless-stopped
+    # Allow warm shutdown (acks_late tasks finish; SIGKILL after this would
+    # still be safe thanks to task_reject_on_worker_lost redelivery).
+    stop_grace_period: 60s
     env_file: .env
     environment:
       CELERY_ENABLED: "true"

@@ -15,6 +15,7 @@ import weakref
 from contextlib import asynccontextmanager
 
 import aioboto3
+import botocore.config
 from botocore.exceptions import ClientError
 
 from app.core.config import settings
@@ -34,12 +35,20 @@ _lock = threading.Lock()
 
 
 async def _create_client():
+    # Explicit timeouts + standard retries: without this a dead MinIO hangs
+    # every upload/download for the botocore default 60s connect/read.
     cm = _s3_session.client(
         "s3",
         endpoint_url=settings.S3_ENDPOINT_URL,
         aws_access_key_id=settings.S3_ACCESS_KEY,
         aws_secret_access_key=settings.S3_SECRET_KEY,
         region_name=settings.S3_REGION,
+        config=botocore.config.Config(
+            connect_timeout=5,
+            read_timeout=30,
+            retries={"max_attempts": 3, "mode": "standard"},
+            max_pool_connections=20,
+        ),
     )
     return await cm.__aenter__()
 
