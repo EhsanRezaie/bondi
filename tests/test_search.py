@@ -28,6 +28,18 @@ VALID_EMAIL_FEMALE3 = _phone("search_female3@example.com")
 VALID_EMAIL_MALE2 = _phone("search_male2@example.com")
 VALID_CODE = "123456"
 
+
+def _birth_date(age_years: int) -> str:
+    """Birth date that yields exactly `age_years` today — keeps age-filter
+    tests stable no matter when they run."""
+    from datetime import date
+
+    today = date.today()
+    try:
+        return today.replace(year=today.year - age_years).isoformat()
+    except ValueError:  # Feb 29
+        return today.replace(year=today.year - age_years, day=28).isoformat()
+
 COMPLETE_PROFILE_PAYLOAD_MALE = {
     "name": "Search Male",
     "birth_date": "2000-01-01",
@@ -84,7 +96,7 @@ COMPLETE_PROFILE_PAYLOAD_FEMALE = {
 
 COMPLETE_PROFILE_PAYLOAD_FEMALE2 = {
     "name": "Search Female 2",
-    "birth_date": "1995-10-20",
+    "birth_date": _birth_date(27),
     "gender": "female",
     "lat": 35.6892,
     "lng": 51.3890,
@@ -111,7 +123,7 @@ COMPLETE_PROFILE_PAYLOAD_FEMALE2 = {
 
 COMPLETE_PROFILE_PAYLOAD_FEMALE3 = {
     "name": "Search Female 3",
-    "birth_date": "2002-03-10",
+    "birth_date": _birth_date(24),
     "gender": "female",
     "lat": 35.6892,
     "lng": 51.3890,
