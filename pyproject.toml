@@ -21,7 +21,7 @@ dependencies = [
     "onnxruntime>=1.16.0",
     "opencv-python-headless>=4.8.0",
     "passlib==1.7.4",
-    "pillow==12.2.0",
+    "pillow==12.3.0",
     "prometheus-client==0.26.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.1",
