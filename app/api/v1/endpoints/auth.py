@@ -1,6 +1,7 @@
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -394,13 +395,16 @@ async def register_complete(
     current_user.registration_status = "onboarding_complete"
 
     if body.interests:
+        # One batched lookup for all requested interests (no per-name query).
+        interest_names = [n for n in body.interests if n]
+        interest_rows = await session.execute(
+            select(Interest).where(Interest.name.in_(interest_names))
+        )
+        interest_ids: dict[str, Any] = {str(i.name): i.id for i in interest_rows.scalars().all()}
         for interest_name in body.interests:
-            interest_result = await session.execute(
-                select(Interest).where(Interest.name == interest_name)
-            )
-            interest = interest_result.scalar_one_or_none()
-            if interest:
-                session.add(UserInterest(user_id=current_user.id, interest_id=interest.id))
+            interest_id = interest_ids.get(interest_name)
+            if interest_id:
+                session.add(UserInterest(user_id=current_user.id, interest_id=interest_id))
 
     if body.prompts:
         for prompt_data in body.prompts:

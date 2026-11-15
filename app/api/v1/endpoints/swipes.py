@@ -51,6 +51,26 @@ async def get_user_main_photo_url(session: AsyncSession, user_id: UUID) -> str |
     return None
 
 
+async def get_main_photo_urls(
+    session: AsyncSession, user_ids: list[UUID]
+) -> dict[UUID, tuple[str, str]]:
+    """Main approved photo (raw url, status) per user — one query for the page.
+
+    `is_main` has a partial unique index per user, so at most one row each.
+    Used by list endpoints to avoid a per-row photo lookup (N+1).
+    """
+    rows = (
+        await session.execute(
+            select(Photo.user_id, Photo.url, Photo.status).where(
+                Photo.user_id.in_(user_ids),
+                Photo.is_main == True,
+                Photo.status == "approved",
+            )
+        )
+    ).all()
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
 async def _background_match_notification(
     current_user_id: UUID,
     target_user_id: UUID,
@@ -480,9 +500,11 @@ async def get_liked_users(
         )
 
     users = []
+    main_photos = await get_main_photo_urls(session, [row[0].id for row in rows]) if rows else {}
     for user, profile, swiped_at, _swipe_id in rows:
         # Get main photo URL
-        main_photo_url = await get_user_main_photo_url(session, user.id)
+        photo = main_photos.get(user.id)
+        main_photo_url = await PhotoService.get_photo_url(photo[0], photo[1]) if photo else None
 
         users.append(
             {
@@ -607,8 +629,10 @@ async def get_likers(
         )
 
     users = []
+    main_photos = await get_main_photo_urls(session, [row[0].id for row in rows]) if rows else {}
     for user, profile, swiped_at, _swipe_id in rows:
-        main_photo_url = await get_user_main_photo_url(session, user.id)
+        photo = main_photos.get(user.id)
+        main_photo_url = await PhotoService.get_photo_url(photo[0], photo[1]) if photo else None
 
         users.append(
             {

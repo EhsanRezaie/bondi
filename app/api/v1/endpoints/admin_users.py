@@ -597,40 +597,42 @@ async def admin_get_user_activity(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Get daily activity
-    from datetime import date, timedelta
+    from datetime import date, datetime, time, timedelta
+
+    # Three grouped queries for the whole window (no per-day queries); same
+    # day-boundary semantics as the previous per-day counts, zeros filled below.
+    today = date.today()
+    window_start = datetime.combine(today - timedelta(days=days - 1), time.min)
+    window_end = datetime.combine(today + timedelta(days=1), time.min)
+
+    async def _counts_by_day(column, extra):
+        rows = await session.execute(
+            select(func.date(column).label("day"), func.count())
+            .where(extra, column >= window_start, column < window_end)
+            .group_by(func.date(column))
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
+    swipes_by_day = await _counts_by_day(Swipe.created_at, Swipe.from_user == user_id)
+    matches_by_day = await _counts_by_day(
+        Match.matched_at,
+        or_(Match.user1_id == user_id, Match.user2_id == user_id),
+    )
+    messages_by_day = await _counts_by_day(
+        Message.sent_at,
+        or_(Message.sender_id == user_id, Message.receiver_id == user_id),
+    )
 
     activity = []
     for i in range(days):
-        day = date.today() - timedelta(days=i)
-
-        # Count swipes on this day
-        swipes_result = await session.execute(
-            select(func.count()).where(
-                Swipe.from_user == user_id, func.date(Swipe.created_at) == day
-            )
-        )
-        swipes = swipes_result.scalar() or 0
-
-        # Count matches on this day
-        matches_result = await session.execute(
-            select(func.count()).where(
-                or_(Match.user1_id == user_id, Match.user2_id == user_id),
-                func.date(Match.matched_at) == day,
-            )
-        )
-        matches = matches_result.scalar() or 0
-
-        # Count messages on this day
-        messages_result = await session.execute(
-            select(func.count()).where(
-                or_(Message.sender_id == user_id, Message.receiver_id == user_id),
-                func.date(Message.sent_at) == day,
-            )
-        )
-        messages = messages_result.scalar() or 0
-
+        day = today - timedelta(days=i)
         activity.append(
-            {"date": day.isoformat(), "swipes": swipes, "matches": matches, "messages": messages}
+            {
+                "date": day.isoformat(),
+                "swipes": swipes_by_day.get(day, 0),
+                "matches": matches_by_day.get(day, 0),
+                "messages": messages_by_day.get(day, 0),
+            }
         )
 
     return activity

@@ -103,9 +103,31 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
             )
             .limit(100)
         )
-        for user in result.scalars().all():
-            photos = await session.execute(select(Photo).where(Photo.user_id == user.id))
-            for photo in photos.scalars().all():
+        # Batch the media lookups for the whole page once (no per-user queries):
+        # MinIO objects must be removed before the user rows cascade away.
+        users = result.scalars().all()
+        user_ids = [u.id for u in users]
+        photos_by_user: dict = {}
+        media_msgs: dict = {}
+        if user_ids:
+            photo_rows = await session.execute(select(Photo).where(Photo.user_id.in_(user_ids)))
+            for photo in photo_rows.scalars().all():
+                photos_by_user.setdefault(photo.user_id, []).append(photo)
+            msg_rows = await session.execute(
+                select(Message).where(
+                    or_(
+                        Message.sender_id.in_(user_ids),
+                        Message.receiver_id.in_(user_ids),
+                    ),
+                    Message.message_type.in_(("photo", "voice")),
+                    Message.media_url.is_not(None),
+                )
+            )
+            for msg in msg_rows.scalars().all():
+                media_msgs[msg.id] = msg  # both purged users may share one message
+
+        for user in users:
+            for photo in photos_by_user.get(user.id, []):
                 try:
                     await PhotoService.delete_photo(str(user.id), str(photo.id))
                 except Exception:
@@ -114,26 +136,14 @@ async def _purge_deleted_accounts(session_factory=None) -> dict:
                         user_id=str(user.id),
                         photo_id=str(photo.id),
                     )
-
-            # Chat photos/voice for this user's messages — DB rows cascade on
-            # user delete, so the MinIO objects must be removed here first.
-            messages = await session.execute(
-                select(Message).where(
-                    or_(Message.sender_id == user.id, Message.receiver_id == user.id),
-                    Message.message_type.in_(("photo", "voice")),
-                    Message.media_url.is_not(None),
-                )
-            )
-            for msg in messages.scalars().all():
+            for msg in media_msgs.values():
                 try:
                     await MediaService.delete_media(str(msg.chat_id), str(msg.id), msg.message_type)
                 except Exception:
                     logger.exception(
                         "purge_chat_media_delete_failed",
-                        user_id=str(user.id),
                         message_id=str(msg.id),
                     )
-
             await session.delete(user)
             purged += 1
         await session.commit()

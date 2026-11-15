@@ -1,7 +1,7 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user
@@ -134,32 +134,33 @@ async def admin_user_growth_stats(
 ):
     """Admin: Get user growth chart data for last N days"""
 
+    # Two grouped queries for the whole window (no per-day queries). Same
+    # semantics as the previous per-day counts: day boundaries evaluated in
+    # the DB session timezone, zero days filled below.
+    today = date.today()
+    window_start = datetime.combine(today - timedelta(days=days - 1), time.min)
+    window_end = datetime.combine(today + timedelta(days=1), time.min)
+
+    async def _counts_by_day(column):
+        rows = await session.execute(
+            select(func.date(column).label("day"), func.count())
+            .where(column >= window_start, column < window_end)
+            .group_by(func.date(column))
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
+    new_by_day = await _counts_by_day(User.created_at)
+    active_by_day = await _counts_by_day(User.last_seen_at)
+
     labels = []
     new_users = []
     active_users = []
 
     for i in range(days - 1, -1, -1):
-        day = date.today() - timedelta(days=i)
-        day_start = datetime(day.year, day.month, day.day)
-        day_end = day_start + timedelta(days=1)
-
+        day = today - timedelta(days=i)
         labels.append(day.isoformat())
-
-        # New users on this day
-        new_result = await session.execute(
-            select(func.count()).where(
-                and_(User.created_at >= day_start, User.created_at < day_end)
-            )
-        )
-        new_users.append(new_result.scalar() or 0)
-
-        # Active users on this day (last_seen_at within this day)
-        active_result = await session.execute(
-            select(func.count()).where(
-                and_(User.last_seen_at >= day_start, User.last_seen_at < day_end)
-            )
-        )
-        active_users.append(active_result.scalar() or 0)
+        new_users.append(new_by_day.get(day, 0))
+        active_users.append(active_by_day.get(day, 0))
 
     return UserGrowthResponse(labels=labels, new_users=new_users, active_users=active_users)
 
@@ -179,36 +180,30 @@ async def admin_activity_stats(
     matches_data = []
     messages_data = []
 
+    # Three grouped queries for the whole window (no per-day queries), same
+    # day-boundary semantics as before; zero days filled below.
+    today = date.today()
+    window_start = datetime.combine(today - timedelta(days=days - 1), time.min)
+    window_end = datetime.combine(today + timedelta(days=1), time.min)
+
+    async def _counts_by_day(column):
+        rows = await session.execute(
+            select(func.date(column).label("day"), func.count())
+            .where(column >= window_start, column < window_end)
+            .group_by(func.date(column))
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
+    swipes_by_day = await _counts_by_day(Swipe.created_at)
+    matches_by_day = await _counts_by_day(Match.matched_at)
+    messages_by_day = await _counts_by_day(Message.sent_at)
+
     for i in range(days - 1, -1, -1):
-        day = date.today() - timedelta(days=i)
-        day_start = datetime(day.year, day.month, day.day)
-        day_end = day_start + timedelta(days=1)
-
+        day = today - timedelta(days=i)
         labels.append(day.isoformat())
-
-        # Swipes
-        swipes_result = await session.execute(
-            select(func.count()).where(
-                and_(Swipe.created_at >= day_start, Swipe.created_at < day_end)
-            )
-        )
-        swipes_data.append(swipes_result.scalar() or 0)
-
-        # Matches
-        matches_result = await session.execute(
-            select(func.count()).where(
-                and_(Match.matched_at >= day_start, Match.matched_at < day_end)
-            )
-        )
-        matches_data.append(matches_result.scalar() or 0)
-
-        # Messages
-        messages_result = await session.execute(
-            select(func.count()).where(
-                and_(Message.sent_at >= day_start, Message.sent_at < day_end)
-            )
-        )
-        messages_data.append(messages_result.scalar() or 0)
+        swipes_data.append(swipes_by_day.get(day, 0))
+        matches_data.append(matches_by_day.get(day, 0))
+        messages_data.append(messages_by_day.get(day, 0))
 
     return ActivityStatsResponse(
         labels=labels, swipes=swipes_data, matches=matches_data, messages=messages_data

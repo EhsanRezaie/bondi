@@ -60,13 +60,18 @@ async def admin_list_tickets(
         for msg in msg_result.scalars().all():
             last_msg_map[msg.ticket_id] = msg.content
 
-    # Get user info for each ticket
+    # Get user info for each ticket — batched once for the page (no N+1).
+    user_map = {}
+    if tickets:
+        user_rows = await session.execute(
+            select(User)
+            .options(selectinload(User.profile))
+            .where(User.id.in_([t.user_id for t in tickets]))
+        )
+        user_map = {u.id: u for u in user_rows.scalars().all()}
     response_tickets = []
     for ticket in tickets:
-        user_result = await session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id == ticket.user_id)
-        )
-        user = user_result.scalar_one_or_none()
+        user = user_map.get(ticket.user_id)
 
         response_tickets.append(
             AdminTicketResponse(

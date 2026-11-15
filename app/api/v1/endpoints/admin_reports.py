@@ -41,17 +41,19 @@ async def admin_list_reports(
     result = await session.execute(query)
     reports = result.scalars().all()
 
+    # Batch-load reporter/reported users once for the page (avoids 2N queries).
+    involved_ids = list({r.reporter_id for r in reports} | {r.reported_id for r in reports})
+    users_by_id = {}
+    if involved_ids:
+        user_rows = await session.execute(
+            select(User).options(selectinload(User.profile)).where(User.id.in_(involved_ids))
+        )
+        users_by_id = {u.id: u for u in user_rows.scalars().all()}
+
     response_reports = []
     for report in reports:
-        reporter_result = await session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id == report.reporter_id)
-        )
-        reporter = reporter_result.scalar_one_or_none()
-
-        reported_result = await session.execute(
-            select(User).options(selectinload(User.profile)).where(User.id == report.reported_id)
-        )
-        reported = reported_result.scalar_one_or_none()
+        reporter = users_by_id.get(report.reporter_id)
+        reported = users_by_id.get(report.reported_id)
 
         response_reports.append(
             AdminReportResponse(
