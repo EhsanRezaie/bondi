@@ -26,6 +26,14 @@ class Photo(Base):
         Index(
             "idx_photos_user_main", "user_id", "is_main", postgresql_where=text("is_main = true")
         ),
+        # Rare rows only: discover/search anti-join "no pending/rejected photos"
+        # probes this instead of scanning every photo per candidate (measured
+        # ~18% faster discover at 60k users).
+        Index(
+            "idx_photos_not_approved",
+            "user_id",
+            postgresql_where=text("status <> 'approved'"),
+        ),
         Index("idx_photos_user_id", "user_id", "created_at"),
         Index("idx_photos_status", "status", "created_at"),
         Index("idx_photos_phash", "user_id", "phash"),

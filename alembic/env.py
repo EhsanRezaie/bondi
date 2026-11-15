@@ -1,11 +1,19 @@
 import asyncio
+import importlib
+import pkgutil
 from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
+# Import every model module so Base.metadata is populated — without this,
+# autogenerate compares an EMPTY metadata against the DB and emits "pass".
+import app.models as _models
 from alembic import context
 from app.core.config import settings
 from app.db.base import Base
+
+for _mi in pkgutil.iter_modules(_models.__path__):
+    importlib.import_module(f"app.models.{_mi.name}")
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
