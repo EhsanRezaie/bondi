@@ -1,5 +1,11 @@
 # tests/done/test_celery_tasks.py
 
+# `Celery(include=...)` imports these modules only at *worker* startup — never
+# in a plain test process. Import them here to replicate what a worker does,
+# otherwise tasks registered via the decorator are invisible to the registry.
+import app.tasks.cleanup  # noqa: F401
+import app.tasks.notifications  # noqa: F401
+
 from app.tasks.celery_app import celery_app
 
 
