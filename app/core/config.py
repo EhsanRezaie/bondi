@@ -1,6 +1,6 @@
 # app/core/config.py
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # ============================================
@@ -212,6 +212,27 @@ class Settings(BaseSettings):
         if not v or not v.strip() or v in weak:
             raise ValueError("ENCRYPTION_SECRET must be set to a strong, non-default value")
         return v
+
+    @model_validator(mode="after")
+    def _production_secret_strength(self) -> "Settings":
+        """Fail fast on weak secrets — but only in production.
+
+        Dev/test .env files may carry short convenience keys; production
+        must not boot with one (a short HS256 key is brute-forceable).
+        """
+        if self.ENVIRONMENT != "production":
+            return self
+        weak_markers = ("changeme", "change-this", "your-secret", "secret-key", "super-secret")
+        if len(self.SECRET_KEY) < 32 or any(m in self.SECRET_KEY.lower() for m in weak_markers):
+            raise ValueError(
+                "SECRET_KEY is too weak for production: use at least 32 random chars "
+                "(e.g. `openssl rand -base64 48`)"
+            )
+        if len(self.ENCRYPTION_SECRET) < 32:
+            raise ValueError(
+                "ENCRYPTION_SECRET is too weak for production: use at least 32 random chars"
+            )
+        return self
 
     # ============================================
     # Pydantic Config
