@@ -140,9 +140,7 @@ class TestCurrentUserDependencies:
         result.first.return_value = (True, 5)
         assert await deps.get_current_user_id(credential, session) == user_id
 
-    async def test_get_current_user_id_rejects_cached_inactive_and_revoked_users(
-        self, monkeypatch
-    ):
+    async def test_get_current_user_id_rejects_cached_inactive_and_revoked_users(self, monkeypatch):
         user_id = uuid4()
         credential = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=create_access_token(str(user_id), 7)

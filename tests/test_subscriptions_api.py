@@ -16,9 +16,7 @@ from tests.test_chats import PAYLOAD_MALE, _phone, register_and_get_headers
 BASE = "/api/v1/subscriptions"
 
 
-async def _register(
-    client: AsyncClient, mock_verification_code, key: str
-) -> tuple[dict, str]:
+async def _register(client: AsyncClient, mock_verification_code, key: str) -> tuple[dict, str]:
     headers, user_id = await register_and_get_headers(
         client, _phone(f"{key}@example.com"), PAYLOAD_MALE, mock_verification_code
     )
@@ -41,9 +39,7 @@ class TestPurchase:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         headers, user_id = await _register(client, mock_verification_code, "sub_p")
-        res = await client.post(
-            f"{BASE}/purchase", json={"plan_id": "monthly"}, headers=headers
-        )
+        res = await client.post(f"{BASE}/purchase", json={"plan_id": "monthly"}, headers=headers)
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["authority"]
@@ -53,9 +49,7 @@ class TestPurchase:
 
         pending = (
             await db_session.execute(
-                select(PendingPurchase).where(
-                    PendingPurchase.authority == body["authority"]
-                )
+                select(PendingPurchase).where(PendingPurchase.authority == body["authority"])
             )
         ).scalar_one()
         assert str(pending.user_id) == user_id
@@ -63,30 +57,20 @@ class TestPurchase:
         assert pending.plan == "monthly"
         assert pending.amount_rials == 50000
 
-    async def test_purchase_invalid_plan_400(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_purchase_invalid_plan_400(self, client: AsyncClient, mock_verification_code):
         headers, _ = await _register(client, mock_verification_code, "sub_pi")
-        res = await client.post(
-            f"{BASE}/purchase", json={"plan_id": "weekly"}, headers=headers
-        )
+        res = await client.post(f"{BASE}/purchase", json={"plan_id": "weekly"}, headers=headers)
         assert res.status_code == 400
         assert res.json()["detail"] == "Invalid plan"
 
 
 class TestVerify:
-    async def _purchase(
-        self, client: AsyncClient, headers: dict, plan: str = "monthly"
-    ) -> str:
-        res = await client.post(
-            f"{BASE}/purchase", json={"plan_id": plan}, headers=headers
-        )
+    async def _purchase(self, client: AsyncClient, headers: dict, plan: str = "monthly") -> str:
+        res = await client.post(f"{BASE}/purchase", json={"plan_id": plan}, headers=headers)
         assert res.status_code == 200, res.text
         return res.json()["authority"]
 
-    async def test_verify_canceled_payment(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_verify_canceled_payment(self, client: AsyncClient, mock_verification_code):
         headers, _ = await _register(client, mock_verification_code, "sub_vc")
         authority = await self._purchase(client, headers)
         res = await client.get(
@@ -99,9 +83,7 @@ class TestVerify:
         assert body["success"] is False
         assert "canceled" in body["message"]
 
-    async def test_verify_unknown_authority(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_verify_unknown_authority(self, client: AsyncClient, mock_verification_code):
         headers, _ = await _register(client, mock_verification_code, "sub_vu")
         res = await client.get(
             f"{BASE}/verify",
@@ -111,9 +93,7 @@ class TestVerify:
         assert res.status_code == 200
         assert "Unknown payment reference" in res.json()["message"]
 
-    async def test_verify_wrong_owner_403(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_verify_wrong_owner_403(self, client: AsyncClient, mock_verification_code):
         owner_headers, _ = await _register(client, mock_verification_code, "sub_vo")
         other_headers, _ = await _register(client, mock_verification_code, "sub_vo2")
         authority = await self._purchase(client, owner_headers)
@@ -126,9 +106,7 @@ class TestVerify:
         assert res.status_code == 403
         assert "does not belong" in res.json()["detail"]
 
-    async def test_verify_single_use(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_verify_single_use(self, client: AsyncClient, mock_verification_code):
         headers, _ = await _register(client, mock_verification_code, "sub_v1x")
         authority = await self._purchase(client, headers)
 
@@ -158,9 +136,7 @@ class TestStatusAndCancel:
         # Onboarding grants a welcome-bonus premium: a Subscription row with
         # source="welcome_bonus" exists for every fresh user.
         row = (
-            await db_session.execute(
-                select(Subscription).where(Subscription.user_id == user_id)
-            )
+            await db_session.execute(select(Subscription).where(Subscription.user_id == user_id))
         ).scalar_one()
         assert row.source == "welcome_bonus"
         assert row.status == "active"
@@ -188,9 +164,7 @@ class TestStatusAndCancel:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         headers, user_id = await _register(client, mock_verification_code, "sub_c1")
-        res = await client.post(
-            f"{BASE}/purchase", json={"plan_id": "quarterly"}, headers=headers
-        )
+        res = await client.post(f"{BASE}/purchase", json={"plan_id": "quarterly"}, headers=headers)
         authority = res.json()["authority"]
 
         res = await client.get(
@@ -214,13 +188,17 @@ class TestStatusAndCancel:
         assert res.json()["success"] is True
 
         row = (
-            await db_session.execute(
-                select(Subscription)
-                .where(Subscription.user_id == user_id)
-                .order_by(Subscription.created_at.desc())
-                .limit(1)
+            (
+                await db_session.execute(
+                    select(Subscription)
+                    .where(Subscription.user_id == user_id)
+                    .order_by(Subscription.created_at.desc())
+                    .limit(1)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert row is not None
         assert row.status == "cancelled"
 

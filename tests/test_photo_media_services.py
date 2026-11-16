@@ -62,7 +62,9 @@ class TestPhotoServiceUnitPaths:
         assert PhotoService.is_duplicate([], phash) is False
 
     async def test_validate_size_format_dimensions_and_corrupt_data(self):
-        ok, error = await PhotoService.validate_image(b"x" * (PhotoService.MAX_FILE_SIZE + 1), "large.jpg")
+        ok, error = await PhotoService.validate_image(
+            b"x" * (PhotoService.MAX_FILE_SIZE + 1), "large.jpg"
+        )
         assert ok is False and "too large" in error
 
         assert PhotoService._validate_image_sync(_image_bytes(fmt="GIF"))[0] is False
@@ -87,8 +89,13 @@ class TestPhotoServiceUnitPaths:
             key,
             "users/user-1/photo-2_thumb.webp",
         ]
-        assert all(call.kwargs["Bucket"] == settings.S3_PRIVATE_BUCKET for call in s3.put_object.await_args_list)
-        assert all(call.kwargs["ContentType"] == "image/webp" for call in s3.put_object.await_args_list)
+        assert all(
+            call.kwargs["Bucket"] == settings.S3_PRIVATE_BUCKET
+            for call in s3.put_object.await_args_list
+        )
+        assert all(
+            call.kwargs["ContentType"] == "image/webp" for call in s3.put_object.await_args_list
+        )
 
     async def test_delete_checks_buckets_and_current_plus_legacy_keys(self, monkeypatch):
         s3 = MagicMock()
@@ -109,11 +116,15 @@ class TestPhotoServiceUnitPaths:
         deleted = await PhotoService.delete_photo("u", "p")
 
         assert deleted is True
-        s3.delete_object.assert_awaited_once_with(Bucket=settings.S3_PRIVATE_BUCKET, Key="users/u/p.webp")
+        s3.delete_object.assert_awaited_once_with(
+            Bucket=settings.S3_PRIVATE_BUCKET, Key="users/u/p.webp"
+        )
 
     async def test_delete_key_handles_non_not_found_head_errors(self):
         s3 = MagicMock()
-        s3.head_object = AsyncMock(side_effect=ClientError({"Error": {"Code": "AccessDenied"}}, "HeadObject"))
+        s3.head_object = AsyncMock(
+            side_effect=ClientError({"Error": {"Code": "AccessDenied"}}, "HeadObject")
+        )
         s3.delete_object = AsyncMock()
 
         assert await PhotoService._delete_key_from_both(s3, "k") is False
@@ -150,7 +161,10 @@ class TestPhotoServiceUnitPaths:
         move.reset_mock(side_effect=True)
         move.side_effect = [False, True, True]
         await PhotoService.unpublish_photo("u", "p")
-        assert move.await_args_list[1].args[1:3] == (settings.S3_PUBLIC_BUCKET, settings.S3_PRIVATE_BUCKET)
+        assert move.await_args_list[1].args[1:3] == (
+            settings.S3_PUBLIC_BUCKET,
+            settings.S3_PRIVATE_BUCKET,
+        )
         assert move.await_args_list[1].kwargs["public"] is False
 
     async def test_photo_url_status_cache_signed_url_and_thumbnail_fallback(self, monkeypatch):
@@ -204,7 +218,10 @@ class TestMediaServiceUnitPaths:
             rgb = MediaService._to_rgb(Image.new(mode, (1100, 700), 50))
             assert rgb.mode == "RGB"
         full, thumb = MediaService._encode_photo_sync(_image_bytes(fmt="PNG", mode="RGBA"))
-        with Image.open(io.BytesIO(full)) as full_image, Image.open(io.BytesIO(thumb)) as thumb_image:
+        with (
+            Image.open(io.BytesIO(full)) as full_image,
+            Image.open(io.BytesIO(thumb)) as thumb_image,
+        ):
             assert full_image.format == "WEBP" and full_image.size == (1080, 720)
             assert thumb_image.format == "WEBP" and thumb_image.size == (320, 213)
 
@@ -290,21 +307,38 @@ class TestMediaServiceUnitPaths:
         monkeypatch.setattr(media_service, "s3_client", lambda: _S3Context(s3))
 
         assert await MediaService.resolve_media_url(None) is None
-        assert await MediaService.resolve_media_url("https://example.test/avatar.jpg") == "https://example.test/avatar.jpg"
-        assert await MediaService.resolve_media_url("https://old.test/private/chat/photos/c/m.jpg?sig=x") == "https://signed.test/media"
+        assert (
+            await MediaService.resolve_media_url("https://example.test/avatar.jpg")
+            == "https://example.test/avatar.jpg"
+        )
+        assert (
+            await MediaService.resolve_media_url(
+                "https://old.test/private/chat/photos/c/m.jpg?sig=x"
+            )
+            == "https://signed.test/media"
+        )
         assert s3.generate_presigned_url.await_args.kwargs["Params"]["Key"] == "chat/photos/c/m.jpg"
-        assert redis.setex.await_args.args == ("chat_media:chat/photos/c/m.jpg", 300, "https://signed.test/media")
+        assert redis.setex.await_args.args == (
+            "chat_media:chat/photos/c/m.jpg",
+            300,
+            "https://signed.test/media",
+        )
 
         redis.get.return_value = "cached-media-url"
         assert await MediaService.resolve_media_url("chat/photos/c/m.jpg") == "cached-media-url"
 
         redis.get.side_effect = RuntimeError("cache unavailable")
         redis.setex.side_effect = RuntimeError("cache unavailable")
-        assert await MediaService.resolve_media_url("chat/voice/c/m.m4a") == "https://signed.test/media"
+        assert (
+            await MediaService.resolve_media_url("chat/voice/c/m.m4a")
+            == "https://signed.test/media"
+        )
 
         monkeypatch.setattr(
             media_service,
             "s3_client",
             lambda: (_ for _ in ()).throw(RuntimeError("storage unavailable")),
         )
-        assert await MediaService.resolve_media_url("chat/photos/c/m.webp") == "chat/photos/c/m.webp"
+        assert (
+            await MediaService.resolve_media_url("chat/photos/c/m.webp") == "chat/photos/c/m.webp"
+        )

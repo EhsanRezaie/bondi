@@ -40,9 +40,7 @@ async def _like(client: AsyncClient, headers: dict, target_id: str) -> None:
     assert res.status_code == 200, res.text
 
 
-async def _create_chat(
-    client: AsyncClient, headers: dict, target_id: str, content: str = "hi"
-):
+async def _create_chat(client: AsyncClient, headers: dict, target_id: str, content: str = "hi"):
     return await client.post(
         CHATS_URL,
         json={"user_id": target_id, "content": content},
@@ -58,9 +56,7 @@ class TestCreateChatGuards:
         res = await _create_chat(client, male_headers, str(uuid.uuid4()))
         assert res.status_code == 404
 
-    async def test_create_chat_blocked_pair_403(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_create_chat_blocked_pair_403(self, client: AsyncClient, mock_verification_code):
         male_headers, male_id, female_headers, female_id = await _make_pair(
             client, mock_verification_code, "cblk"
         )
@@ -116,9 +112,7 @@ class TestAcceptChat:
         assert res.status_code == 403
         assert "Only the recipient" in res.json()["detail"]
 
-    async def test_non_member_cannot_accept(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_non_member_cannot_accept(self, client: AsyncClient, mock_verification_code):
         _, _, _, _, chat = await self._pending_chat(client, mock_verification_code, "acc2")
         third_headers, _ = await register_and_get_headers(
             client, _phone("acc2_third@example.com"), PAYLOAD_FEMALE, mock_verification_code
@@ -150,9 +144,7 @@ class TestChatDetailAndDelete:
         assert res.status_code == 200
         return male_headers, female_headers, res.json()
 
-    async def test_detail_member_and_non_member(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_detail_member_and_non_member(self, client: AsyncClient, mock_verification_code):
         _male_headers, female_headers, chat = await self._accepted_chat(
             client, mock_verification_code, "det"
         )
@@ -190,9 +182,7 @@ class TestChatDetailAndDelete:
         res = await client.delete(f"{CHATS_URL}/{chat['chat_id']}", headers=female_headers)
         assert res.status_code == 204
 
-    async def test_delete_nonexistent_chat_404(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_delete_nonexistent_chat_404(self, client: AsyncClient, mock_verification_code):
         male_headers, _, _, _ = await _make_pair(client, mock_verification_code, "del404")
         res = await client.delete(f"{CHATS_URL}/{uuid.uuid4()}", headers=male_headers)
         assert res.status_code == 404
@@ -209,9 +199,7 @@ class TestDailyChatLimit:
         # the sender to free to exercise the cap (is_premium is a property
         # over premium_until).
         await db_session.execute(
-            update(UserProfile)
-            .where(UserProfile.user_id == male_id)
-            .values(premium_until=None)
+            update(UserProfile).where(UserProfile.user_id == male_id).values(premium_until=None)
         )
         await db_session.commit()
 

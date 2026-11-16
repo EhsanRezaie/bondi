@@ -1329,9 +1329,7 @@ class TestUserSettings:
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        response = await client.put(
-            "/api/v1/users/me/settings", json={}, headers=headers
-        )
+        response = await client.put("/api/v1/users/me/settings", json={}, headers=headers)
 
         assert response.status_code == 400
         assert response.json()["detail"] == "No fields to update"
@@ -1498,6 +1496,7 @@ class TestPublicProfile:
         await db_session.commit()
         inactive = await client.get(f"/api/v1/users/{target_id}", headers=headers)
         assert inactive.status_code == 404
+
 
 class TestPremiumStatus:
     async def test_is_premium_field_exists(self, client: AsyncClient, mock_verification_code):

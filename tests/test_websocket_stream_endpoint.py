@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 
 from app.models.chat import Chat
 from app.models.user import User
@@ -61,9 +60,7 @@ async def _add_pair(db_session, *, hide_last_seen=False):
     user, peer = _user(), _user()
     user.last_seen_at = datetime.now(UTC)
     peer.last_seen_at = datetime(2026, 1, 2, tzinfo=UTC)
-    chat = Chat(
-        id=uuid4(), initiator_id=user.id, recipient_id=peer.id, status="accepted"
-    )
+    chat = Chat(id=uuid4(), initiator_id=user.id, recipient_id=peer.id, status="accepted")
     db_session.add_all(
         [
             user,
@@ -91,7 +88,9 @@ class TestWebsocketStreamEndpoint:
         manager = _manager()
         monkeypatch.setattr(stream, "websocket_manager", manager)
 
-        await stream.stream_websocket(socket, token="not-a-real-token", redis=MagicMock(), db=db_session)
+        await stream.stream_websocket(
+            socket, token="not-a-real-token", redis=MagicMock(), db=db_session
+        )
 
         assert socket.closed == [(4401, "Unauthorized")]
         manager.connect.assert_not_awaited()
@@ -100,7 +99,9 @@ class TestWebsocketStreamEndpoint:
         from app.api.v1.websocket import stream
 
         user, _, _ = await _add_pair(db_session)
-        socket = _Socket(["not-json", json.dumps({"type": "ping"}), json.dumps({"type": "unknown"})])
+        socket = _Socket(
+            ["not-json", json.dumps({"type": "ping"}), json.dumps({"type": "unknown"})]
+        )
         monkeypatch.setattr(stream, "validate_ws_token", AsyncMock(return_value=str(user.id)))
         manager = _manager()
         monkeypatch.setattr(stream, "websocket_manager", manager)
@@ -146,9 +147,7 @@ class TestWebsocketStreamEndpoint:
             "chat_id": str(chat.id),
             "user_id": str(peer.id),
         }
-        manager.subscribe.assert_awaited_once_with(
-            str(user.id), str(chat.id), str(peer.id), redis
-        )
+        manager.subscribe.assert_awaited_once_with(str(user.id), str(chat.id), str(peer.id), redis)
         manager.set_typing.assert_awaited_once_with(f"ws:chat:{chat.id}", str(user.id), redis)
         manager.clear_typing.assert_awaited_once_with(f"ws:chat:{chat.id}", str(user.id), redis)
         read_event = manager.send_to_conversation.await_args.kwargs["message"]
@@ -161,7 +160,7 @@ class TestWebsocketStreamEndpoint:
     async def test_non_member_subscribe_does_not_send_presence(self, db_session, monkeypatch):
         from app.api.v1.websocket import stream
 
-        user, peer, chat = await _add_pair(db_session)
+        _, _, chat = await _add_pair(db_session)
         outsider = _user()
         db_session.add(outsider)
         await db_session.commit()
@@ -177,9 +176,7 @@ class TestWebsocketStreamEndpoint:
         assert socket.sent == []
         manager.subscribe.assert_not_awaited()
 
-    async def test_hidden_last_seen_is_omitted_from_offline_snapshot(
-        self, db_session, monkeypatch
-    ):
+    async def test_hidden_last_seen_is_omitted_from_offline_snapshot(self, db_session, monkeypatch):
         from app.api.v1.websocket import stream
 
         user, peer, chat = await _add_pair(db_session, hide_last_seen=True)
@@ -220,7 +217,9 @@ class TestWebsocketStreamEndpoint:
         manager = _manager()
         manager.is_online.return_value = True
         monkeypatch.setattr(stream, "websocket_manager", manager)
-        online = await stream._presence_snapshot(db_session, str(peer.id), MagicMock(), str(chat.id))
+        online = await stream._presence_snapshot(
+            db_session, str(peer.id), MagicMock(), str(chat.id)
+        )
         assert online == {
             "type": "user_online",
             "chat_id": str(chat.id),
@@ -228,7 +227,9 @@ class TestWebsocketStreamEndpoint:
         }
 
         manager.is_online.return_value = False
-        offline = await stream._presence_snapshot(db_session, str(peer.id), MagicMock(), str(chat.id))
+        offline = await stream._presence_snapshot(
+            db_session, str(peer.id), MagicMock(), str(chat.id)
+        )
         assert offline["type"] == "user_offline"
         assert offline["last_seen_at"] == peer.last_seen_at.isoformat()
 
@@ -242,24 +243,18 @@ class TestWebsocketStreamEndpoint:
         monkeypatch.setattr(stream, "websocket_manager", manager)
         redis = MagicMock()
 
-        await stream._relay_typing(
-            db_session, str(user.id), chat.id, None, "typing", redis
-        )
+        await stream._relay_typing(db_session, str(user.id), chat.id, None, "typing", redis)
         manager.set_typing.assert_awaited_once_with(f"ws:chat:{chat.id}", str(user.id), redis)
         assert peer.id != user.id
 
         manager.set_typing.reset_mock()
-        await stream._relay_typing(
-            db_session, str(user.id), uuid4(), None, "typing", redis
-        )
+        await stream._relay_typing(db_session, str(user.id), uuid4(), None, "typing", redis)
         manager.set_typing.assert_not_awaited()
 
         await stream._relay_typing(
             db_session, str(user.id), None, str(chat.id), "typing_stopped", redis
         )
-        manager.clear_typing.assert_awaited_once_with(
-            f"ws:chat:{chat.id}", str(user.id), redis
-        )
+        manager.clear_typing.assert_awaited_once_with(f"ws:chat:{chat.id}", str(user.id), redis)
 
     async def test_broadcast_presence_ignores_invalid_id_and_contains_publish_failures(
         self, db_session, monkeypatch
@@ -274,9 +269,7 @@ class TestWebsocketStreamEndpoint:
 
         await stream._broadcast_presence(db_session, "not-a-uuid", {"type": "x"}, redis)
         redis.publish.assert_not_awaited()
-        await stream._broadcast_presence(
-            db_session, str(user.id), {"type": "user_offline"}, redis
-        )
+        await stream._broadcast_presence(db_session, str(user.id), {"type": "user_offline"}, redis)
         redis.publish.assert_awaited()
 
     async def test_receive_failure_still_disconnects_and_broadcasts_offline(
@@ -297,17 +290,13 @@ class TestWebsocketStreamEndpoint:
         redis = MagicMock()
         redis.publish = AsyncMock()
 
-        await stream.stream_websocket(
-            socket, token="opaque-test-token", redis=redis, db=db_session
-        )
+        await stream.stream_websocket(socket, token="opaque-test-token", redis=redis, db=db_session)
 
         manager.disconnect.assert_awaited_once_with(socket, str(user.id), redis)
         manager.broadcast_peer_presence.assert_awaited_once()
         assert manager.broadcast_peer_presence.await_args.args[1]["type"] == "user_offline"
 
-    async def test_cancelled_connection_sends_shutdown_and_cleans_up(
-        self, db_session, monkeypatch
-    ):
+    async def test_cancelled_connection_sends_shutdown_and_cleans_up(self, db_session, monkeypatch):
         from app.api.v1.websocket import stream
 
         user, _, _ = await _add_pair(db_session)

@@ -23,9 +23,7 @@ class TestHaversine:
         assert 111.0 < km < 111.5
 
     def test_symmetry(self):
-        assert loc._haversine_km(*TEHRAN, 25.27, 55.29) == loc._haversine_km(
-            25.27, 55.29, *TEHRAN
-        )
+        assert loc._haversine_km(*TEHRAN, 25.27, 55.29) == loc._haversine_km(25.27, 55.29, *TEHRAN)
 
 
 class TestCountryStateCityLookups:
@@ -138,9 +136,7 @@ class TestReverseGeocodeRedis:
         assert json.loads(payload) == first
 
     async def test_cache_hit_skips_compute(self):
-        stored = {
-            "country": "X", "country_iso2": "XX", "province": "P", "city": "C"
-        }
+        stored = {"country": "X", "country_iso2": "XX", "province": "P", "city": "C"}
         redis = MagicMock()
         redis.get = AsyncMock(
             return_value=b'{"country": "X", "country_iso2": "XX", "province": "P", "city": "C"}'

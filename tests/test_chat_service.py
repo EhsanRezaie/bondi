@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, timedelta
-from uuid import uuid4
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 from app.models.block import Block
 from app.models.chat import Chat
@@ -95,13 +95,16 @@ class TestDailyLimitsAndPairQueries:
             is_deleted_for_all=True,
             sent_at=datetime.now(UTC) + timedelta(seconds=1),
         )
-        db_session.add_all([first, second, third, chat, inactive, old_message, latest_message, hidden_message])
+        db_session.add_all(
+            [first, second, third, chat, inactive, old_message, latest_message, hidden_message]
+        )
         await db_session.commit()
 
         assert await chat_service.find_chat_for_pair(db_session, second.id, first.id) == chat
-        assert await chat_service.find_chat_for_pair(
-            db_session, first.id, third.id, only_active=False
-        ) == inactive
+        assert (
+            await chat_service.find_chat_for_pair(db_session, first.id, third.id, only_active=False)
+            == inactive
+        )
         assert await chat_service.find_chat_for_pair(db_session, first.id, third.id) is None
         assert await chat_service.get_last_messages_for_chats(db_session, []) == {}
         last = await chat_service.get_last_messages_for_chats(db_session, [chat.id])
@@ -163,7 +166,9 @@ class TestChatRules:
         async def remaining(_user):
             return 0
 
-        monkeypatch.setattr(chat_service.RewardService, "get_remaining_chats", AsyncMock(side_effect=remaining))
+        monkeypatch.setattr(
+            chat_service.RewardService, "get_remaining_chats", AsyncMock(side_effect=remaining)
+        )
         can_start, reason = await chat_service.can_start_new_chat(db_session, first.id, False)
         assert can_start is False
         assert "Daily new chat limit reached" in reason
@@ -250,9 +255,7 @@ class TestMessageService:
             "resolve_media_url",
             AsyncMock(return_value="https://signed.example/media"),
         )
-        data = await chat_service.get_decrypted_message_for_client(
-            db_session, message, first.id
-        )
+        data = await chat_service.get_decrypted_message_for_client(db_session, message, first.id)
         assert data["content"] == "hello"
         assert data["media_url"] == "https://signed.example/media"
         assert data["client_id"] == str(client_id)
@@ -347,10 +350,18 @@ class TestMessageService:
         first, second = _user(), _user()
         chat = _chat(first, second, status="accepted")
         text_message = Message(
-            id=uuid4(), chat_id=chat.id, sender_id=first.id, receiver_id=second.id, message_type="text"
+            id=uuid4(),
+            chat_id=chat.id,
+            sender_id=first.id,
+            receiver_id=second.id,
+            message_type="text",
         )
         photo_message = Message(
-            id=uuid4(), chat_id=chat.id, sender_id=first.id, receiver_id=second.id, message_type="photo"
+            id=uuid4(),
+            chat_id=chat.id,
+            sender_id=first.id,
+            receiver_id=second.id,
+            message_type="photo",
         )
         deleted_message = Message(
             id=uuid4(),
@@ -417,9 +428,10 @@ class TestMessageService:
         assert await chat_service.forward_message(
             db_session, original.id, target.id, stranger.id
         ) == (None, "Not authorized to forward this message")
-        assert await chat_service.forward_message(
-            db_session, original.id, uuid4(), first.id
-        ) == (None, "Target chat not found")
+        assert await chat_service.forward_message(db_session, original.id, uuid4(), first.id) == (
+            None,
+            "Target chat not found",
+        )
         assert await chat_service.forward_message(
             db_session, original.id, outsider_target.id, first.id
         ) == (None, "Not part of target chat")

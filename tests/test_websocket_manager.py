@@ -45,9 +45,7 @@ class TestWebSocketManager:
         websocket.accept.assert_awaited_once()
         assert manager.active_connections["u1"] == {websocket}
         redis.setex.assert_awaited_once_with("online:u1", ONLINE_TTL, "1")
-        presence.assert_awaited_once_with(
-            "u1", {"type": "user_online", "user_id": "u1"}, redis
-        )
+        presence.assert_awaited_once_with("u1", {"type": "user_online", "user_id": "u1"}, redis)
         task = manager._listener_tasks.pop("notify:u1")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -87,9 +85,10 @@ class TestWebSocketManager:
 
         await manager.broadcast_peer_presence("u1", {"type": "user_online"}, redis)
 
-        assert {
-            call.args[0] for call in redis.publish.await_args_list
-        } == {"ws:chat:chat-a", "ws:chat:chat-b"}
+        assert {call.args[0] for call in redis.publish.await_args_list} == {
+            "ws:chat:chat-a",
+            "ws:chat:chat-b",
+        }
 
     async def test_user_listener_skips_control_frames_delivers_and_closes(self, monkeypatch):
         manager = WebSocketManager()

@@ -62,9 +62,7 @@ class TestFaceVerificationDebugEndpoint:
         assert result["steps"][-1]["error"] == "User not found"
         assert result["success"] is False
 
-    async def test_oversized_upload_stops_before_face_extraction(
-        self, db_session, monkeypatch
-    ):
+    async def test_oversized_upload_stops_before_face_extraction(self, db_session, monkeypatch):
         from app.api.v1.endpoints.face_verification_debug import test_face_verification
 
         user = User(
@@ -79,7 +77,9 @@ class TestFaceVerificationDebugEndpoint:
         await db_session.commit()
         monkeypatch.setattr(settings, "FACE_VERIFICATION_MAX_SIZE_MB", 1)
         extract = AsyncMock(side_effect=AssertionError("must not process oversized upload"))
-        monkeypatch.setattr(face_verification_service.face_verification_service, "extract_image_embedding", extract)
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service, "extract_image_embedding", extract
+        )
 
         result = await test_face_verification(
             _request(), _upload(b"x" * (1024 * 1024 + 1)), str(user.id), db_session, MagicMock()
@@ -92,9 +92,7 @@ class TestFaceVerificationDebugEndpoint:
         }
         extract.assert_not_awaited()
 
-    async def test_extraction_failure_is_returned_as_step_result(
-        self, db_session, monkeypatch
-    ):
+    async def test_extraction_failure_is_returned_as_step_result(self, db_session, monkeypatch):
         from app.api.v1.endpoints.face_verification_debug import test_face_verification
 
         user = User(
@@ -108,7 +106,9 @@ class TestFaceVerificationDebugEndpoint:
         db_session.add(user)
         await db_session.commit()
         extract = AsyncMock(return_value=(None, "No face detected in image"))
-        monkeypatch.setattr(face_verification_service.face_verification_service, "extract_image_embedding", extract)
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service, "extract_image_embedding", extract
+        )
 
         result = await test_face_verification(
             _request(), _upload(b"image-bytes"), str(user.id), db_session, MagicMock()
@@ -121,9 +121,7 @@ class TestFaceVerificationDebugEndpoint:
         }
         extract.assert_awaited_once_with(b"image-bytes")
 
-    async def test_no_approved_photos_stops_before_comparison(
-        self, db_session, monkeypatch
-    ):
+    async def test_no_approved_photos_stops_before_comparison(self, db_session, monkeypatch):
         from app.api.v1.endpoints.face_verification_debug import test_face_verification
 
         user = User(
@@ -138,7 +136,9 @@ class TestFaceVerificationDebugEndpoint:
         await db_session.commit()
         embedding = np.ones(4, dtype=np.float32)
         extract = AsyncMock(return_value=(embedding, ""))
-        monkeypatch.setattr(face_verification_service.face_verification_service, "extract_image_embedding", extract)
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service, "extract_image_embedding", extract
+        )
 
         result = await test_face_verification(
             _request(), _upload(b"image-bytes"), str(user.id), db_session, MagicMock()
@@ -151,9 +151,7 @@ class TestFaceVerificationDebugEndpoint:
         }
         assert result["steps"][1]["status"] == "passed"
 
-    async def test_photo_compare_skips_download_failures_and_no_face(
-        self, db_session, monkeypatch
-    ):
+    async def test_photo_compare_skips_download_failures_and_no_face(self, db_session, monkeypatch):
         from app.api.v1.endpoints.face_verification_debug import test_face_verification
 
         user = User(
@@ -188,9 +186,17 @@ class TestFaceVerificationDebugEndpoint:
 
         downloads = AsyncMock(side_effect=download)
         single_photo = AsyncMock(side_effect=extract_photo)
-        monkeypatch.setattr(face_verification_service.face_verification_service, "extract_image_embedding", extract)
-        monkeypatch.setattr(face_verification_service.face_verification_service, "extract_single_photo_embedding", single_photo)
-        monkeypatch.setattr(face_verification_service.face_verification_service, "compare_embeddings", compare)
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service, "extract_image_embedding", extract
+        )
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service,
+            "extract_single_photo_embedding",
+            single_photo,
+        )
+        monkeypatch.setattr(
+            face_verification_service.face_verification_service, "compare_embeddings", compare
+        )
         monkeypatch.setattr(photo_service.PhotoService, "download_photo_bytes", downloads)
 
         result = await test_face_verification(
@@ -203,10 +209,7 @@ class TestFaceVerificationDebugEndpoint:
         )
         assert compare_step["status"] == "passed"
         assert load_step["photo_count"] == 3
-        assert {
-            result["photo_id"]: result
-            for result in compare_step["per_photo"]
-        } == {
+        assert {result["photo_id"]: result for result in compare_step["per_photo"]} == {
             str(photos[1].id): {"photo_id": str(photos[1].id), "status": "no_face"},
             str(photos[2].id): {
                 "photo_id": str(photos[2].id),

@@ -1,5 +1,5 @@
-from unittest.mock import MagicMock, patch
 import zipfile
+from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
@@ -7,8 +7,8 @@ import numpy as np
 from app.core.config import settings
 from app.services.face_verification_service import (
     ALIGN_TEMPLATE,
-    FaceVerificationService,
     INPUT_SIZE,
+    FaceVerificationService,
 )
 
 
@@ -42,19 +42,28 @@ class TestFaceServiceModelFreeBranches:
         assert service._ensure_recognition_model(tmp_path) == tmp_path / "w600k_mbf.onnx"
         assert (tmp_path / "w600k_mbf.onnx").read_bytes() == b"fake-model"
 
-    def test_ensure_model_downloads_and_initializes_detector_and_recognizer(self, tmp_path, monkeypatch):
+    def test_ensure_model_downloads_and_initializes_detector_and_recognizer(
+        self, tmp_path, monkeypatch
+    ):
         service = _service()
         monkeypatch.setattr(settings, "FACE_MODELS_DIR", str(tmp_path))
         monkeypatch.setattr(settings, "FACE_MODEL_THREADS", 2)
         monkeypatch.setattr(settings, "FACE_DET_SCORE_THRESHOLD", 0.42)
         monkeypatch.setattr(service, "_download", lambda _url, destination: destination)
-        monkeypatch.setattr(service, "_ensure_recognition_model", lambda _directory: tmp_path / "rec.onnx")
+        monkeypatch.setattr(
+            service, "_ensure_recognition_model", lambda _directory: tmp_path / "rec.onnx"
+        )
         detector = MagicMock()
         session = MagicMock()
         with (
-            patch("app.services.face_verification_service.cv2.FaceDetectorYN.create", return_value=detector) as create_detector,
+            patch(
+                "app.services.face_verification_service.cv2.FaceDetectorYN.create",
+                return_value=detector,
+            ) as create_detector,
             patch("app.services.face_verification_service.ort.SessionOptions") as session_options,
-            patch("app.services.face_verification_service.ort.InferenceSession", return_value=session) as inference,
+            patch(
+                "app.services.face_verification_service.ort.InferenceSession", return_value=session
+            ) as inference,
         ):
             service._ensure_model()
 
@@ -98,7 +107,10 @@ class TestFaceServiceModelFreeBranches:
         detection = np.concatenate(([10, 10, 100, 100], landmarks.flatten(), [0.99]))
         aligned = service._align(frame, detection)
         assert aligned.shape == (INPUT_SIZE, INPUT_SIZE, 3)
-        with patch("app.services.face_verification_service.cv2.estimateAffinePartial2D", return_value=(None, None)):
+        with patch(
+            "app.services.face_verification_service.cv2.estimateAffinePartial2D",
+            return_value=(None, None),
+        ):
             assert service._align(frame, detection) is None
 
         service._rec = MagicMock()

@@ -70,9 +70,7 @@ class TestCleanupStaleOnlines:
         from unittest.mock import MagicMock
 
         redis = MagicMock()
-        redis.scan_iter.return_value.__aiter__.return_value = iter(
-            [b"online:1", b"online:2"]
-        )
+        redis.scan_iter.return_value.__aiter__.return_value = iter([b"online:1", b"online:2"])
         redis.delete = AsyncMock()
         monkeypatch.setattr("app.core.redis.redis_client", redis)
 
@@ -100,9 +98,7 @@ class TestPurgeDeletedAccounts:
         lapsed = _user(is_active=False, deleted_at=cutoff - timedelta(days=1))
         recent = _user(is_active=False, deleted_at=cutoff + timedelta(days=1))
         peer = _user()
-        chat = Chat(
-            id=uuid4(), initiator_id=lapsed.id, recipient_id=peer.id, status="accepted"
-        )
+        chat = Chat(id=uuid4(), initiator_id=lapsed.id, recipient_id=peer.id, status="accepted")
         photo = Photo(
             id=uuid4(),
             user_id=lapsed.id,
@@ -133,25 +129,17 @@ class TestPurgeDeletedAccounts:
         assert result == {"purged": 1}
         delete_photo.assert_awaited_once_with(str(lapsed.id), str(photo.id))
         delete_media.assert_awaited_once_with(str(chat.id), str(message.id), "photo")
-        remaining_lapsed = await db_session.execute(
-            select(User.id).where(User.id == lapsed.id)
-        )
+        remaining_lapsed = await db_session.execute(select(User.id).where(User.id == lapsed.id))
         assert remaining_lapsed.scalar_one_or_none() is None
         assert (await db_session.get(User, recent.id)) is not None
 
-    async def test_wrapper_uses_worker_session_factory(
-        self, db_engine, db_session, monkeypatch
-    ):
+    async def test_wrapper_uses_worker_session_factory(self, db_engine, db_session, monkeypatch):
         expired = _user(is_active=False, deleted_at=datetime.now(UTC) - timedelta(days=40))
         db_session.add(expired)
         await db_session.commit()
         monkeypatch.setattr("app.db.session.AsyncSessionLocal", _session_factory(db_engine))
-        monkeypatch.setattr(
-            "app.services.photo_service.PhotoService.delete_photo", AsyncMock()
-        )
-        monkeypatch.setattr(
-            "app.services.media_service.MediaService.delete_media", AsyncMock()
-        )
+        monkeypatch.setattr("app.services.photo_service.PhotoService.delete_photo", AsyncMock())
+        monkeypatch.setattr("app.services.media_service.MediaService.delete_media", AsyncMock())
 
         result = await asyncio.to_thread(purge_deleted_accounts)
 

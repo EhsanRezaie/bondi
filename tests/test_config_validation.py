@@ -56,6 +56,8 @@ def test_development_allows_short_secret_key(monkeypatch: pytest.MonkeyPatch):
 def test_test_environment_allows_short_secret_key(monkeypatch: pytest.MonkeyPatch):
     s = _make_settings(monkeypatch, "test", "qMiVidSmH6dl508w")
     assert s.ENVIRONMENT == "test"
+
+
 def test_production_rejects_short_admin_secret(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(Exception, match="ADMIN_SECRET_KEY"):
         _make_settings(
@@ -64,8 +66,8 @@ def test_production_rejects_short_admin_secret(monkeypatch: pytest.MonkeyPatch):
             "9rz5fZ6pcH7nUEouB7QWbDyFjVEABM2t7naqR_p7ars",
             admin_key="short",
         )
+
+
 def test_development_allows_short_admin_secret(monkeypatch: pytest.MonkeyPatch):
-    s = _make_settings(
-        monkeypatch, "development", "qMiVidSmH6dl508w", admin_key="short-admin-key"
-    )
+    s = _make_settings(monkeypatch, "development", "qMiVidSmH6dl508w", admin_key="short-admin-key")
     assert s.ENVIRONMENT == "development"

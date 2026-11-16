@@ -101,9 +101,7 @@ class TestSystemStateRedisAndFallback:
         status = await system.get_maintenance_status()
         assert status.enabled is False
         assert status.message == "from file"
-        redis.set.assert_awaited_with(
-            system._MAINTENANCE_REDIS_KEY, path.read_text()
-        )
+        redis.set.assert_awaited_with(system._MAINTENANCE_REDIS_KEY, path.read_text())
 
     async def test_maintenance_set_enable_and_disable_persist_expected_state(
         self, tmp_path, monkeypatch
@@ -221,7 +219,9 @@ class TestSystemStateRedisAndFallback:
                     "type": "http",
                     "method": "GET",
                     "path": "/",
-                    "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+                    "headers": [
+                        (key.lower().encode(), value.encode()) for key, value in headers.items()
+                    ],
                     "query_string": b"",
                     "server": ("test", 80),
                     "client": ("127.0.0.1", 1234),
