@@ -144,7 +144,8 @@ class TestPurgeDeletedAccounts:
         result = await asyncio.to_thread(purge_deleted_accounts)
 
         assert result == {"purged": 1}
-        assert (await db_session.get(User, expired.id)) is None
+        remaining_expired = await db_session.execute(select(User.id).where(User.id == expired.id))
+        assert remaining_expired.scalar_one_or_none() is None
 
 
 class TestInactiveUserNudge:

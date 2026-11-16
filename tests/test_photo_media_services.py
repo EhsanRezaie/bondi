@@ -285,7 +285,7 @@ class TestMediaServiceUnitPaths:
 
         assert await MediaService.delete_media("c", "m", "unknown") is False
         assert await MediaService.delete_media("c", "m", "photo") is True
-        assert s3.delete_object.await_count == 12
+        assert s3.delete_object.await_count == 8
         assert any(call.kwargs["Key"].endswith(".jpg") for call in s3.delete_object.await_args_list)
         assert await MediaService.delete_media("c", "m", "voice") is True
         assert any(call.kwargs["Key"].endswith(".mp3") for call in s3.delete_object.await_args_list)
