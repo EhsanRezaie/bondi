@@ -1,30 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
-from uuid import UUID
 import uuid
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.core.cache import bump_photo_epoch, invalidate_user_cache
 from app.core.config import settings
-from app.db.session import get_session
-from app.models.user import User
-from app.models.photo import Photo
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.redis import redis_client
-from app.core.cache import invalidate_user_cache
-from app.services.photo_service import PhotoService
-from app.services.nsfw_service import nsfw_service
-from app.services.face_verification_service import face_verification_service
-import app.core.redis as redis_module
+from app.db.session import get_session
+from app.models.photo import Photo
+from app.models.user import User
 from app.schemas.photo import (
     PhotoResponse,
-    PhotoUploadResponse,
     PhotoUpdateCropRequest,
     PhotoUpdateOrderRequest,
+    PhotoUploadResponse,
 )
-
-from app.core.logging import get_logger
+from app.services.face_verification_service import face_verification_service
+from app.services.nsfw_service import nsfw_service
+from app.services.photo_service import PhotoService
 
 logger = get_logger("photos")
 
@@ -94,7 +93,9 @@ async def upload_photo(
     # identity is confirmed later by selfie verification (POST /users/me/verify),
     # which compares a fresh selfie against the profile photos — so no face
     # reference is stored or consulted at upload time.
-    new_embedding, face_error = await face_verification_service.extract_single_photo_embedding(file_data)
+    new_embedding, face_error = await face_verification_service.extract_single_photo_embedding(
+        file_data
+    )
     if face_error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -122,9 +123,7 @@ async def upload_photo(
     # Check photo limit atomically. Locking the user row serializes concurrent
     # uploads for the same user; locking existing Photo rows cannot guard the
     # absent rows a concurrent INSERT is about to create.
-    await session.execute(
-        select(User.id).where(User.id == current_user.id).with_for_update()
-    )
+    await session.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     count_result = await session.execute(
         select(func.count()).select_from(Photo).where(Photo.user_id == current_user.id)
     )
@@ -158,10 +157,15 @@ async def upload_photo(
 
     # Store the key
     new_photo.url = photo_key
+    # New pending photo hides the owner from discover/search — refresh the
+    # denormalized flag in the same transaction as the insert.
+    await PhotoService.recompute_is_searchable(session, current_user.id)
     await session.commit()
     await session.refresh(new_photo)
 
     await invalidate_user_cache(redis_client, current_user.id)
+    # New pending photo hides the uploader from discover decks → bump epoch.
+    await bump_photo_epoch(redis_client)
 
     # Resolve a real, loadable (signed) URL for the immediate upload response
     display_url = await PhotoService.get_photo_url(photo_key, new_photo.status)
@@ -189,9 +193,7 @@ async def get_my_photos(
     resolve to plain public URLs.
     """
     result = await session.execute(
-        select(Photo)
-        .where(Photo.user_id == current_user.id)
-        .order_by(Photo.order)
+        select(Photo).where(Photo.user_id == current_user.id).order_by(Photo.order)
     )
     photos = result.scalars().all()
     return [await _to_photo_response(p) for p in photos]
@@ -236,18 +238,22 @@ async def delete_photo(
     # If deleted photo was main, set new main — same transaction, no double commit
     if was_main:
         result = await session.execute(
-            select(Photo)
-            .where(Photo.user_id == current_user.id)
-            .order_by(Photo.order)
-            .limit(1)
+            select(Photo).where(Photo.user_id == current_user.id).order_by(Photo.order).limit(1)
         )
         first_photo = result.scalar_one_or_none()
         if first_photo:
             first_photo.is_main = True
 
+    # Deleting a photo can flip the owner's searchability — refresh in the
+    # same transaction as the delete.
+    await PhotoService.recompute_is_searchable(session, current_user.id)
+
     await session.commit()
 
     await invalidate_user_cache(redis_client, current_user.id)
+    # Deleting a photo can flip its owner back to visible (last pending photo
+    # gone) → bump epoch.
+    await bump_photo_epoch(redis_client)
 
 
 @router.put("/{photo_id}/main", response_model=PhotoResponse)
@@ -284,9 +290,7 @@ async def set_main_photo(
 
     # Remove main flag from all photos
     await session.execute(
-        update(Photo)
-        .where(Photo.user_id == current_user.id)
-        .values(is_main=False)
+        update(Photo).where(Photo.user_id == current_user.id).values(is_main=False)
     )
 
     # Set new main photo
@@ -311,13 +315,17 @@ async def reorder_photos(
     Accepts a mapping of photo_id -> new order for the current user.
     """
     photos = (
-        await session.execute(
-            select(Photo).where(
-                Photo.user_id == current_user.id,
-                Photo.id.in_(request.orders.keys()),
+        (
+            await session.execute(
+                select(Photo).where(
+                    Photo.user_id == current_user.id,
+                    Photo.id.in_(request.orders.keys()),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     if len(photos) != len(request.orders):
         raise HTTPException(
@@ -332,12 +340,14 @@ async def reorder_photos(
     await invalidate_user_cache(redis_client, current_user.id)
 
     all_photos = (
-        await session.execute(
-            select(Photo)
-            .where(Photo.user_id == current_user.id)
-            .order_by(Photo.order)
+        (
+            await session.execute(
+                select(Photo).where(Photo.user_id == current_user.id).order_by(Photo.order)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return [await _to_photo_response(p) for p in all_photos]
 
@@ -345,6 +355,7 @@ async def reorder_photos(
 # =============================================================================
 # NEW: Update Crop Data
 # =============================================================================
+
 
 @router.patch("/{photo_id}/crop", response_model=PhotoResponse)
 @limiter.limit("10/minute")

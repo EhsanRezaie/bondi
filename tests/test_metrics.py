@@ -1,10 +1,8 @@
 # tests/done/test_metrics.py
-import pytest
 from httpx import AsyncClient
 
 
 class TestMetricsEndpoint:
-
     async def test_metrics_returns_prometheus_text(self, client: AsyncClient):
         res = await client.get("/metrics")
         assert res.status_code == 200
@@ -17,6 +15,7 @@ class TestMetricsEndpoint:
 
     async def test_metrics_not_in_openapi(self):
         from app.main import app
+
         paths = app.openapi()["paths"]
         assert "/metrics" not in paths
 

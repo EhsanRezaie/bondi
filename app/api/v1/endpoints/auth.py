@@ -1,47 +1,47 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
 import secrets
 import string
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from app.db.session import get_session
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_settings import UserSettings
-from app.models.subscription import Subscription
-from app.models.user_interest import UserInterest
-from app.models.user_prompt import UserPrompt
-from app.models.interest import Interest
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 import app.core.redis as redis
+from app.core.cache import invalidate_auth_user, invalidate_user_cache
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.security import (
+    REFRESH_TOKEN_TYPE,
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
     decode_token,
-    REFRESH_TOKEN_TYPE,
 )
-from app.core.cache import invalidate_auth_user, invalidate_user_cache
-from app.services.sms_service import send_verification_code
-
+from app.db.session import get_session
+from app.models.interest import Interest
+from app.models.subscription import Subscription
+from app.models.user import User
+from app.models.user_interest import UserInterest
+from app.models.user_profile import UserProfile
+from app.models.user_prompt import UserPrompt
+from app.models.user_settings import UserSettings
 from app.schemas.auth import (
+    AuthResponse,
+    LogoutRequest,
+    OnboardingCompleteRequest,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
     RequestCodeRequest,
     RequestCodeResponse,
     VerifyCodeRequest,
     VerifyCodeResponse,
-    OnboardingCompleteRequest,
-    AuthResponse,
-    RefreshTokenRequest,
-    RefreshTokenResponse,
-    LogoutRequest,
 )
 from app.schemas.user import UserProfileResponse
-
-from app.core.logging import get_logger
+from app.services.sms_service import send_verification_code
 
 logger = get_logger("auth")
 
@@ -53,17 +53,15 @@ OTP_RESEND_COOLDOWN = 60
 
 def generate_referral_code() -> str:
     alphabet = string.ascii_uppercase + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(8))
+    return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 def generate_verification_code() -> str:
-    return ''.join(secrets.choice(string.digits) for _ in range(6))
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 async def get_user_profile(session: AsyncSession, user_id: str) -> UserProfile | None:
-    result = await session.execute(
-        select(UserProfile).where(UserProfile.user_id == user_id)
-    )
+    result = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
     return result.scalar_one_or_none()
 
 
@@ -89,9 +87,9 @@ async def build_login_response(
         access_token = create_access_token(str(user.id), user.token_version)
     if refresh_token is None:
         refresh_token = create_refresh_token(str(user.id), user.token_version)
-    
+
     await redis.store_refresh_token(refresh_token, str(user.id))
-    
+
     # Always load full user (with relationships) fresh from the database so the
     # response matches GET /users/me — including profile_completion, interests,
     # prompts, settings, photos, etc. A hand-built partial response would leave
@@ -108,7 +106,7 @@ async def build_login_response(
         .where(User.id == user.id)
     )
     full_user = result.scalar_one_or_none() or user
-    
+
     return AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -130,24 +128,28 @@ async def get_current_user(
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token.")
     token = auth_header.split(" ", 1)[1]
-    
+
     payload = decode_token(token, "access")
     if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token.")
-    
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token."
+        )
+
     user_id = payload.get("sub")
     token_version = payload.get("ver", 1)
-    
+
     user = await get_user_with_profile(session, user_id)
     if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or deactivated.")
-    
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or deactivated."
+        )
+
     if token_version != user.token_version:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token revoked. Please login again.",
         )
-    
+
     return user
 
 
@@ -229,14 +231,14 @@ async def verify_code(
         # let the purge sweep clear it and keep the phone locked in the interim.
         if existing.deleted_at is not None:
             grace_end = existing.deleted_at + timedelta(days=settings.DELETE_ACCOUNT_GRACE_DAYS)
-            if datetime.now(timezone.utc) < grace_end:
+            if datetime.now(UTC) < grace_end:
                 # Within the grace window → restore the account (user changed their mind).
                 account_restored = True
                 existing.is_active = True
                 existing.deleted_at = None
                 existing.deleted_reason = None
                 existing.token_version += 1
-                existing.last_seen_at = datetime.now(timezone.utc)
+                existing.last_seen_at = datetime.now(UTC)
                 await session.flush()
                 await invalidate_user_cache(redis.redis_client, existing.id)
                 await invalidate_auth_user(redis.redis_client, existing.id)
@@ -256,7 +258,7 @@ async def verify_code(
 
     if existing:
         user = existing
-        user.last_seen_at = datetime.now(timezone.utc)
+        user.last_seen_at = datetime.now(UTC)
     else:
         is_new_user = True
         user = User(
@@ -271,7 +273,9 @@ async def verify_code(
             await session.flush()
         except IntegrityError as e:
             await session.rollback()
-            logger.warning("verify_code_duplicate_phone", phone=body.phone, error=str(e), exc_info=True)
+            logger.warning(
+                "verify_code_duplicate_phone", phone=body.phone, error=str(e), exc_info=True
+            )
             # A concurrent request created the account; reload it and log in.
             existing_user = await get_user_by_phone(session, body.phone)
             if not existing_user:
@@ -280,9 +284,9 @@ async def verify_code(
                     detail="An account with this phone number already exists.",
                 )
             user = existing_user
-            user.last_seen_at = datetime.now(timezone.utc)
+            user.last_seen_at = datetime.now(UTC)
             is_new_user = False
-        
+
         if is_new_user:
             await create_user_profile(user, session)
             await create_user_settings(user, session)
@@ -342,11 +346,11 @@ async def register_complete(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Profile is already complete.",
         )
-    
+
     if not current_user.profile:
         await create_user_profile(current_user, session)
         await session.flush()
-    
+
     # Reload profile after creation to ensure it's attached
     profile = await get_user_profile(session, str(current_user.id))
     if not profile:
@@ -354,7 +358,7 @@ async def register_complete(
         profile = UserProfile(user_id=current_user.id)
         session.add(profile)
         await session.flush()
-    
+
     # Update profile fields
     profile.name = body.name
     profile.birth_date = body.birth_date
@@ -384,42 +388,44 @@ async def register_complete(
     profile.province = body.province
     profile.city = body.city
     profile.languages = body.languages
-    
-    if not profile.premium_until or profile.premium_until < datetime.now(timezone.utc):
-        profile.premium_until = datetime.now(timezone.utc) + timedelta(days=settings.WELCOME_BONUS_DAYS)
-    
+
+    if not profile.premium_until or profile.premium_until < datetime.now(UTC):
+        profile.premium_until = datetime.now(UTC) + timedelta(days=settings.WELCOME_BONUS_DAYS)
+
     current_user.registration_status = "onboarding_complete"
-    
+
     if body.interests:
+        # One batched lookup for all requested interests (no per-name query).
+        interest_names = [n for n in body.interests if n]
+        interest_rows = await session.execute(
+            select(Interest).where(Interest.name.in_(interest_names))
+        )
+        interest_ids: dict[str, Any] = {str(i.name): i.id for i in interest_rows.scalars().all()}
         for interest_name in body.interests:
-            interest_result = await session.execute(
-                select(Interest).where(Interest.name == interest_name)
-            )
-            interest = interest_result.scalar_one_or_none()
-            if interest:
-                session.add(UserInterest(
-                    user_id=current_user.id,
-                    interest_id=interest.id
-                ))
-    
+            interest_id = interest_ids.get(interest_name)
+            if interest_id:
+                session.add(UserInterest(user_id=current_user.id, interest_id=interest_id))
+
     if body.prompts:
         for prompt_data in body.prompts:
-            session.add(UserPrompt(
-                user_id=current_user.id,
-                prompt_id=prompt_data.prompt_id,
-                answer=prompt_data.answer
-            ))
-    
+            session.add(
+                UserPrompt(
+                    user_id=current_user.id,
+                    prompt_id=prompt_data.prompt_id,
+                    answer=prompt_data.answer,
+                )
+            )
+
     subscription = Subscription(
         user_id=current_user.id,
         plan="welcome_bonus",
         status="active",
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
         expires_at=profile.premium_until,
         source="welcome_bonus",
     )
     session.add(subscription)
-    
+
     await session.commit()
 
     await invalidate_user_cache(redis.redis_client, current_user.id)
@@ -486,9 +492,7 @@ async def refresh(
     await redis.store_refresh_token(new_refresh, str(user.id), family_id=family_id)
 
     return RefreshTokenResponse(
-        access_token=new_access,
-        refresh_token=new_refresh,
-        token_type="bearer"
+        access_token=new_access, refresh_token=new_refresh, token_type="bearer"
     )
 
 

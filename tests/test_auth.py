@@ -1,10 +1,8 @@
-import pytest
-from httpx import AsyncClient
-
 from datetime import date
 
-from app.core.security import decode_token
+from httpx import AsyncClient
 
+from app.core.security import decode_token
 
 # ---------------------------------------------------------------------------
 # URLs
@@ -48,6 +46,7 @@ COMPLETE_PROFILE_PAYLOAD = {
     "interests": ["Music", "Sport", "Travel"],
 }
 
+
 def calculate_age(birth_date: str) -> int:
     today = date.today()
     birth = date.fromisoformat(birth_date)
@@ -56,7 +55,10 @@ def calculate_age(birth_date: str) -> int:
         age -= 1
     return age
 
-async def verify_new_user(client: AsyncClient, mock_verification_code, phone: str = NEW_PHONE) -> dict:
+
+async def verify_new_user(
+    client: AsyncClient, mock_verification_code, phone: str = NEW_PHONE
+) -> dict:
     """Helper: complete phone verification as a NEW user (returns verify response)."""
     await mock_verification_code(phone, VALID_CODE)
     res = await client.post(VERIFY_CODE_URL, json={"phone": phone, "code": VALID_CODE})
@@ -65,7 +67,10 @@ async def verify_new_user(client: AsyncClient, mock_verification_code, phone: st
     assert data["is_new_user"] is True
     return data
 
-async def register_user_full(client: AsyncClient, mock_verification_code, phone: str = NEW_PHONE) -> dict:
+
+async def register_user_full(
+    client: AsyncClient, mock_verification_code, phone: str = NEW_PHONE
+) -> dict:
     """Helper: register a new user through the full flow and complete the profile."""
     data = await verify_new_user(client, mock_verification_code, phone)
 
@@ -83,8 +88,8 @@ async def register_user_full(client: AsyncClient, mock_verification_code, phone:
 # POST /auth/request-code
 # ---------------------------------------------------------------------------
 
-class TestRequestCode:
 
+class TestRequestCode:
     async def test_request_code_success(self, client: AsyncClient):
         """Should send an SMS OTP for a valid phone."""
         res = await client.post(REQUEST_CODE_URL, json={"phone": VALID_PHONE})
@@ -119,8 +124,8 @@ class TestRequestCode:
 # POST /auth/verify-code
 # ---------------------------------------------------------------------------
 
-class TestVerifyCode:
 
+class TestVerifyCode:
     async def test_verify_code_new_user(self, client: AsyncClient, mock_verification_code):
         """Should create a new user on first verification."""
         await mock_verification_code(NEW_PHONE, VALID_CODE)
@@ -171,14 +176,16 @@ class TestVerifyCode:
 # POST /auth/register/complete
 # ---------------------------------------------------------------------------
 
-class TestRegisterComplete:
 
+class TestRegisterComplete:
     async def test_register_complete_success(self, client: AsyncClient, mock_verification_code):
         """Should complete profile with all fields."""
         data = await verify_new_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
-        res = await client.post(REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE_PAYLOAD, headers=headers)
+        res = await client.post(
+            REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE_PAYLOAD, headers=headers
+        )
         assert res.status_code == 200
         user_data = res.json()["user"]
         assert user_data["name"] == "Test User"
@@ -195,16 +202,22 @@ class TestRegisterComplete:
         res = await client.post(REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE_PAYLOAD)
         assert res.status_code == 401
 
-    async def test_register_complete_already_complete(self, client: AsyncClient, mock_verification_code):
+    async def test_register_complete_already_complete(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject if profile already complete."""
         data = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
-        res = await client.post(REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE_PAYLOAD, headers=headers)
+        res = await client.post(
+            REGISTER_COMPLETE_URL, json=COMPLETE_PROFILE_PAYLOAD, headers=headers
+        )
         assert res.status_code == 400
         assert "already complete" in res.json()["detail"]
 
-    async def test_register_complete_invalid_gender(self, client: AsyncClient, mock_verification_code):
+    async def test_register_complete_invalid_gender(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject invalid gender."""
         data = await verify_new_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -218,8 +231,8 @@ class TestRegisterComplete:
 # POST /auth/refresh
 # ---------------------------------------------------------------------------
 
-class TestRefresh:
 
+class TestRefresh:
     async def test_refresh_success(self, client: AsyncClient, mock_verification_code):
         """Should refresh tokens successfully."""
         data = await register_user_full(client, mock_verification_code)
@@ -266,8 +279,8 @@ class TestRefresh:
 # POST /auth/logout
 # ---------------------------------------------------------------------------
 
-class TestLogout:
 
+class TestLogout:
     async def test_logout_success(self, client: AsyncClient, mock_verification_code):
         """Should logout successfully."""
         data = await register_user_full(client, mock_verification_code)
@@ -290,8 +303,8 @@ class TestLogout:
 # GET /auth/health
 # ---------------------------------------------------------------------------
 
-class TestHealthCheck:
 
+class TestHealthCheck:
     async def test_health_check_returns_redis_status(self, client: AsyncClient):
         """Health endpoint should show Redis status."""
         res = await client.get(HEALTH_URL)
@@ -305,8 +318,8 @@ class TestHealthCheck:
 # Token Versioning Tests
 # ---------------------------------------------------------------------------
 
-class TestTokenVersioning:
 
+class TestTokenVersioning:
     async def test_token_contains_version(self, client: AsyncClient, mock_verification_code):
         """Access token should contain version number."""
         data = await register_user_full(client, mock_verification_code)

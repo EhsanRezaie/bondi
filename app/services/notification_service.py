@@ -1,11 +1,13 @@
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.models.notification import Notification
-from app.models.user import User
-from app.models.photo import Photo
+
 from app.core.logging import get_logger
+from app.models.notification import Notification
+from app.models.photo import Photo
+from app.models.user import User
 
 logger = get_logger("services.notification_service")
 
@@ -38,9 +40,7 @@ def _notification_ws_payload(notification: Notification) -> dict:
             "title": notification.title,
             "body": notification.body,
             "is_read": notification.is_read,
-            "created_at": notification.created_at.isoformat()
-            if notification.created_at
-            else None,
+            "created_at": notification.created_at.isoformat() if notification.created_at else None,
             "user_id": (notification.data or {}).get("user_id"),
             "match_id": (notification.data or {}).get("match_id"),
             "chat_id": (notification.data or {}).get("chat_id"),
@@ -61,7 +61,9 @@ async def _publish_ws(user_id, notification: Notification):
             str(user_id), _notification_ws_payload(notification), redis_client
         )
     except Exception as e:
-        logger.warning("ws_notification_publish_failed", user_id=str(user_id), error=str(e), exc_info=True)
+        logger.warning(
+            "ws_notification_publish_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
 
 
 class NotificationService:
@@ -118,6 +120,7 @@ class NotificationService:
 
         # Push notification
         from app.tasks.notifications import dispatch_push_to_celery
+
         push_data = {
             "type": "like",
             "user_id": str(liker_id),
@@ -131,6 +134,7 @@ class NotificationService:
             image_url=liker_photo_url,
         ):
             from app.services.push_service import PushService
+
             await PushService.send_to_user(
                 user_id=liked_user_id,
                 title="Someone liked you!",
@@ -186,6 +190,7 @@ class NotificationService:
                 },
             )
             from app.tasks.notifications import dispatch_push_to_celery
+
             push_data = {
                 "type": "match",
                 "match_id": str(match_id),
@@ -244,7 +249,14 @@ class NotificationService:
                     image_url=avatar,
                 )
 
-    async def notify_message(self, receiver_id: UUID, sender_id: UUID | None = None, sender_name: str = "Someone", chat_id: UUID | None = None, sender_photo_url: str | None = None):
+    async def notify_message(
+        self,
+        receiver_id: UUID,
+        sender_id: UUID | None = None,
+        sender_name: str = "Someone",
+        chat_id: UUID | None = None,
+        sender_photo_url: str | None = None,
+    ):
         """Send message notification when recipient is offline. Push-only by
         design: message notifications are never rendered in the app's
         notification sections (the chat itself is real-time via WS)."""
@@ -261,6 +273,7 @@ class NotificationService:
         )
 
         from app.tasks.notifications import dispatch_push_to_celery
+
         push_data = {
             "type": "message",
             "chat_id": str(chat_id),
@@ -275,6 +288,7 @@ class NotificationService:
             image_url=sender_photo_url,
         ):
             from app.services.push_service import PushService
+
             await PushService.send_to_user(
                 user_id=receiver_id,
                 title=sender_name,

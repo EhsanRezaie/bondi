@@ -1,7 +1,7 @@
 # tests/test_locations.py
-import pytest
-from httpx import AsyncClient
 from unittest.mock import patch
+
+from httpx import AsyncClient
 
 from app.core.security import create_access_token
 
@@ -19,6 +19,7 @@ LOCATION_MANUAL_URL = "/api/v1/locations/me/location-manual"
 async def create_test_user(client: AsyncClient, db_session, mock_verification_code) -> dict:
     """Create a fully registered test user."""
     from tests.test_auth import register_user_full
+
     result = await register_user_full(client, mock_verification_code)
     return result
 
@@ -33,6 +34,7 @@ def get_auth_headers(user_id: str) -> dict:
 # GET /api/v1/locations/countries
 # =============================================================================
 
+
 class TestCountries:
     """Test GET /locations/countries endpoint."""
 
@@ -41,10 +43,10 @@ class TestCountries:
         res = await client.get(COUNTRIES_URL)
         assert res.status_code == 200
         data = res.json()
-        
+
         assert isinstance(data, list)
         assert len(data) > 0
-        
+
         # Check structure
         first = data[0]
         assert "iso2" in first
@@ -52,7 +54,7 @@ class TestCountries:
         assert "name" in first
         assert isinstance(first["iso2"], str)
         assert len(first["iso2"]) == 2
-        
+
         # Iran should be in the list (pycountry returns "Iran, Islamic Republic of")
         iran = next((c for c in data if c["iso2"] == "IR"), None)
         assert iran is not None
@@ -63,7 +65,7 @@ class TestCountries:
         """Should return consistent cached results."""
         res1 = await client.get(COUNTRIES_URL)
         res2 = await client.get(COUNTRIES_URL)
-        
+
         assert res1.status_code == 200
         assert res2.status_code == 200
         assert res1.json() == res2.json()
@@ -73,6 +75,7 @@ class TestCountries:
 # GET /api/v1/locations/provinces
 # =============================================================================
 
+
 class TestProvinces:
     """Test GET /locations/provinces endpoint."""
 
@@ -81,9 +84,9 @@ class TestProvinces:
         res = await client.get(PROVINCES_URL, params={"country": "IR"})
         assert res.status_code == 200
         data = res.json()
-        
+
         assert isinstance(data, list)
-        
+
         if len(data) > 0:
             first = data[0]
             assert "code" in first
@@ -110,6 +113,7 @@ class TestProvinces:
 # GET /api/v1/locations/cities
 # =============================================================================
 
+
 class TestCities:
     """Test GET /locations/cities endpoint."""
 
@@ -118,9 +122,9 @@ class TestCities:
         res = await client.get(CITIES_URL, params={"country": "IR"})
         assert res.status_code == 200
         data = res.json()
-        
+
         assert isinstance(data, list)
-        
+
         if len(data) > 0:
             first = data[0]
             assert "name" in first
@@ -144,6 +148,7 @@ class TestCities:
 # GET /api/v1/locations/reverse-geocode
 # =============================================================================
 
+
 class TestReverseGeocode:
     """Test GET /locations/reverse-geocode endpoint."""
 
@@ -156,14 +161,11 @@ class TestReverseGeocode:
                 "province": "Tehran Province",
                 "city": "Tehran",
             }
-            
-            res = await client.get(
-                REVERSE_GEOCODE_URL,
-                params={"lat": 35.6892, "lng": 51.3890}
-            )
+
+            res = await client.get(REVERSE_GEOCODE_URL, params={"lat": 35.6892, "lng": 51.3890})
             assert res.status_code == 200
             data = res.json()
-            
+
             assert data["country"] == "Iran"
             assert data["country_iso2"] == "IR"
             assert data["province"] == "Tehran Province"
@@ -171,18 +173,12 @@ class TestReverseGeocode:
 
     async def test_reverse_geocode_invalid_lat(self, client: AsyncClient):
         """Should return 422 for invalid latitude (>90)."""
-        res = await client.get(
-            REVERSE_GEOCODE_URL,
-            params={"lat": 100, "lng": 51.3890}
-        )
+        res = await client.get(REVERSE_GEOCODE_URL, params={"lat": 100, "lng": 51.3890})
         assert res.status_code == 422
 
     async def test_reverse_geocode_invalid_lng(self, client: AsyncClient):
         """Should return 422 for invalid longitude (>180)."""
-        res = await client.get(
-            REVERSE_GEOCODE_URL,
-            params={"lat": 35.6892, "lng": 200}
-        )
+        res = await client.get(REVERSE_GEOCODE_URL, params={"lat": 35.6892, "lng": 200})
         assert res.status_code == 422
 
     async def test_reverse_geocode_missing_params(self, client: AsyncClient):
@@ -194,18 +190,20 @@ class TestReverseGeocode:
         """Should return 503 when Nominatim fails."""
         with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = None
-            
-            res = await client.get(
-                REVERSE_GEOCODE_URL,
-                params={"lat": 35.6892, "lng": 51.3890}
-            )
+
+            res = await client.get(REVERSE_GEOCODE_URL, params={"lat": 35.6892, "lng": 51.3890})
             assert res.status_code == 503
             assert "unavailable" in res.json()["detail"].lower()
 
     async def test_reverse_geocode_offline_resolves_tehran(self):
         """Offline reverse geocoding should resolve real coordinates deterministically."""
+        import asyncio
+
         from app.services.location_service import _offline_reverse
-        result = _offline_reverse(35.745483, 51.1954865)
+
+        # First call builds the dataset index (blocking file reads) — same
+        # offloading the production path uses via run_in_threadpool.
+        result = await asyncio.to_thread(_offline_reverse, 35.745483, 51.1954865)
         assert result is not None
         assert result["country"] == "Iran"
         assert result["country_iso2"] == "IR"
@@ -217,36 +215,30 @@ class TestReverseGeocode:
 # GET /api/v1/locations/city-centroid
 # =============================================================================
 
+
 class TestCityCentroid:
     """Test GET /locations/city-centroid endpoint."""
 
     async def test_city_centroid_success(self, client: AsyncClient):
         """Should return coordinates for a city."""
-        res = await client.get(
-            CITY_CENTROID_URL,
-            params={"country": "IR", "city": "Tehran"}
-        )
+        res = await client.get(CITY_CENTROID_URL, params={"country": "IR", "city": "Tehran"})
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["name"] == "Tehran"
         assert "latitude" in data
         assert "longitude" in data
 
     async def test_city_centroid_invalid_country(self, client: AsyncClient):
         """Should return 404 for invalid country."""
-        res = await client.get(
-            CITY_CENTROID_URL,
-            params={"country": "XX", "city": "Tehran"}
-        )
+        res = await client.get(CITY_CENTROID_URL, params={"country": "XX", "city": "Tehran"})
         assert res.status_code == 404
         assert "not found" in res.json()["detail"].lower()
 
     async def test_city_centroid_invalid_city(self, client: AsyncClient):
         """Should return 404 for invalid city."""
         res = await client.get(
-            CITY_CENTROID_URL,
-            params={"country": "IR", "city": "NonExistentCity"}
+            CITY_CENTROID_URL, params={"country": "IR", "city": "NonExistentCity"}
         )
         assert res.status_code == 404
         assert "not found" in res.json()["detail"].lower()
@@ -261,20 +253,18 @@ class TestCityCentroid:
 # PATCH /api/v1/locations/me/location-gps
 # =============================================================================
 
+
 class TestLocationGPS:
     """Test PATCH /locations/me/location-gps endpoint."""
 
-    async def test_update_location_gps_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_update_location_gps_success(self, client: AsyncClient, mock_verification_code):
         """Should update user location from GPS coordinates."""
         # Create user using register_user_full from tests/done/test_auth.py
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": "Iran",
@@ -282,15 +272,13 @@ class TestLocationGPS:
                 "province": "Tehran",
                 "city": "Tehran",
             }
-            
+
             res = await client.patch(
-                LOCATION_GPS_URL,
-                params={"lat": 35.6892, "lng": 51.3890},
-                headers=headers
+                LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 51.3890}, headers=headers
             )
             assert res.status_code == 200
             data = res.json()
-            
+
             assert data["lat"] == 35.6892
             assert data["lng"] == 51.3890
             assert data["country"] == "Iran"
@@ -299,15 +287,14 @@ class TestLocationGPS:
             assert data["location_manual"] is False
 
     async def test_update_location_gps_partial_response(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should handle partial reverse geocode response."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
                 "country": None,
@@ -315,26 +302,23 @@ class TestLocationGPS:
                 "province": None,
                 "city": None,
             }
-            
+
             res = await client.patch(
-                LOCATION_GPS_URL,
-                params={"lat": 35.6892, "lng": 51.3890},
-                headers=headers
+                LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 51.3890}, headers=headers
             )
             assert res.status_code == 200
             data = res.json()
-            
+
             assert data["lat"] == 35.6892
             assert data["lng"] == 51.3890
             assert data["location_manual"] is False
 
     async def test_update_location_gps_response_shape(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """LocationUpdateResponse should contain all 6 fields."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
@@ -347,9 +331,7 @@ class TestLocationGPS:
             }
 
             res = await client.patch(
-                LOCATION_GPS_URL,
-                params={"lat": 35.6892, "lng": 51.3890},
-                headers=headers
+                LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 51.3890}, headers=headers
             )
             assert res.status_code == 200
             data = res.json()
@@ -362,45 +344,36 @@ class TestLocationGPS:
             assert data["location_manual"] is False
 
     async def test_update_location_gps_invalid_lat(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should return 422 for invalid latitude."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         res = await client.patch(
-            LOCATION_GPS_URL,
-            params={"lat": 100, "lng": 51.3890},
-            headers=headers
+            LOCATION_GPS_URL, params={"lat": 100, "lng": 51.3890}, headers=headers
         )
         assert res.status_code == 422
 
     async def test_update_location_gps_invalid_lng(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should return 422 for invalid longitude."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         res = await client.patch(
-            LOCATION_GPS_URL,
-            params={"lat": 35.6892, "lng": 200},
-            headers=headers
+            LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 200}, headers=headers
         )
         assert res.status_code == 422
 
     async def test_update_location_gps_requires_auth(self, client: AsyncClient):
         """Should return 401 without authentication."""
-        res = await client.patch(
-            LOCATION_GPS_URL,
-            params={"lat": 35.6892, "lng": 51.3890}
-        )
+        res = await client.patch(LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 51.3890})
         assert res.status_code == 401
 
 
@@ -408,19 +381,19 @@ class TestLocationGPS:
 # PATCH /api/v1/locations/me/location-manual
 # =============================================================================
 
+
 class TestLocationManual:
     """Test PATCH /locations/me/location-manual endpoint."""
 
     async def test_update_location_manual_success(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should update user location from manual selection."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         res = await client.patch(
             LOCATION_MANUAL_URL,
             params={
@@ -429,26 +402,25 @@ class TestLocationManual:
                 "city": "Isfahan",
                 "country_iso2": "IR",
             },
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["country"] == "Iran"
         assert data["province"] == "Isfahan"
         assert data["city"] == "Isfahan"
         assert data["location_manual"] is True
-        
+
         # Should have estimated lat/lng from city centroid
         assert data["lat"] is not None or data["lat"] is None
 
     async def test_update_location_manual_response_shape(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """LocationUpdateResponse should contain all 6 fields for manual."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
@@ -460,7 +432,7 @@ class TestLocationManual:
                 "city": "Isfahan",
                 "country_iso2": "IR",
             },
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 200
         data = res.json()
@@ -473,15 +445,14 @@ class TestLocationManual:
         assert data["location_manual"] is True
 
     async def test_update_location_manual_with_centroid(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should estimate lat/lng from city centroid."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         res = await client.patch(
             LOCATION_MANUAL_URL,
             params={
@@ -490,35 +461,30 @@ class TestLocationManual:
                 "city": "Tehran",
                 "country_iso2": "IR",
             },
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["country"] == "Iran"
         assert data["province"] == "Tehran"
         assert data["city"] == "Tehran"
         assert data["location_manual"] is True
-        
+
         # Tehran should have coordinates
         assert data["lat"] == 35.6892 or data["lat"] is not None
         assert data["lng"] == 51.3890 or data["lng"] is not None
 
     async def test_update_location_manual_missing_params(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should return 422 when required parameters are missing."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
-        res = await client.patch(
-            LOCATION_MANUAL_URL,
-            params={"country": "Iran"},
-            headers=headers
-        )
+
+        res = await client.patch(LOCATION_MANUAL_URL, params={"country": "Iran"}, headers=headers)
         assert res.status_code == 422
 
     async def test_update_location_manual_requires_auth(self, client: AsyncClient):
@@ -530,7 +496,7 @@ class TestLocationManual:
                 "province": "Tehran",
                 "city": "Tehran",
                 "country_iso2": "IR",
-            }
+            },
         )
         assert res.status_code == 401
 
@@ -539,19 +505,17 @@ class TestLocationManual:
 # Integration Tests
 # =============================================================================
 
+
 class TestLocationIntegration:
     """Test location flow integration."""
 
-    async def test_gps_to_manual_flow(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_gps_to_manual_flow(self, client: AsyncClient, mock_verification_code):
         """Should switch from GPS to manual location."""
         from tests.test_auth import register_user_full
+
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
-        
+
         # Set GPS location
         with patch("app.services.location_service._offline_reverse") as mock_reverse:
             mock_reverse.return_value = {
@@ -560,15 +524,13 @@ class TestLocationIntegration:
                 "province": "Tehran",
                 "city": "Tehran",
             }
-            
+
             gps_res = await client.patch(
-                LOCATION_GPS_URL,
-                params={"lat": 35.6892, "lng": 51.3890},
-                headers=headers
+                LOCATION_GPS_URL, params={"lat": 35.6892, "lng": 51.3890}, headers=headers
             )
             assert gps_res.status_code == 200
             assert gps_res.json()["location_manual"] is False
-        
+
         # Switch to manual
         manual_res = await client.patch(
             LOCATION_MANUAL_URL,
@@ -578,7 +540,7 @@ class TestLocationIntegration:
                 "city": "Isfahan",
                 "country_iso2": "IR",
             },
-            headers=headers
+            headers=headers,
         )
         assert manual_res.status_code == 200
         assert manual_res.json()["location_manual"] is True

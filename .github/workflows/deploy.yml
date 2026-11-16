@@ -5,6 +5,100 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Ruff lint (baseline may only shrink)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format check
+        run: uv run ruff format --check .
+
+      - name: deptry (unused/missing dependencies)
+        run: uvx deptry .
+
+  mypy:
+    name: Mypy (no new errors vs baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: mypy — fail only on errors NOT in mypy-baseline.txt
+        run: |
+          set -o pipefail
+          uv run mypy --no-error-summary > /tmp/mypy-current.txt || true
+          grep 'error:' /tmp/mypy-current.txt | sort -u > /tmp/mypy-current-sorted.txt
+          NEW=$(comm -13 mypy-baseline.txt /tmp/mypy-current-sorted.txt)
+          if [ -n "$NEW" ]; then
+            echo "::error::New mypy errors (must fix, not add to baseline):"
+            echo "$NEW"
+            exit 1
+          fi
+          echo "No new mypy errors. ($(wc -l < /tmp/mypy-current-sorted.txt) total, $(wc -l < mypy-baseline.txt) in baseline)"
+
+  security-scanners:
+    name: Security scanners (report-only until remaining CVEs are triaged)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # pip-audit still reports ~17 untriaged CVEs (user decision pending)
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so gitleaks scans every commit
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: pip-audit (dependency CVEs)
+        run: uvx pip-audit --path .venv/lib/python3.11/site-packages
+
+      - name: semgrep (python + security-audit rules)
+        run: uvx semgrep scan --config p/python --config p/security-audit --metrics=off
+
+  gitleaks:
+    name: Gitleaks (secrets scan — enforcing)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so gitleaks scans every commit
+
+      - name: gitleaks (secrets in code + git history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   migrations:
     name: Migrations drift check
     runs-on: ubuntu-latest
@@ -60,6 +154,12 @@ jobs:
           export ZARINPAL_CALLBACK_URL=https://example.com/callback
           uv run alembic upgrade head
           uv run alembic check
+
+      - name: Full migration cycle (up -> base -> up)
+        run: |
+          export DATABASE_URL=postgresql+asyncpg://bondi_admin:WqPEfyoNesuS5xky@localhost:5433/bondi_test
+          uv run alembic downgrade base
+          uv run alembic upgrade head
 
   test:
     name: Run Tests
@@ -131,8 +231,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-groups
 
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
+      - name: Run tests (coverage ratchet — threshold may only go up)
+        run: uv run pytest tests/ -q --tb=short --cov=app
 
       - name: Cleanup
         if: always()

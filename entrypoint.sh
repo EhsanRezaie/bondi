@@ -16,10 +16,16 @@ python -m app.db.scripts.seed_interests
 echo "Seeding prompts..."
 python -m app.db.scripts.seed_propmts
 
+# IPs allowed to set X-Forwarded-For (rate-limit keys + request.client come
+# from it). Default keeps current behavior; set FORWARDED_ALLOW_IPS in .env to
+# the nginx container's IP in production so untrusted peers can't spoof it.
+if [ -z "$FORWARDED_ALLOW_IPS" ]; then
+    FORWARDED_ALLOW_IPS='*'
+fi
 # Add --reload only if development environment
 if [ "$ENVIRONMENT" = "development" ]; then
     echo "Starting app (dev mode with --reload)..."
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --forwarded-allow-ips='*'
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
 else
     CPU_CORES=$(nproc 2>/dev/null || echo 2)
 
@@ -44,5 +50,5 @@ else
     fi
 
     echo "Starting app (production, $CPU_CORES cores, $WORKERS workers)..."
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS --timeout-graceful-shutdown 30 --proxy-headers --forwarded-allow-ips='*'
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $WORKERS --timeout-graceful-shutdown 30 --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
 fi

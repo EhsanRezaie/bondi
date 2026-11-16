@@ -1,7 +1,8 @@
 """Test endpoint for face verification — admin-only debug tool (image-based)."""
+
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +44,9 @@ async def test_face_verification(
     try:
         user_uuid = UUID(user_id)
     except ValueError as e:
-        logger.warning("face_verification_invalid_user_id", user_id=user_id, error=str(e), exc_info=True)
+        logger.warning(
+            "face_verification_invalid_user_id", user_id=user_id, error=str(e), exc_info=True
+        )
         results["steps"][-1].update({"status": "failed", "error": "Invalid user_id format"})
         return results
 
@@ -59,7 +62,9 @@ async def test_face_verification(
     image_bytes = await file.read()
     max_size = settings.FACE_VERIFICATION_MAX_SIZE_MB * 1024 * 1024
     if len(image_bytes) > max_size:
-        results["steps"][-1].update({"status": "failed", "error": f"Image too large: {len(image_bytes)} bytes"})
+        results["steps"][-1].update(
+            {"status": "failed", "error": f"Image too large: {len(image_bytes)} bytes"}
+        )
         return results
     results["steps"][-1].update({"status": "passed", "size_bytes": len(image_bytes)})
 
@@ -69,11 +74,13 @@ async def test_face_verification(
     if error:
         results["steps"][-1].update({"status": "failed", "error": error})
         return results
-    results["steps"][-1].update({
-        "status": "passed",
-        "embedding_dim": int(selfie_embedding.shape[0]),
-        "norm": float(selfie_embedding.sum()),
-    })
+    results["steps"][-1].update(
+        {
+            "status": "passed",
+            "embedding_dim": int(selfie_embedding.shape[0]),
+            "norm": float(selfie_embedding.sum()),
+        }
+    )
 
     # Step 4: Load user's approved photos
     results["steps"].append({"step": "load_photos", "status": "started"})
@@ -85,7 +92,9 @@ async def test_face_verification(
     )
     photos = photos_result.scalars().all()
     if not photos:
-        results["steps"][-1].update({"status": "failed", "error": "No approved photos found for user"})
+        results["steps"][-1].update(
+            {"status": "failed", "error": "No approved photos found for user"}
+        )
         return results
     results["steps"][-1].update({"status": "passed", "photo_count": len(photos)})
 
@@ -98,30 +107,43 @@ async def test_face_verification(
         try:
             photo_bytes = await PhotoService.download_photo_bytes(photo.url)
         except Exception as e:
-            logger.warning("face_verification_photo_download_failed", photo_id=str(photo.id), error=str(e), exc_info=True)
+            logger.warning(
+                "face_verification_photo_download_failed",
+                photo_id=str(photo.id),
+                error=str(e),
+                exc_info=True,
+            )
             continue
 
-        photo_embedding, _ = await face_verification_service.extract_single_photo_embedding(photo_bytes)
+        photo_embedding, _ = await face_verification_service.extract_single_photo_embedding(
+            photo_bytes
+        )
         if photo_embedding is None:
             per_photo.append({"photo_id": str(photo.id), "status": "no_face"})
             continue
 
-        matched, similarity = face_verification_service.compare_embeddings(selfie_embedding, photo_embedding)
+        matched, similarity = face_verification_service.compare_embeddings(
+            selfie_embedding, photo_embedding
+        )
         best_similarity = max(best_similarity, similarity)
         if matched:
             matched_any = True
-        per_photo.append({
-            "photo_id": str(photo.id),
-            "matched": matched,
-            "similarity_score": round(similarity, 4),
-        })
+        per_photo.append(
+            {
+                "photo_id": str(photo.id),
+                "matched": matched,
+                "similarity_score": round(similarity, 4),
+            }
+        )
 
-    results["steps"][-1].update({
-        "status": "passed",
-        "per_photo": per_photo,
-        "best_similarity_score": round(best_similarity, 4),
-        "threshold": settings.FACE_MATCH_THRESHOLD,
-    })
+    results["steps"][-1].update(
+        {
+            "status": "passed",
+            "per_photo": per_photo,
+            "best_similarity_score": round(best_similarity, 4),
+            "threshold": settings.FACE_MATCH_THRESHOLD,
+        }
+    )
 
     results["success"] = matched_any
     results["summary"] = {

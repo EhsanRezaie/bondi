@@ -1,20 +1,22 @@
-
 # tests/test_discover.py - Complete updated file
 
-import pytest
+from datetime import UTC, datetime
+
 from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
-from datetime import date, datetime, timedelta, timezone
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
+from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.models.photo import Photo
 from tests.photo_visibility_helper import grant_approved_photo
 
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
@@ -139,10 +141,7 @@ COMPLETE_PROFILE_PAYLOAD_MALE2 = {
 
 
 async def register_user_full(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> dict:
     """Complete full registration via phone OTP - returns user data with tokens."""
     await mock_verification_code(phone, VALID_CODE)
@@ -163,10 +162,7 @@ async def register_user_full(
 
 
 async def register_and_get_headers(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user via phone OTP and return headers with user_id."""
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
@@ -178,20 +174,14 @@ async def register_and_get_headers(
 
 async def get_user_age(db_session, user_id: str) -> int:
     """Get user age from profile."""
-    result = await db_session.execute(
-        select(UserProfile)
-        .where(UserProfile.user_id == user_id)
-    )
+    result = await db_session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
     profile = result.scalar_one_or_none()
     return profile.age if profile else 0
 
 
 class TestDiscover:
-    
     async def test_discover_returns_opposite_gender(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by female gender when specified."""
         male_headers, _ = await register_and_get_headers(
@@ -203,7 +193,7 @@ class TestDiscover:
         await register_and_get_headers(
             client, VALID_EMAIL_MALE2, COMPLETE_PROFILE_PAYLOAD_MALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -211,14 +201,12 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["gender"] == "female"
-    
+
     async def test_discover_returns_all_genders_when_no_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should return all genders when no gender filter is provided."""
         male_headers, _ = await register_and_get_headers(
@@ -230,19 +218,17 @@ class TestDiscover:
         await register_and_get_headers(
             client, VALID_EMAIL_MALE2, COMPLETE_PROFILE_PAYLOAD_MALE2, mock_verification_code
         )
-        
+
         res = await client.get(DISCOVER_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
-        
+
         genders = [u["gender"] for u in data["users"]]
         assert "male" in genders
         assert "female" in genders
-    
+
     async def test_discover_filters_by_gender_male(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by male gender."""
         female_headers, _ = await register_and_get_headers(
@@ -254,7 +240,7 @@ class TestDiscover:
         await register_and_get_headers(
             client, VALID_EMAIL_MALE2, COMPLETE_PROFILE_PAYLOAD_MALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "male"},
@@ -262,14 +248,12 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["gender"] == "male"
-    
+
     async def test_discover_filters_by_gender_female(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should filter by female gender."""
         male_headers, _ = await register_and_get_headers(
@@ -281,7 +265,7 @@ class TestDiscover:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE2, COMPLETE_PROFILE_PAYLOAD_FEMALE2, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -289,14 +273,12 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["gender"] == "female"
-    
+
     async def test_discover_excludes_swiped_users(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Should exclude users already swiped on."""
         male_headers, _ = await register_and_get_headers(
@@ -305,13 +287,13 @@ class TestDiscover:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         await client.post(
             SWIPE_URL,
             json={"user_id": female_id, "direction": "like"},
             headers=male_headers,
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -319,76 +301,65 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         female_ids = [u["id"] for u in data["users"]]
         assert female_id not in female_ids
-    
+
     async def test_discover_requires_auth(self, client: AsyncClient):
         """Should return 401 without token."""
         res = await client.get(DISCOVER_URL)
         assert res.status_code == 401
-    
+
     async def test_discover_age_filter_exact(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Should filter by exact age range."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Female born 1998-05-15
         female_result, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Get female age using profile.age property
         female_age = await get_user_age(db_session, female_id)
-        
+
         # Search for exact age range that includes the female
         res = await client.get(
             DISCOVER_URL,
-            params={
-                "age_min": female_age - 1,
-                "age_max": female_age + 1,
-                "gender": "female"
-            },
+            params={"age_min": female_age - 1, "age_max": female_age + 1, "gender": "female"},
             headers=male_headers,
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         # Should find the female
         user_ids = [u["id"] for u in data["users"]]
         assert female_id in user_ids
-    
+
     async def test_discover_age_filter_greater_than(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Should filter by age >= 30."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Register female
         female_result, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # ✅ Get actual age using profile.age property
         result = await db_session.execute(
-            select(UserProfile)
-            .where(UserProfile.user_id == female_id)
+            select(UserProfile).where(UserProfile.user_id == female_id)
         )
         profile = result.scalar_one_or_none()
         female_age = profile.age if profile else 0
         print(f"Female age: {female_age}")
-        
+
         # Search for age >= 30 - should return none if female_age < 30
         res = await client.get(
             DISCOVER_URL,
@@ -397,39 +368,35 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         if female_age >= 30:
             # If female is 30+, she should be in results
             assert len(data["users"]) >= 1
         else:
             # If female is < 30, she should NOT be in results
             assert len(data["users"]) == 0
-        
+
     async def test_discover_age_filter_less_than(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Should filter by age <= 20."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         # Register female
         female_result, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # ✅ Get actual age using profile.age property
         result = await db_session.execute(
-            select(UserProfile)
-            .where(UserProfile.user_id == female_id)
+            select(UserProfile).where(UserProfile.user_id == female_id)
         )
         profile = result.scalar_one_or_none()
         female_age = profile.age if profile else 0
         print(f"Female age: {female_age}")
-        
+
         # Search for age <= 20 - should return none if female_age > 20
         res = await client.get(
             DISCOVER_URL,
@@ -438,28 +405,24 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         if female_age <= 20:
             # If female is 20 or younger, she should be in results
             assert len(data["users"]) >= 1
         else:
             # If female is > 20, she should NOT be in results
             assert len(data["users"]) == 0
-    
-    async def test_discover_distance_filter(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_distance_filter(self, client: AsyncClient, mock_verification_code):
         """Should filter by distance."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"distance_km": 10, "gender": "female"},
@@ -467,19 +430,15 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert len(data["users"]) >= 0
-    
-    async def test_discover_does_not_show_self(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_does_not_show_self(self, client: AsyncClient, mock_verification_code):
         """Should not show the current user in discover."""
         male_headers, male_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "male"},
@@ -487,24 +446,20 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         user_ids = [u["id"] for u in data["users"]]
         assert male_id not in user_ids
-    
-    async def test_discover_only_active_users(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_only_active_users(self, client: AsyncClient, mock_verification_code):
         """Should only show active users."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -513,21 +468,17 @@ class TestDiscover:
         assert res.status_code == 200
         data = res.json()
         assert len(data["users"]) > 0
-    
-    async def test_discover_combined_filters(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_combined_filters(self, client: AsyncClient, mock_verification_code):
         """Should combine age and distance filters."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={
@@ -540,15 +491,13 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["age"] >= 20
             assert user["age"] <= 25
-    
+
     async def test_discover_excludes_blocked_users(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Users you blocked should NOT appear in discover."""
         male_headers, _ = await register_and_get_headers(
@@ -557,7 +506,7 @@ class TestDiscover:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res_before = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -565,9 +514,9 @@ class TestDiscover:
         )
         user_ids_before = [u["id"] for u in res_before.json()["users"]]
         assert female_id in user_ids_before
-        
+
         await client.post(f"{BLOCKS_URL}/{female_id}/block", headers=male_headers)
-        
+
         res_after = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -575,23 +524,21 @@ class TestDiscover:
         )
         assert res_after.status_code == 200
         user_ids_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert female_id not in user_ids_after
-    
+
     async def test_discover_excludes_users_who_blocked_you(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Users who blocked you should NOT appear in discover."""
         user_a_headers, user_a_id = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         user_b_headers, user_b_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res_before = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -599,9 +546,9 @@ class TestDiscover:
         )
         user_ids_before = [u["id"] for u in res_before.json()["users"]]
         assert user_b_id in user_ids_before
-        
+
         await client.post(f"{BLOCKS_URL}/{user_a_id}/block", headers=user_b_headers)
-        
+
         res_after = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -609,14 +556,10 @@ class TestDiscover:
         )
         assert res_after.status_code == 200
         user_ids_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert user_b_id not in user_ids_after
-    
-    async def test_discover_excludes_swiped_pass(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_excludes_swiped_pass(self, client: AsyncClient, mock_verification_code):
         """Users you passed (swiped left) should NOT appear in discover."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -624,7 +567,7 @@ class TestDiscover:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res_before = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -632,13 +575,13 @@ class TestDiscover:
         )
         user_ids_before = [u["id"] for u in res_before.json()["users"]]
         assert female_id in user_ids_before
-        
+
         await client.post(
             SWIPE_URL,
             json={"user_id": female_id, "direction": "pass"},
             headers=male_headers,
         )
-        
+
         res_after = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -646,14 +589,10 @@ class TestDiscover:
         )
         assert res_after.status_code == 200
         user_ids_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert female_id not in user_ids_after
-    
-    async def test_discover_excludes_swiped_like(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_excludes_swiped_like(self, client: AsyncClient, mock_verification_code):
         """Users you liked (swiped right) should NOT appear in discover."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
@@ -661,7 +600,7 @@ class TestDiscover:
         _, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res_before = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -669,13 +608,13 @@ class TestDiscover:
         )
         user_ids_before = [u["id"] for u in res_before.json()["users"]]
         assert female_id in user_ids_before
-        
+
         await client.post(
             SWIPE_URL,
             json={"user_id": female_id, "direction": "like"},
             headers=male_headers,
         )
-        
+
         res_after = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -683,23 +622,21 @@ class TestDiscover:
         )
         assert res_after.status_code == 200
         user_ids_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert female_id not in user_ids_after
-    
+
     async def test_discover_returns_premium_status(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Discover should return correct is_premium status."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -707,24 +644,22 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert isinstance(user["is_premium"], bool)
-    
+
     async def test_discover_returns_verified_status(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Discover should return correct is_verified status."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -732,14 +667,12 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert isinstance(user["is_verified"], bool)
-    
+
     async def test_discover_returns_main_photo_url(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Discover should return main_photo_url (or None)."""
         male_headers, _ = await register_and_get_headers(
@@ -748,7 +681,7 @@ class TestDiscover:
         await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"gender": "female"},
@@ -756,15 +689,12 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         for user in data["users"]:
             assert user["main_photo_url"] is None or isinstance(user["main_photo_url"], str)
 
     async def test_discover_hides_users_with_unapproved_photos(
-        self,
-        client: AsyncClient,
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Users whose photos are not all approved must NOT appear in discover."""
         male_headers, _ = await register_and_get_headers(
@@ -776,9 +706,15 @@ class TestDiscover:
 
         # Set the female user's photo to pending (not all approved) -> hidden.
         from sqlalchemy import update as sa_update
+
         await db_session.execute(
             sa_update(Photo).where(Photo.user_id == female_id).values(status="pending")
         )
+        # Direct fixture-level status mutation must maintain the
+        # denormalized flag (endpoint hooks do this on real events).
+        from app.services.photo_service import PhotoService
+
+        await PhotoService.recompute_is_searchable(db_session, female_id)
         await db_session.commit()
 
         res = await client.get(
@@ -790,17 +726,13 @@ class TestDiscover:
         data = res.json()
         assert all(u["id"] != female_id for u in data["users"])
         assert data["total"] == 0
-    
-    async def test_discover_empty_results(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+
+    async def test_discover_empty_results(self, client: AsyncClient, mock_verification_code):
         """Should return empty list when no users match filters."""
         male_headers, _ = await register_and_get_headers(
             client, VALID_EMAIL_MALE, COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
         )
-        
+
         res = await client.get(
             DISCOVER_URL,
             params={"age_min": 80, "age_max": 100},
@@ -808,16 +740,13 @@ class TestDiscover:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert isinstance(data["users"], list)
         assert data["total"] == 0
         assert data["next_offset"] is None
-    
+
     async def test_discover_excludes_already_matched(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code,
-        db_session
+        self, client: AsyncClient, mock_verification_code, db_session
     ):
         """Users you already matched with should NOT appear in discover."""
         male_headers, male_id = await register_and_get_headers(
@@ -826,7 +755,7 @@ class TestDiscover:
         female_headers, female_id = await register_and_get_headers(
             client, VALID_EMAIL_FEMALE, COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
         )
-        
+
         # Load profiles to avoid greenlet issues
         result = await db_session.execute(
             select(User)
@@ -837,7 +766,7 @@ class TestDiscover:
             .where(User.id.in_([male_id, female_id]))
         )
         users = result.scalars().all()
-        
+
         # Check female appears in discover before match
         res_before = await client.get(
             DISCOVER_URL,
@@ -846,7 +775,7 @@ class TestDiscover:
         )
         user_ids_before = [u["id"] for u in res_before.json()["users"]]
         assert female_id in user_ids_before
-        
+
         # Create match (both like each other)
         await client.post(
             SWIPE_URL,
@@ -859,7 +788,7 @@ class TestDiscover:
             headers=female_headers,
         )
         assert match_res.status_code == 200
-        
+
         # Female should NOT appear in discover (because they are matched)
         res_after = await client.get(
             DISCOVER_URL,
@@ -868,13 +797,11 @@ class TestDiscover:
         )
         assert res_after.status_code == 200
         user_ids_after = [u["id"] for u in res_after.json()["users"]]
-        
+
         assert female_id not in user_ids_after
 
     async def test_discover_returns_card_fields_only(
-        self,
-        client: AsyncClient,
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Discover should return only the slim card fields (not the full profile)."""
         male_headers, _ = await register_and_get_headers(
@@ -947,8 +874,7 @@ class TestDiscoverCursorPagination:
     ) -> tuple[dict, list[str]]:
         male_headers = await self._register_searcher(client, mock_verification_code)
         ids = [
-            await self._register_candidate(client, mock_verification_code, i)
-            for i in range(count)
+            await self._register_candidate(client, mock_verification_code, i) for i in range(count)
         ]
         return male_headers, ids
 
@@ -1022,8 +948,7 @@ class TestDiscoverCursorPagination:
         a later page — the discover-specific version of the offset bug."""
         male_headers = await self._register_searcher(client, mock_verification_code)
         originals = [
-            await self._register_candidate(client, mock_verification_code, i)
-            for i in range(4)
+            await self._register_candidate(client, mock_verification_code, i) for i in range(4)
         ]
 
         res1 = await client.get(
@@ -1055,7 +980,7 @@ class TestDiscoverCursorPagination:
         male_headers, candidate_ids = await self._register_candidates(
             client, mock_verification_code, count=4
         )
-        fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        fixed = datetime(2024, 1, 1, tzinfo=UTC)
         await db_session.execute(
             update(User).where(User.id.in_(candidate_ids)).values(last_seen_at=fixed)
         )
@@ -1066,9 +991,7 @@ class TestDiscoverCursorPagination:
         assert len(all_ids) == 4
         assert len(set(all_ids)) == 4
 
-    async def test_cursor_null_last_seen_tail(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_cursor_null_last_seen_tail(self, client: AsyncClient, mock_verification_code):
         """Users who never went online (NULL last_seen_at) sit in the null tail;
         paging through them must stay duplicate-free."""
         male_headers, candidate_ids = await self._register_candidates(
@@ -1079,9 +1002,7 @@ class TestDiscoverCursorPagination:
         assert len(all_ids) == 5
         assert len(set(all_ids)) == 5
 
-    async def test_cursor_none_when_no_results(
-        self, client: AsyncClient, mock_verification_code
-    ):
+    async def test_cursor_none_when_no_results(self, client: AsyncClient, mock_verification_code):
         male_headers, _ = await self._register_candidates(client, mock_verification_code, count=2)
         res = await client.get(
             DISCOVER_URL,

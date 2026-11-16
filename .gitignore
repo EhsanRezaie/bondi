@@ -31,3 +31,6 @@ Thumbs.db
 # Logs
 logs/*.log
 !logs/.gitkeep.mimocode/
+
+# OpenCode local config (contains API key)
+opencode.json

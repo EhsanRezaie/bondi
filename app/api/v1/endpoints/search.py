@@ -1,42 +1,40 @@
-from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, Float, and_, or_
-from sqlalchemy.orm import selectinload
-from sqlalchemy.dialects.postgresql import JSONB
-from datetime import datetime, timedelta, date
 import base64
 import json
+from datetime import date, datetime, timedelta
+from typing import Any
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import Float, and_, func, or_, select, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import app.core.redis as redis_module
+from app.core.deps import get_current_user
+from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.db.session import get_session
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_interest import UserInterest
+from app.db.types import Geography
+from app.models.block import Block
 from app.models.interest import Interest
 from app.models.photo import Photo
-from app.models.block import Block
 from app.models.swipe import Swipe
-from app.core.deps import get_current_user
-import app.core.redis as redis_module
-from app.core.limiter import limiter
+from app.models.user import User
+from app.models.user_interest import UserInterest
+from app.models.user_profile import UserProfile
 from app.schemas.search import SearchResponse
 from app.services.profile_service import serialize_card
 from app.utils.geo import fuzz_distance
-
-from app.core.logging import get_logger
 
 logger = get_logger("search")
 
 router = APIRouter(prefix="/search", tags=["search"])
 
-
-def haversine_distance(lat1, lng1, lat2_col, lng2_col):
-    """Haversine distance as SQL expression. Returns km."""
-    cos_val = (
-        func.cos(func.radians(lat1)) * func.cos(func.radians(lat2_col)) *
-        func.cos(func.radians(lng2_col) - func.radians(lng1)) +
-        func.sin(func.radians(lat1)) * func.sin(func.radians(lat2_col))
-    )
-    return 6371 * func.acos(func.least(1.0, func.greatest(-1.0, cos_val)))
+# `total` cap for search results: an exact count costs a full scan per
+# request, so counting stops at CAP+1. Clients render "2000+" when
+# total > CAP. Deep paging is unaffected (cursor-based).
+SEARCH_TOTAL_CAP = 2000
 
 
 def _encode_cursor(key, user_id):
@@ -111,7 +109,9 @@ async def search_users(
     sort_by: str = Query("recent", pattern="^(recent|distance|age|name|last_seen)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(20, ge=1, le=50),
-    offset: int = Query(0, ge=0),
+    # Offset is capped: deep offset scans defeat the GiST index and let a
+    # single request hammer the DB — clients page via cursor instead.
+    offset: int = Query(0, ge=0, le=1000),
     cursor: str = Query(None, description="Opaque keyset cursor for stable pagination"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
@@ -133,18 +133,24 @@ async def search_users(
     blocked_user_ids = select(Block.blocked_id).where(Block.blocker_id == current_user.id)
     blocked_by_user_ids = select(Block.blocker_id).where(Block.blocked_id == current_user.id)
 
-    query = select(User).options(
-        selectinload(User.profile),
-        selectinload(User.settings),
-        selectinload(User.photos),
-    ).where(
-        User.is_active == True,
-        User.id != current_user.id,
-        User.id.not_in(blocked_user_ids),
-        User.id.not_in(blocked_by_user_ids),
-        # Visibility policy: only show users whose photos are all approved.
-        User.photos.any(),
-        ~User.photos.any(Photo.status != "approved"),
+    query = (
+        select(User)
+        .options(
+            selectinload(User.profile),
+            selectinload(User.settings),
+            selectinload(User.photos),
+        )
+        .where(
+            User.is_active == True,
+            User.id != current_user.id,
+            User.id.not_in(blocked_user_ids),
+            User.id.not_in(blocked_by_user_ids),
+            # Visibility policy: only show users whose photos are all approved.
+            # Denormalized into user_profiles.is_searchable (maintained at
+            # every photo status event) — replaces two photo semi/anti-joins
+            # per request.
+            UserProfile.is_searchable == True,
+        )
     )
 
     query = query.join(UserProfile, User.id == UserProfile.user_id)
@@ -199,17 +205,14 @@ async def search_users(
     if languages:
         lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
         if lang_list:
-            query = query.where(
-                UserProfile.languages.cast(JSONB).contains(lang_list)
-            )
+            query = query.where(UserProfile.languages.cast(JSONB).contains(lang_list))
 
     if interests:
         interest_list = [i.strip() for i in interests.split(",") if i.strip()]
         if interest_list:
             interest_count_subquery = (
                 select(
-                    UserInterest.user_id,
-                    func.count(UserInterest.interest_id).label('match_count')
+                    UserInterest.user_id, func.count(UserInterest.interest_id).label("match_count")
                 )
                 .join(Interest, UserInterest.interest_id == Interest.id)
                 .where(Interest.name.in_(interest_list))
@@ -217,45 +220,50 @@ async def search_users(
                 .having(func.count(UserInterest.interest_id) == len(interest_list))
                 .subquery()
             )
-            query = query.where(
-                User.id.in_(
-                    select(interest_count_subquery.c.user_id)
-                )
-            )
+            query = query.where(User.id.in_(select(interest_count_subquery.c.user_id)))
 
     if has_photos is not None:
         if has_photos:
             query = query.where(
                 select(func.count(Photo.id))
                 .where(Photo.user_id == User.id, Photo.status == "approved")
-                .as_scalar() > 0
+                .as_scalar()
+                > 0
             )
         else:
             query = query.where(
                 select(func.count(Photo.id))
                 .where(Photo.user_id == User.id, Photo.status == "approved")
-                .as_scalar() == 0
+                .as_scalar()
+                == 0
             )
 
     has_coords = current_profile.lat is not None and current_profile.lng is not None
 
     if has_coords:
-        distance_expr = haversine_distance(
-            current_profile.lat, current_profile.lng,
-            UserProfile.lat, UserProfile.lng
-        )
+        # PostGIS: index-assisted distance via GiST (idx_profiles_location_gist)
+        # — replaces per-row haversine trig. Meters → km for the API.
+        viewer_point = func.ST_SetSRID(
+            func.ST_MakePoint(current_profile.lng, current_profile.lat), 4326
+        ).cast(Geography)
+        distance_expr = func.ST_Distance(UserProfile.location, viewer_point) / 1000.0
         if distance_km:
-            query = query.where(distance_expr <= distance_km)
+            query = query.where(
+                func.ST_DWithin(UserProfile.location, viewer_point, distance_km * 1000)
+            )
         query = query.add_columns(distance_expr.label("distance_km"))
     else:
         query = query.add_columns(func.cast(None, Float).label("distance_km"))
         if sort_by == "distance":
             sort_by = "recent"
 
+    col: Any
     if sort_by == "age":
         col = UserProfile.birth_date
         col_asc = sort_order == "desc"
-    elif sort_by == "last_seen":
+    elif sort_by in ("last_seen", "recent"):
+        # Default "recent" = most recently active — the app-wide convention
+        # (matches discover ordering). Was created_at.
         col = User.last_seen_at
         col_asc = False
     else:
@@ -284,10 +292,27 @@ async def search_users(
             cursor_key = _parse_cursor_key(sort_by, parsed_key)
             use_cursor = True
 
-    # Count the FULL filtered result set (before any cursor/offset slicing) so
-    # `total` stays the same on every page regardless of pagination mode.
-    count_query = select(func.count()).select_from(query.subquery())
-    total = await session.scalar(count_query)
+    # Guardrail: cap this request's DB time (SET LOCAL scopes it to this
+    # transaction). A pathological filter combo must not pin a pool
+    # connection for many seconds while the client waits.
+    try:
+        await session.execute(text("SET LOCAL statement_timeout = 5000"))
+    except DBAPIError:
+        raise HTTPException(
+            status_code=503, detail="Search is busy — try narrower filters."
+        ) from None
+
+    # `total` is capped: an exact count costs a full scan per request. When
+    # the true count exceeds SEARCH_TOTAL_CAP the API returns CAP+1 and
+    # clients should render "2000+". Deep paging continues via cursor
+    # regardless (offset itself is capped below).
+    try:
+        count_query = select(func.count()).select_from(query.limit(SEARCH_TOTAL_CAP + 1).subquery())
+        total = await session.scalar(count_query)
+    except DBAPIError:
+        raise HTTPException(
+            status_code=503, detail="Search is busy — try narrower filters."
+        ) from None
 
     if use_cursor:
         if cursor_key is None:
@@ -297,15 +322,19 @@ async def search_users(
             else:
                 query = query.where(col.is_(None), User.id < cursor_id)
         elif col_asc:
-            query = query.where(or_(
-                col > cursor_key,
-                and_(col == cursor_key, User.id > cursor_id),
-            ))
+            query = query.where(
+                or_(
+                    col > cursor_key,
+                    and_(col == cursor_key, User.id > cursor_id),
+                )
+            )
         else:
-            query = query.where(or_(
-                col < cursor_key,
-                and_(col == cursor_key, User.id < cursor_id),
-            ))
+            query = query.where(
+                or_(
+                    col < cursor_key,
+                    and_(col == cursor_key, User.id < cursor_id),
+                )
+            )
 
     if use_cursor:
         # Fetch one extra row to detect whether another page exists.
@@ -313,9 +342,13 @@ async def search_users(
     else:
         query = query.offset(offset).limit(limit)
 
-    result = await session.execute(query)
-    rows = result.all()
-
+    try:
+        result = await session.execute(query)
+        rows = result.all()
+    except DBAPIError:
+        raise HTTPException(
+            status_code=503, detail="Search is busy — try narrower filters."
+        ) from None
     has_next = False
     next_cursor = None
     next_offset = None
@@ -342,17 +375,10 @@ async def search_users(
                 if last_user.profile and last_user.profile.birth_date
                 else None
             )
-        elif sort_by == "last_seen":
-            key = (
-                last_user.last_seen_at.isoformat()
-                if last_user.last_seen_at else None
-            )
+        elif sort_by in ("last_seen", "recent"):
+            key = last_user.last_seen_at.isoformat() if last_user.last_seen_at else None
         elif sort_by == "name":
-            key = (
-                last_user.profile.name
-                if last_user.profile and last_user.profile.name
-                else None
-            )
+            key = last_user.profile.name if last_user.profile and last_user.profile.name else None
         else:
             key = last_user.created_at.isoformat()
         next_cursor = _encode_cursor(key, last_user.id)
@@ -363,8 +389,7 @@ async def search_users(
     if result_user_ids:
         swipe_rows = await session.execute(
             select(Swipe.to_user, Swipe.direction).where(
-                Swipe.from_user == current_user.id,
-                Swipe.to_user.in_(result_user_ids)
+                Swipe.from_user == current_user.id, Swipe.to_user.in_(result_user_ids)
             )
         )
         swipe_map = {row.to_user: row.direction for row in swipe_rows}
@@ -389,13 +414,15 @@ async def search_users(
 
         is_online = online_map.get(str(user.id), False)
 
-        response_users.append(await serialize_card(
-            user,
-            is_online=is_online,
-            distance_km=fuzz_distance(distance),
-            is_verified=profile.is_verified,
-            current_user_action=swipe_map.get(user.id),
-        ))
+        response_users.append(
+            await serialize_card(
+                user,
+                is_online=is_online,
+                distance_km=fuzz_distance(distance),
+                is_verified=profile.is_verified,
+                current_user_action=swipe_map.get(user.id),
+            )
+        )
 
     return SearchResponse(
         users=response_users,

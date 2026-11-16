@@ -1,17 +1,16 @@
 # app/api/v1/endpoints/admin_logs.py
-from fastapi import APIRouter, Depends, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.deps import AdminIdentity, get_admin_user
+from app.core.logging import get_logger
 from app.db.session import get_session
-from app.core.deps import get_admin_user, AdminIdentity
 from app.models.admin_log import AdminLog
 from app.schemas.admin import AdminLogEntry, AdminLogListResponse
-
-from app.core.logging import get_logger
 
 logger = get_logger("admin_logs")
 
@@ -21,12 +20,12 @@ router = APIRouter(prefix="/admin/logs", tags=["admin"])
 @router.get("", response_model=AdminLogListResponse)
 async def admin_list_logs(
     request: Request,
-    admin_id: Optional[str] = Query(None, description="Filter by admin username"),
-    action: Optional[str] = Query(None, description="Filter by action name"),
-    target_type: Optional[str] = Query(None, description="Filter by target type"),
-    target_id: Optional[UUID] = Query(None, description="Filter by target id"),
-    from_date: Optional[datetime] = Query(None, alias="from"),
-    to_date: Optional[datetime] = Query(None, alias="to"),
+    admin_id: str | None = Query(None, description="Filter by admin username"),
+    action: str | None = Query(None, description="Filter by action name"),
+    target_type: str | None = Query(None, description="Filter by target type"),
+    target_id: UUID | None = Query(None, description="Filter by target id"),
+    from_date: datetime | None = Query(None, alias="from"),
+    to_date: datetime | None = Query(None, alias="to"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
@@ -58,9 +57,7 @@ async def admin_list_logs(
     total = (await session.execute(count_query)).scalar() or 0
 
     result = await session.execute(
-        query.order_by(AdminLog.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(AdminLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     )
     logs = result.scalars().all()
 

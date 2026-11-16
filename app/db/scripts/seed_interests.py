@@ -59,9 +59,7 @@ async def seed_interests() -> None:
         # Snapshot existing rows first so we can report inserted vs updated counts.
         from sqlalchemy import select
 
-        existing_names = set(
-            (await session.execute(select(Interest.name))).scalars().all()
-        )
+        existing_names = set((await session.execute(select(Interest.name))).scalars().all())
 
         stmt = pg_insert(Interest).values(data)
         stmt = stmt.on_conflict_do_update(

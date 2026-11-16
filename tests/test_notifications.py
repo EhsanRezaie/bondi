@@ -1,10 +1,12 @@
-
-import pytest
-from httpx import AsyncClient
 from unittest.mock import AsyncMock, patch
+
+from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -55,7 +57,9 @@ class TestNotifications:
         assert body["next_offset"] is None
 
     async def test_get_notifications_pagination(self, client: AsyncClient, mock_verification_code):
-        receiver_data = await register_user(client, _phone("receiver@example.com"), mock_verification_code)
+        receiver_data = await register_user(
+            client, _phone("receiver@example.com"), mock_verification_code
+        )
         receiver_headers = {"Authorization": f"Bearer {receiver_data['access_token']}"}
 
         for i in range(3):
@@ -67,7 +71,7 @@ class TestNotifications:
             await client.post(
                 SWIPE_URL,
                 json={"user_id": receiver_data["user"]["id"], "direction": "like"},
-                headers=liker_headers
+                headers=liker_headers,
             )
 
         res = await client.get(NOTIFICATIONS_URL, params={"limit": 2}, headers=receiver_headers)
@@ -77,7 +81,9 @@ class TestNotifications:
         assert body["total"] >= 3
         assert body["next_offset"] == 2
 
-    async def test_get_notifications_cursor_pagination(self, client: AsyncClient, mock_verification_code):
+    async def test_get_notifications_cursor_pagination(
+        self, client: AsyncClient, mock_verification_code
+    ):
         receiver_data = await register_user(
             client, _phone("cursor_receiver@example.com"), mock_verification_code
         )
@@ -94,9 +100,7 @@ class TestNotifications:
                 headers=liker_headers,
             )
 
-        first = await client.get(
-            NOTIFICATIONS_URL, params={"limit": 2}, headers=receiver_headers
-        )
+        first = await client.get(NOTIFICATIONS_URL, params={"limit": 2}, headers=receiver_headers)
         assert first.status_code == 200
         first_body = first.json()
         assert len(first_body["notifications"]) == 2
@@ -118,7 +122,9 @@ class TestNotifications:
         assert len(second_ids) >= 1
 
     async def test_get_notifications_type_filter(self, client: AsyncClient, mock_verification_code):
-        receiver_data = await register_user(client, _phone("typefilter@example.com"), mock_verification_code)
+        receiver_data = await register_user(
+            client, _phone("typefilter@example.com"), mock_verification_code
+        )
         receiver_headers = {"Authorization": f"Bearer {receiver_data['access_token']}"}
 
         liker_data = await register_user(
@@ -130,7 +136,7 @@ class TestNotifications:
         await client.post(
             SWIPE_URL,
             json={"user_id": receiver_data["user"]["id"], "direction": "like"},
-            headers=liker_headers
+            headers=liker_headers,
         )
 
         res = await client.get(
@@ -154,9 +160,15 @@ class TestNotifications:
         assert body["notifications"] == []
         assert body["next_offset"] is None
 
-    async def test_get_notifications_type_filter_does_not_leak(self, client: AsyncClient, mock_verification_code):
-        user_a = await register_user(client, _phone("typeleak_a@example.com"), mock_verification_code)
-        user_b = await register_user(client, _phone("typeleak_b@example.com"), mock_verification_code)
+    async def test_get_notifications_type_filter_does_not_leak(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        user_a = await register_user(
+            client, _phone("typeleak_a@example.com"), mock_verification_code
+        )
+        user_b = await register_user(
+            client, _phone("typeleak_b@example.com"), mock_verification_code
+        )
         headers_a = {"Authorization": f"Bearer {user_a['access_token']}"}
         headers_b = {"Authorization": f"Bearer {user_b['access_token']}"}
 
@@ -177,16 +189,20 @@ class TestNotifications:
         assert res.status_code == 401
 
     async def test_mark_single_notification_read(self, client: AsyncClient, mock_verification_code):
-        data = await register_user(client, _phone("markread_main@example.com"), mock_verification_code)
+        data = await register_user(
+            client, _phone("markread_main@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
-        user2_data = await register_user(client, _phone("markread_liker@example.com"), mock_verification_code)
+        user2_data = await register_user(
+            client, _phone("markread_liker@example.com"), mock_verification_code
+        )
         user2_headers = {"Authorization": f"Bearer {user2_data['access_token']}"}
 
         await client.post(
             SWIPE_URL,
             json={"user_id": data["user"]["id"], "direction": "like"},
-            headers=user2_headers
+            headers=user2_headers,
         )
 
         get_res = await client.get(NOTIFICATIONS_URL, headers=headers)
@@ -198,7 +214,7 @@ class TestNotifications:
         read_res = await client.post(
             NOTIFICATIONS_URL + "/read",
             json={"notification_ids": [notification_id]},
-            headers=headers
+            headers=headers,
         )
         assert read_res.status_code == 204
 
@@ -207,7 +223,9 @@ class TestNotifications:
             if n["id"] == notification_id:
                 assert n["is_read"] is True
 
-    async def test_mark_multiple_notifications_read(self, client: AsyncClient, mock_verification_code):
+    async def test_mark_multiple_notifications_read(
+        self, client: AsyncClient, mock_verification_code
+    ):
         data = await register_user(client, _phone("bulk_main@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
@@ -219,7 +237,7 @@ class TestNotifications:
             await client.post(
                 SWIPE_URL,
                 json={"user_id": data["user"]["id"], "direction": "like"},
-                headers=user_headers
+                headers=user_headers,
             )
 
         get_res = await client.get(NOTIFICATIONS_URL, headers=headers)
@@ -229,7 +247,7 @@ class TestNotifications:
         read_res = await client.post(
             NOTIFICATIONS_URL + "/read",
             json={"notification_ids": notification_ids},
-            headers=headers
+            headers=headers,
         )
         assert read_res.status_code == 204
 
@@ -238,31 +256,41 @@ class TestNotifications:
             if n["id"] in notification_ids:
                 assert n["is_read"] is True
 
-    async def test_mark_read_invalid_notification_id(self, client: AsyncClient, mock_verification_code):
+    async def test_mark_read_invalid_notification_id(
+        self, client: AsyncClient, mock_verification_code
+    ):
         data = await register_user(client, _phone("invalid@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
             NOTIFICATIONS_URL + "/read",
             json={"notification_ids": ["00000000-0000-0000-0000-000000000001"]},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 204
 
-    async def test_mark_read_other_user_notification_fails(self, client: AsyncClient, mock_verification_code):
-        userA_data = await register_user(client, _phone("usera@example.com"), mock_verification_code)
+    async def test_mark_read_other_user_notification_fails(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        userA_data = await register_user(
+            client, _phone("usera@example.com"), mock_verification_code
+        )
         userA_headers = {"Authorization": f"Bearer {userA_data['access_token']}"}
 
-        userB_data = await register_user(client, _phone("userb@example.com"), mock_verification_code)
+        userB_data = await register_user(
+            client, _phone("userb@example.com"), mock_verification_code
+        )
         userB_headers = {"Authorization": f"Bearer {userB_data['access_token']}"}
 
-        userC_data = await register_user(client, _phone("userc@example.com"), mock_verification_code)
+        userC_data = await register_user(
+            client, _phone("userc@example.com"), mock_verification_code
+        )
         userC_headers = {"Authorization": f"Bearer {userC_data['access_token']}"}
 
         await client.post(
             SWIPE_URL,
             json={"user_id": userA_data["user"]["id"], "direction": "like"},
-            headers=userC_headers
+            headers=userC_headers,
         )
 
         get_res = await client.get(NOTIFICATIONS_URL, headers=userA_headers)
@@ -272,21 +300,25 @@ class TestNotifications:
         res = await client.post(
             NOTIFICATIONS_URL + "/read",
             json={"notification_ids": [userA_notifications[0]["id"]]},
-            headers=userB_headers
+            headers=userB_headers,
         )
         assert res.status_code in [204, 404]
 
     async def test_delete_notification(self, client: AsyncClient, mock_verification_code):
-        data = await register_user(client, _phone("delete_main@example.com"), mock_verification_code)
+        data = await register_user(
+            client, _phone("delete_main@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
-        user2_data = await register_user(client, _phone("delete_liker@example.com"), mock_verification_code)
+        user2_data = await register_user(
+            client, _phone("delete_liker@example.com"), mock_verification_code
+        )
         user2_headers = {"Authorization": f"Bearer {user2_data['access_token']}"}
 
         await client.post(
             SWIPE_URL,
             json={"user_id": data["user"]["id"], "direction": "like"},
-            headers=user2_headers
+            headers=user2_headers,
         )
 
         get_res = await client.get(NOTIFICATIONS_URL, headers=headers)
@@ -301,30 +333,39 @@ class TestNotifications:
         for n in get_res2.json()["notifications"]:
             assert n["id"] != notification_id
 
-    async def test_delete_nonexistent_notification(self, client: AsyncClient, mock_verification_code):
+    async def test_delete_nonexistent_notification(
+        self, client: AsyncClient, mock_verification_code
+    ):
         data = await register_user(client, _phone("nonexist@example.com"), mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.delete(
-            f"{NOTIFICATIONS_URL}/00000000-0000-0000-0000-000000000001",
-            headers=headers
+            f"{NOTIFICATIONS_URL}/00000000-0000-0000-0000-000000000001", headers=headers
         )
         assert res.status_code == 404
 
-    async def test_delete_other_user_notification(self, client: AsyncClient, mock_verification_code):
-        userA_data = await register_user(client, _phone("deleteA@example.com"), mock_verification_code)
+    async def test_delete_other_user_notification(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        userA_data = await register_user(
+            client, _phone("deleteA@example.com"), mock_verification_code
+        )
         userA_headers = {"Authorization": f"Bearer {userA_data['access_token']}"}
 
-        userB_data = await register_user(client, _phone("deleteB@example.com"), mock_verification_code)
+        userB_data = await register_user(
+            client, _phone("deleteB@example.com"), mock_verification_code
+        )
         userB_headers = {"Authorization": f"Bearer {userB_data['access_token']}"}
 
-        userC_data = await register_user(client, _phone("deleteC@example.com"), mock_verification_code)
+        userC_data = await register_user(
+            client, _phone("deleteC@example.com"), mock_verification_code
+        )
         userC_headers = {"Authorization": f"Bearer {userC_data['access_token']}"}
 
         await client.post(
             SWIPE_URL,
             json={"user_id": userA_data["user"]["id"], "direction": "like"},
-            headers=userC_headers
+            headers=userC_headers,
         )
 
         get_res = await client.get(NOTIFICATIONS_URL, headers=userA_headers)
@@ -332,7 +373,9 @@ class TestNotifications:
         assert len(notifications) > 0
         notification_id = notifications[0]["id"]
 
-        del_res = await client.delete(f"{NOTIFICATIONS_URL}/{notification_id}", headers=userB_headers)
+        del_res = await client.delete(
+            f"{NOTIFICATIONS_URL}/{notification_id}", headers=userB_headers
+        )
         assert del_res.status_code == 404
 
 
@@ -341,11 +384,15 @@ class TestNotificationRealtime:
 
     async def test_get_notification_counts(self, client, mock_verification_code):
         """GET /notifications/counts should return total and by_type unread counts."""
-        user = await register_user(client, _phone("counts_user@example.com"), mock_verification_code)
+        user = await register_user(
+            client, _phone("counts_user@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {user['access_token']}"}
 
         # Generate a like notification
-        liker = await register_user(client, _phone("counts_liker@example.com"), mock_verification_code)
+        liker = await register_user(
+            client, _phone("counts_liker@example.com"), mock_verification_code
+        )
         liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
         await client.post(
             SWIPE_URL,
@@ -364,10 +411,14 @@ class TestNotificationRealtime:
 
     async def test_counts_drop_after_read(self, client, mock_verification_code):
         """Counts should drop after marking notifications read."""
-        user = await register_user(client, _phone("counts_read_user@example.com"), mock_verification_code)
+        user = await register_user(
+            client, _phone("counts_read_user@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {user['access_token']}"}
 
-        liker = await register_user(client, _phone("counts_read_liker@example.com"), mock_verification_code)
+        liker = await register_user(
+            client, _phone("counts_read_liker@example.com"), mock_verification_code
+        )
         liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
         await client.post(
             SWIPE_URL,
@@ -396,10 +447,14 @@ class TestNotificationRealtime:
 
     async def test_counts_drop_after_delete(self, client, mock_verification_code):
         """Counts should drop after deleting notifications."""
-        user = await register_user(client, _phone("counts_del_user@example.com"), mock_verification_code)
+        user = await register_user(
+            client, _phone("counts_del_user@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {user['access_token']}"}
 
-        liker = await register_user(client, _phone("counts_del_liker@example.com"), mock_verification_code)
+        liker = await register_user(
+            client, _phone("counts_del_liker@example.com"), mock_verification_code
+        )
         liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
         await client.post(
             SWIPE_URL,
@@ -424,7 +479,9 @@ class TestNotificationRealtime:
 
     async def test_counts_empty(self, client, mock_verification_code):
         """Counts should be zero for user with no notifications."""
-        user = await register_user(client, _phone("counts_empty_user@example.com"), mock_verification_code)
+        user = await register_user(
+            client, _phone("counts_empty_user@example.com"), mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {user['access_token']}"}
 
         res = await client.get("/api/v1/notifications/counts", headers=headers)
@@ -461,21 +518,28 @@ class TestPushImageUrl:
     @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
     async def test_push_match_includes_image_url(self, mock_send, client, mock_verification_code):
         """Push for match should include other user's photo as image_url."""
-        user1 = await register_user(client, _phone("push_match1@example.com"), mock_verification_code)
-        user2 = await register_user(client, _phone("push_match2@example.com"), mock_verification_code)
+        user1 = await register_user(
+            client, _phone("push_match1@example.com"), mock_verification_code
+        )
+        user2 = await register_user(
+            client, _phone("push_match2@example.com"), mock_verification_code
+        )
 
         headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
         headers2 = {"Authorization": f"Bearer {user2['access_token']}"}
         user1_id = user1["user"]["id"]
         user2_id = user2["user"]["id"]
 
-        await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
+        await client.post(
+            SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1
+        )
         mock_send.reset_mock()
-        await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
+        await client.post(
+            SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2
+        )
 
         match_calls = [
-            c for c in mock_send.call_args_list
-            if c.kwargs.get("title") == "It's a match!"
+            c for c in mock_send.call_args_list if c.kwargs.get("title") == "It's a match!"
         ]
         assert len(match_calls) == 2
         for call in match_calls:
@@ -489,8 +553,12 @@ class TestNoPushToSelf:
     @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
     async def test_no_push_to_self_on_liked(self, mock_send, client, mock_verification_code):
         """When user likes someone, no push should be sent to self (WS only)."""
-        liker = await register_user(client, _phone("nopush_liker@example.com"), mock_verification_code)
-        target = await register_user(client, _phone("nopush_target@example.com"), mock_verification_code)
+        liker = await register_user(
+            client, _phone("nopush_liker@example.com"), mock_verification_code
+        )
+        target = await register_user(
+            client, _phone("nopush_target@example.com"), mock_verification_code
+        )
 
         liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
         target_id = target["user"]["id"]
@@ -515,20 +583,18 @@ class TestNotificationWSEvents:
        created_at, user_id, match_id, chat_id}}
     """
 
-    WS_MANAGER_PATH = (
-        "app.services.websocket_manager.websocket_manager.send_personal_message"
-    )
+    WS_MANAGER_PATH = "app.services.websocket_manager.websocket_manager.send_personal_message"
 
     @patch(
         "app.services.websocket_manager.websocket_manager.send_personal_message",
         new_callable=AsyncMock,
     )
-    async def test_ws_new_notification_on_like(
-        self, mock_send, client, mock_verification_code
-    ):
+    async def test_ws_new_notification_on_like(self, mock_send, client, mock_verification_code):
         """Liking publishes new_notification: `like` to the target + `liked` to the liker."""
         liker = await register_user(client, _phone("ws_liker@example.com"), mock_verification_code)
-        target = await register_user(client, _phone("ws_target@example.com"), mock_verification_code)
+        target = await register_user(
+            client, _phone("ws_target@example.com"), mock_verification_code
+        )
 
         liker_headers = {"Authorization": f"Bearer {liker['access_token']}"}
         liker_id = str(liker["user"]["id"])
@@ -558,16 +624,16 @@ class TestNotificationWSEvents:
 
         liked_event = next(e for e in events if e["data"]["type"] == "liked")
         assert liked_event["data"]["user_id"] == target_id
-        liked_call = next(c for c in mock_send.call_args_list if c.args[1]["data"]["type"] == "liked")
+        liked_call = next(
+            c for c in mock_send.call_args_list if c.args[1]["data"]["type"] == "liked"
+        )
         assert liked_call.args[0] == liker_id
 
     @patch(
         "app.services.websocket_manager.websocket_manager.send_personal_message",
         new_callable=AsyncMock,
     )
-    async def test_ws_new_notification_on_match(
-        self, mock_send, client, mock_verification_code
-    ):
+    async def test_ws_new_notification_on_match(self, mock_send, client, mock_verification_code):
         """Mutual like publishes new_notification (match) to BOTH users."""
         user1 = await register_user(client, _phone("ws_match1@example.com"), mock_verification_code)
         user2 = await register_user(client, _phone("ws_match2@example.com"), mock_verification_code)
@@ -577,14 +643,19 @@ class TestNotificationWSEvents:
         user1_id = str(user1["user"]["id"])
         user2_id = str(user2["user"]["id"])
 
-        await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
+        await client.post(
+            SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1
+        )
         mock_send.reset_mock()
 
-        res = await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
+        res = await client.post(
+            SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2
+        )
         assert res.status_code == 200, res.text
 
         match_calls = [
-            c for c in mock_send.call_args_list
+            c
+            for c in mock_send.call_args_list
             if c.args[1]["type"] == "new_notification" and c.args[1]["data"]["type"] == "match"
         ]
         assert len(match_calls) == 2, [c.args for c in mock_send.call_args_list]
@@ -605,7 +676,9 @@ class TestNotificationWSEvents:
         """Admin announcement publishes new_notification (system) to the recipient."""
         from app.core.config import settings
 
-        user = await register_user(client, _phone("ws_announce@example.com"), mock_verification_code)
+        user = await register_user(
+            client, _phone("ws_announce@example.com"), mock_verification_code
+        )
         user_id = str(user["user"]["id"])
 
         res = await client.post(

@@ -651,8 +651,13 @@ Constraints: unique(`user_id`, `token`), index on `user_id`
 |----------|--------|-------------|
 | `/search` | GET | Search users with advanced filters |
 | `/search` | GET | Supports all profile fields: age, gender, height, weight, country, province, city, religion, ethnicity, relationship_status, body_type, education, smoking, drinking, political_orientation, languages, interests |
-| `/search` | GET | Supports pagination with `limit` and `offset` |
-| `/search` | GET | Supports sorting by recent, distance, age, name |
+| `/search` | GET | Supports pagination with `limit` (≤50), `offset` (≤1000 — for depth use `next_cursor`), and `cursor` |
+| `/search` | GET | Supports sorting by recent, distance, age, name, last_seen |
+
+**⚠️ Breaking-ish changes (pre-launch, 2026-11):**
+- **Default sort `recent` now means "most recently active"** (`last_seen_at DESC`, same ordering as discover) — it previously sorted by `created_at`. The `recent` key is still accepted; `last_seen` is the explicit alias.
+- **`total` is capped at 2001.** When more users match the filters, the API returns `total: 2001` — render as **"2000+"**. Exact totals above 2000 are no longer provided (deep paging is unaffected — follow `next_cursor`).
+- `offset` is validated `≤ 1000` — requests with a larger offset return 422.
 
 ### Swipes Endpoints
 
@@ -2476,6 +2481,7 @@ if settings.BUGSINK_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
     sentry_sdk.init(
         dsn=settings.BUGSINK_DSN,
         integrations=[

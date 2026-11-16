@@ -1,7 +1,7 @@
+from datetime import date, datetime
 from uuid import UUID
-from datetime import datetime, date
-from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.ticket import TicketMessageResponse
 
@@ -12,10 +12,10 @@ class AdminUserPhotoResponse(BaseModel):
     url: str
     is_main: bool = False
     status: str
-    reject_reason: Optional[str] = None
+    reject_reason: str | None = None
     face_verified: bool = False
     order: int = 0
-    created_at: Optional[str] = None
+    created_at: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -23,83 +23,83 @@ class AdminUserPhotoResponse(BaseModel):
 class AdminUserResponse(BaseModel):
     # Account
     id: UUID
-    phone: Optional[str] = None
+    phone: str | None = None
     phone_verified: bool
-    email: Optional[str] = None
-    registration_status: Optional[str] = None
-    token_version: Optional[int] = None
-    referral_code: Optional[str] = None
-    referred_by: Optional[UUID] = None
+    email: str | None = None
+    registration_status: str | None = None
+    token_version: int | None = None
+    referral_code: str | None = None
+    referred_by: UUID | None = None
     is_active: bool
     created_at: datetime
-    last_seen_at: Optional[datetime] = None
+    last_seen_at: datetime | None = None
 
     # Profile / identity
     name: str
-    birth_date: Optional[date] = None
+    birth_date: date | None = None
     age: int
-    gender: Optional[str] = None
-    sexual_orientation: Optional[str] = None
-    bio: Optional[str] = None
+    gender: str | None = None
+    sexual_orientation: str | None = None
+    bio: str | None = None
 
     # Appearance
-    height: Optional[int] = None
-    weight: Optional[int] = None
-    body_type: Optional[str] = None
+    height: int | None = None
+    weight: int | None = None
+    body_type: str | None = None
 
     # Lifestyle
-    relationship_status: Optional[str] = None
-    living_situation: Optional[str] = None
-    children_status: Optional[str] = None
-    smoking: Optional[str] = None
-    drinking: Optional[str] = None
-    here_for: Optional[str] = None
-    pets: Optional[str] = None
-    workout_frequency: Optional[str] = None
-    zodiac_sign: Optional[str] = None
+    relationship_status: str | None = None
+    living_situation: str | None = None
+    children_status: str | None = None
+    smoking: str | None = None
+    drinking: str | None = None
+    here_for: str | None = None
+    pets: str | None = None
+    workout_frequency: str | None = None
+    zodiac_sign: str | None = None
 
     # Background
-    languages: Optional[List[str]] = None
-    education: Optional[str] = None
-    workplace: Optional[str] = None
-    religion: Optional[str] = None
-    ethnicity: Optional[str] = None
-    political_orientation: Optional[str] = None
+    languages: list[str] | None = None
+    education: str | None = None
+    workplace: str | None = None
+    religion: str | None = None
+    ethnicity: str | None = None
+    political_orientation: str | None = None
 
     # Location
-    lat: Optional[float] = None
-    lng: Optional[float] = None
-    country: Optional[str] = None
-    province: Optional[str] = None
-    city: Optional[str] = None
-    location_manual: Optional[bool] = None
+    lat: float | None = None
+    lng: float | None = None
+    country: str | None = None
+    province: str | None = None
+    city: str | None = None
+    location_manual: bool | None = None
 
     # Verification / premium
-    is_verified: Optional[bool] = None
-    verified_at: Optional[datetime] = None
+    is_verified: bool | None = None
+    verified_at: datetime | None = None
     is_premium: bool
-    premium_until: Optional[datetime] = None
+    premium_until: datetime | None = None
 
     # Settings
     hide_last_seen: bool = False
     hide_online_status: bool = False
 
     # Relations
-    interests: Optional[List[str]] = None
-    photos: Optional[List[AdminUserPhotoResponse]] = None
+    interests: list[str] | None = None
+    photos: list[AdminUserPhotoResponse] | None = None
 
     # Stats
-    total_likes_sent: Optional[int] = None
-    total_matches: Optional[int] = None
-    total_messages: Optional[int] = None
-    report_count: Optional[int] = None
+    total_likes_sent: int | None = None
+    total_matches: int | None = None
+    total_messages: int | None = None
+    report_count: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class AdminUserUpdate(BaseModel):
-    is_active: Optional[bool] = None
-    premium_until: Optional[datetime] = None
+    is_active: bool | None = None
+    premium_until: datetime | None = None
 
 
 class AdminPremiumGrant(BaseModel):
@@ -108,26 +108,27 @@ class AdminPremiumGrant(BaseModel):
 
 class AdminUserListItem(BaseModel):
     """Minimal user row for the paginated admin search list."""
+
     id: UUID
-    phone: Optional[str] = None
+    phone: str | None = None
     phone_verified: bool
-    email: Optional[str] = None
+    email: str | None = None
     is_active: bool
     created_at: datetime
-    last_seen_at: Optional[datetime] = None
+    last_seen_at: datetime | None = None
 
     # Profile / identity
     name: str
     age: int
-    gender: Optional[str] = None
-    city: Optional[str] = None
-    country: Optional[str] = None
-    province: Optional[str] = None
+    gender: str | None = None
+    city: str | None = None
+    country: str | None = None
+    province: str | None = None
 
     # Verification / premium
-    is_verified: Optional[bool] = None
+    is_verified: bool | None = None
     is_premium: bool
-    premium_until: Optional[datetime] = None
+    premium_until: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -135,7 +136,7 @@ class AdminUserListItem(BaseModel):
 class AdminUserListResponse(BaseModel):
     users: list[AdminUserListItem]
     total: int
-    next_offset: Optional[int] = None
+    next_offset: int | None = None
 
 
 # Report Management Schemas
@@ -147,9 +148,9 @@ class AdminReportResponse(BaseModel):
     reported_name: str
     reason: str
     status: str
-    admin_note: Optional[str] = None
+    admin_note: str | None = None
     created_at: datetime
-    resolved_at: Optional[datetime] = None
+    resolved_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -157,7 +158,7 @@ class AdminReportResponse(BaseModel):
 
 class AdminReportUpdate(BaseModel):
     status: str = Field(..., pattern="^(pending|reviewed|action_taken)$")
-    admin_note: Optional[str] = Field(None, max_length=500)
+    admin_note: str | None = Field(None, max_length=500)
 
 
 # Ticket Management Schemas
@@ -166,29 +167,29 @@ class AdminTicketResponse(BaseModel):
     user_id: UUID
     user_uid: str
     user_name: str
-    user_email: Optional[str] = None
+    user_email: str | None = None
     subject: str
     message: str
-    last_message: Optional[str] = None
+    last_message: str | None = None
     status: str
-    admin_response: Optional[str] = None
+    admin_response: str | None = None
     created_at: datetime
-    updated_at: Optional[datetime] = None
-    messages: Optional[List["TicketMessageResponse"]] = None
+    updated_at: datetime | None = None
+    messages: list["TicketMessageResponse"] | None = None
 
     class Config:
         from_attributes = True
 
 
 class AdminTicketUpdate(BaseModel):
-    status: Optional[str] = Field(None, pattern="^(open|in_progress|closed)$")
-    admin_response: Optional[str] = Field(None, max_length=2000)
+    status: str | None = Field(None, pattern="^(open|in_progress|closed)$")
+    admin_response: str | None = Field(None, max_length=2000)
 
 
 class AdminTicketListResponse(BaseModel):
     tickets: list[AdminTicketResponse]
     total: int
-    next_offset: Optional[int] = None
+    next_offset: int | None = None
 
 
 # Photo Management Schemas
@@ -196,11 +197,11 @@ class AdminPhotoDetailResponse(BaseModel):
     id: UUID
     user_id: UUID
     user_name: str
-    user_email: Optional[str] = None
+    user_email: str | None = None
     url: str
     is_main: bool
     status: str
-    reject_reason: Optional[str] = None
+    reject_reason: str | None = None
     face_verified: bool
     order: int
     created_at: datetime
@@ -215,14 +216,14 @@ class AdminMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     # Optional explicit recipient for the "test announcement" flow. When omitted,
     # the test endpoint falls back to the legacy admin@test.com user if it exists.
-    target_user_id: Optional[UUID] = None
+    target_user_id: UUID | None = None
 
 
 class AdminMessageResponse(BaseModel):
     success: bool
     message: str
-    user_id: Optional[UUID] = None
-    user_name: Optional[str] = None
+    user_id: UUID | None = None
+    user_name: str | None = None
 
 
 class AdminAnnouncementRequest(BaseModel):
@@ -241,13 +242,13 @@ class AdminAnnouncementResponse(BaseModel):
 class AdminPendingPhotoResponse(BaseModel):
     id: UUID
     user_id: UUID
-    user_name: Optional[str] = None
-    user_email: Optional[str] = None
+    user_name: str | None = None
+    user_email: str | None = None
     url: str
     is_main: bool
     status: str
     face_verified: bool = False
-    created_at: Optional[str] = None
+    created_at: str | None = None
 
 
 class AdminPhotoActionResponse(BaseModel):
@@ -279,10 +280,10 @@ class AdminUserPhotoResponse(BaseModel):
     url: str
     is_main: bool
     status: str
-    reject_reason: Optional[str] = None
+    reject_reason: str | None = None
     face_verified: bool = False
     order: int
-    created_at: Optional[str] = None
+    created_at: str | None = None
 
 
 # Message moderation
@@ -292,7 +293,7 @@ class AdminMessageDecryptResponse(BaseModel):
     receiver_id: str
     chat_id: str
     content: str
-    sent_at: Optional[str] = None
+    sent_at: str | None = None
 
 
 class AdminMessageDeleteResponse(BaseModel):
@@ -307,9 +308,9 @@ class AdminReportedMessageResponse(BaseModel):
     content: str
     sender_id: str
     receiver_id: str
-    sent_at: Optional[str] = None
+    sent_at: str | None = None
     report_reason: str
-    report_description: Optional[str] = None
+    report_description: str | None = None
 
 
 # User activity
@@ -325,9 +326,9 @@ class AdminLogEntry(BaseModel):
     id: UUID
     admin_id: str
     action: str
-    target_type: Optional[str] = None
-    target_id: Optional[UUID] = None
-    ip_address: Optional[str] = None
+    target_type: str | None = None
+    target_id: UUID | None = None
+    ip_address: str | None = None
     created_at: datetime
 
     class Config:

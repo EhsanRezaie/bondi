@@ -1,13 +1,13 @@
-
 # tests/test_push_notifications.py
 
-import pytest
-from httpx import AsyncClient
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -92,10 +92,11 @@ async def register_user(client, phone, payload, mock_verification_code):
 
 
 class TestDeviceToken:
-
     async def test_register_device_token(self, client, mock_verification_code):
         """Should register a device token."""
-        result = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
+        result = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         res = await client.post(
@@ -111,7 +112,9 @@ class TestDeviceToken:
 
     async def test_register_device_token_upsert(self, client, mock_verification_code):
         """Same token should update, not duplicate."""
-        result = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
+        result = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         res1 = await client.post(
@@ -143,7 +146,9 @@ class TestDeviceToken:
 
     async def test_register_invalid_platform(self, client, mock_verification_code):
         """Should reject invalid platform."""
-        result = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
+        result = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         res = await client.post(
@@ -155,7 +160,9 @@ class TestDeviceToken:
 
     async def test_delete_device_token(self, client, mock_verification_code):
         """Should delete a device token."""
-        result = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
+        result = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         # Register token
@@ -176,7 +183,9 @@ class TestDeviceToken:
 
     async def test_delete_nonexistent_token_404(self, client, mock_verification_code):
         """Should return 404 for nonexistent token."""
-        result = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
+        result = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
         fake_id = str(uuid4())
@@ -188,14 +197,15 @@ class TestDeviceToken:
 
 
 class TestPushOnLike:
-
     @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
-    async def test_push_sent_on_like(
-        self, mock_send, client, mock_verification_code
-    ):
+    async def test_push_sent_on_like(self, mock_send, client, mock_verification_code):
         """Push notification should be sent when someone likes a user."""
-        user1 = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
-        user2 = await register_user(client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code)
+        user1 = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
+        user2 = await register_user(
+            client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code
+        )
 
         headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
         user2_id = user2["user"]["id"]
@@ -215,14 +225,15 @@ class TestPushOnLike:
 
 
 class TestPushOnMatch:
-
     @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
-    async def test_push_sent_on_match(
-        self, mock_send, client, mock_verification_code
-    ):
+    async def test_push_sent_on_match(self, mock_send, client, mock_verification_code):
         """Push notifications should be sent to both users on match."""
-        user1 = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
-        user2 = await register_user(client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code)
+        user1 = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
+        user2 = await register_user(
+            client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code
+        )
 
         headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
         headers2 = {"Authorization": f"Bearer {user2['access_token']}"}
@@ -247,21 +258,21 @@ class TestPushOnMatch:
 
         # Match notifications should have been sent to both users
         match_calls = [
-            c for c in mock_send.call_args_list
-            if c.kwargs.get("title") == "It's a match!"
+            c for c in mock_send.call_args_list if c.kwargs.get("title") == "It's a match!"
         ]
         assert len(match_calls) == 2
 
 
 class TestPushOnMessage:
-
     @patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock)
-    async def test_push_sent_on_message(
-        self, mock_send, client, mock_verification_code
-    ):
+    async def test_push_sent_on_message(self, mock_send, client, mock_verification_code):
         """Push notification should be sent when a message is sent."""
-        user1 = await register_user(client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code)
-        user2 = await register_user(client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code)
+        user1 = await register_user(
+            client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
+        )
+        user2 = await register_user(
+            client, VALID_EMAIL_2, COMPLETE_PROFILE_PAYLOAD_2, mock_verification_code
+        )
 
         headers1 = {"Authorization": f"Bearer {user1['access_token']}"}
         headers2 = {"Authorization": f"Bearer {user2['access_token']}"}
@@ -269,8 +280,12 @@ class TestPushOnMessage:
         user2_id = user2["user"]["id"]
 
         # Create match first
-        await client.post(SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1)
-        await client.post(SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2)
+        await client.post(
+            SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=headers1
+        )
+        await client.post(
+            SWIPE_URL, json={"user_id": user1_id, "direction": "like"}, headers=headers2
+        )
 
         # Create the chat (auto-accepted because the pair is matched)
         chat_res = await client.post(
@@ -352,7 +367,9 @@ class TestPushBatch:
 
     @patch("app.services.push_service.messaging.send_each_for_multicast")
     @patch("app.db.session.AsyncSessionLocal")
-    async def test_send_to_users_chunks_and_releases_connection(self, mock_session_local, mock_send):
+    async def test_send_to_users_chunks_and_releases_connection(
+        self, mock_session_local, mock_send
+    ):
         from app.services import push_service as ps
 
         # Fake AsyncSessionLocal context manager returning one session whose
@@ -421,9 +438,11 @@ class TestPushBatch:
 
     @patch("app.services.push_service.messaging.send_each_for_multicast")
     @patch("app.db.session.AsyncSessionLocal")
-    async def test_send_to_users_cleans_invalid_tokens_and_commits(self, mock_session_local, mock_send):
+    async def test_send_to_users_cleans_invalid_tokens_and_commits(
+        self, mock_session_local, mock_send
+    ):
+
         from app.services import push_service as ps
-        from sqlalchemy import delete
 
         # First context manager: token query. Second: invalid-token cleanup.
         mock_session = AsyncMock()
@@ -469,8 +488,9 @@ class TestPushRunsOffEventLoop:
 
     @patch("app.services.push_service.messaging.send_each_for_multicast")
     async def test_send_runs_in_thread_and_returns_response(self, mock_send):
-        from app.services import push_service as ps
         from uuid import uuid4
+
+        from app.services import push_service as ps
 
         # Force the "firebase initialized" gate open so we reach the send path.
         ps._initialized = True
@@ -483,9 +503,9 @@ class TestPushRunsOffEventLoop:
             mock_db = AsyncMock()
             mock_db.execute = AsyncMock(
                 side_effect=[
-                    MagicMock(all=MagicMock(return_value=[("token-1",)])),   # _get_user_tokens
-                    MagicMock(),                                                # cleanup select
-                    MagicMock(),                                                # cleanup delete
+                    MagicMock(all=MagicMock(return_value=[("token-1",)])),  # _get_user_tokens
+                    MagicMock(),  # cleanup select
+                    MagicMock(),  # cleanup delete
                 ]
             )
 
@@ -504,4 +524,3 @@ class TestPushRunsOffEventLoop:
             mock_send.assert_called_once()
         finally:
             ps._initialized = False
-

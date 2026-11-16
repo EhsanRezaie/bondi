@@ -1,10 +1,11 @@
-
 # tests/test_daily_limits.py
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -44,10 +45,7 @@ COMPLETE_PROFILE_PAYLOAD2 = {
 
 
 async def register_user_full(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> dict:
     """Complete full registration via phone OTP - returns user data with tokens."""
     await mock_verification_code(phone, VALID_CODE)
@@ -68,10 +66,7 @@ async def register_user_full(
 
 
 async def register_and_get_headers(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user via phone OTP and return headers with user_id."""
     result = await register_user_full(client, phone, complete_payload, mock_verification_code)
@@ -83,46 +78,34 @@ async def register_and_get_headers(
 class TestDailyLimits:
     """Test daily limits enforcement"""
 
-    async def test_premium_user_unlimited_likes(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_premium_user_unlimited_likes(self, client: AsyncClient, mock_verification_code):
         """Premium user should have unlimited likes (-1)."""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
         )
-        
+
         res = await client.get(REWARDS_LIMITS_URL, headers=headers)
         assert res.status_code == 200
         body = res.json()
-        
+
         # Welcome bonus makes user premium
         assert body["likes_remaining_today"] == -1
         assert body["chats_remaining_today"] == -1
 
-    async def test_cannot_swipe_on_self(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
-    ):
+    async def test_cannot_swipe_on_self(self, client: AsyncClient, mock_verification_code):
         """Swiping on yourself should return 400."""
         headers, user_id = await register_and_get_headers(
             client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
         )
-        
+
         res = await client.post(
-            SWIPE_URL,
-            json={"user_id": user_id, "direction": "like"},
-            headers=headers
+            SWIPE_URL, json={"user_id": user_id, "direction": "like"}, headers=headers
         )
         assert res.status_code == 400
         assert "Cannot swipe on yourself" in res.json()["detail"]
 
     async def test_cannot_swipe_twice_on_same_user(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Cannot swipe twice on the same user."""
         # Register two users
@@ -132,46 +115,45 @@ class TestDailyLimits:
         user2_headers, user2_id = await register_and_get_headers(
             client, VALID_EMAIL2, COMPLETE_PROFILE_PAYLOAD2, mock_verification_code
         )
-        
+
         # First swipe
         res1 = await client.post(
-            SWIPE_URL,
-            json={"user_id": user2_id, "direction": "like"},
-            headers=user1_headers
+            SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=user1_headers
         )
         assert res1.status_code == 200
-        
+
         # Second swipe - should fail
         res2 = await client.post(
-            SWIPE_URL,
-            json={"user_id": user2_id, "direction": "like"},
-            headers=user1_headers
+            SWIPE_URL, json={"user_id": user2_id, "direction": "like"}, headers=user1_headers
         )
         assert res2.status_code == 400
         assert "Already swiped" in res2.json()["detail"]
 
     async def test_swipe_stats_returns_correct_structure(
-        self, 
-        client: AsyncClient, 
-        mock_verification_code
+        self, client: AsyncClient, mock_verification_code
     ):
         """Swipe stats endpoint should return correct structure."""
         headers, _ = await register_and_get_headers(
             client, VALID_EMAIL, COMPLETE_PROFILE_PAYLOAD, mock_verification_code
         )
-        
+
         res = await client.get(SWIPE_STATS_URL, headers=headers)
         assert res.status_code == 200
         body = res.json()
-        
+
         expected_fields = [
-            "daily_likes_remaining", "is_unlimited",
-            "total_likes_sent", "total_passes_sent", "total_matches",
+            "daily_likes_remaining",
+            "is_unlimited",
+            "total_likes_sent",
+            "total_passes_sent",
+            "total_matches",
             "total_messages",
-            "ads_watched_today", "max_ads_per_day"
+            "ads_watched_today",
+            "max_ads_per_day",
         ]
         for field in expected_fields:
             assert field in body
+
 
 class TestFirstLikeOfDayRegression:
     """Regression: consume_like must not falsely 429 when the daily_limits row
@@ -184,9 +166,10 @@ class TestFirstLikeOfDayRegression:
         db_session,
     ):
         from sqlalchemy import delete, update
-        from app.models.user_profile import UserProfile
-        from app.models.daily_limit import DailyLimit
+
         from app.core.config import settings
+        from app.models.daily_limit import DailyLimit
+        from app.models.user_profile import UserProfile
 
         male_headers, male_id = await register_and_get_headers(
             client, _phone("first_like_male"), COMPLETE_PROFILE_PAYLOAD, mock_verification_code
@@ -197,13 +180,9 @@ class TestFirstLikeOfDayRegression:
 
         # Force the liker to be a free user with NO daily_limits row for today.
         await db_session.execute(
-            update(UserProfile)
-            .where(UserProfile.user_id == male_id)
-            .values(premium_until=None)
+            update(UserProfile).where(UserProfile.user_id == male_id).values(premium_until=None)
         )
-        await db_session.execute(
-            delete(DailyLimit).where(DailyLimit.user_id == male_id)
-        )
+        await db_session.execute(delete(DailyLimit).where(DailyLimit.user_id == male_id))
         await db_session.commit()
 
         res = await client.post(

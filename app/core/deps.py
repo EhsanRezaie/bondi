@@ -1,23 +1,21 @@
-from dataclasses import dataclass
 import hmac
-from typing import Optional
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from jose import JWTError, jwt
+from dataclasses import dataclass
 from uuid import UUID
-from redis.asyncio import Redis
 
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.db.session import get_session
-from app.models.user import User
-from app.core.config import settings
-from app.core.security import decode_token, decode_access_token, ACCESS_TOKEN_TYPE
-from app.core.logging import get_logger
+
 from app.core import redis as redis_module
 from app.core.cache import cache_auth_user, get_cached_auth_user
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.core.security import ACCESS_TOKEN_TYPE, decode_access_token, decode_token
+from app.db.session import get_session
+from app.models.user import User
 
 logger = get_logger("core.deps")
 
@@ -34,7 +32,7 @@ class AdminIdentity:
     """
 
     id: str
-    profile: Optional[object] = None
+    profile: object | None = None
 
 
 async def get_current_user(
@@ -236,9 +234,7 @@ async def get_current_user_id(
             detail="Invalid token payload",
         )
 
-    cached = await get_cached_auth_user(
-        redis_module.redis_client, user_uuid, token_version
-    )
+    cached = await get_cached_auth_user(redis_module.redis_client, user_uuid, token_version)
     if cached is not None:
         if not cached.is_active:
             raise HTTPException(
@@ -304,6 +300,7 @@ async def get_current_premium_user(
 async def get_current_user_ws(token: str) -> str | None:
     """Get current user ID from WebSocket token"""
     from app.core.security import decode_access_token
+
     return decode_access_token(token)
 
 
@@ -371,7 +368,4 @@ async def get_admin_user(request: Request) -> "AdminIdentity":
     ):
         return AdminIdentity(id=settings.ADMIN_USERNAME)
 
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Admin access required"
-    )
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")

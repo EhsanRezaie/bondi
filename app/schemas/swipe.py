@@ -1,11 +1,12 @@
 from datetime import datetime
-from pydantic import BaseModel
-from typing import List, Optional
 from uuid import UUID
+
+from pydantic import BaseModel
 
 
 class SwipeStatsResponse(BaseModel):
     """Response schema for swipe statistics."""
+
     daily_likes_remaining: int
     is_unlimited: bool
     total_likes_sent: int
@@ -18,14 +19,15 @@ class SwipeStatsResponse(BaseModel):
 
 class LikedUserResponse(BaseModel):
     """Response schema for a user who was liked or who liked you."""
+
     id: UUID
     name: str
     age: int
-    main_photo_url: Optional[str] = None
+    main_photo_url: str | None = None
     is_premium: bool = False
     is_verified: bool = False
     is_online: bool = False
-    last_seen_at: Optional[datetime] = None
+    last_seen_at: datetime | None = None
     swiped_at: datetime
 
     class Config:
@@ -34,7 +36,8 @@ class LikedUserResponse(BaseModel):
 
 class LikedUsersResponse(BaseModel):
     """Paginated response for liked users / likers."""
-    users: List[LikedUserResponse]
+
+    users: list[LikedUserResponse]
     total: int
-    next_offset: Optional[int] = None
-    next_cursor: Optional[str] = None
+    next_offset: int | None = None
+    next_cursor: str | None = None

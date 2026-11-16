@@ -1,9 +1,14 @@
 import random
 
-
 # ±500m = ±0.5 km — enough to prevent triangulation while keeping
 # the displayed distance useful for the user.
 FUZZ_RADIUS_KM = 0.5
+
+# Writes to /me/location below this movement are no-ops for coordinates —
+# app-open pings from the same spot must not churn the GiST location index
+# (non-HOT row updates → bloat/vacuum pressure). Haversine helper for the
+# threshold check lives in app.services.profile_service.haversine_km.
+LOCATION_WRITE_THRESHOLD_KM = 0.1
 
 
 def fuzz_distance(distance_km: float | None) -> float | None:

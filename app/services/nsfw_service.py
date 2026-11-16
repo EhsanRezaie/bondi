@@ -13,8 +13,6 @@ Score: 0.0 = safe, 1.0 = explicit. Threshold configurable via NSFW_THRESHOLD.
 """
 
 import io
-import uuid
-from typing import Tuple, Optional
 
 import numpy as np
 from PIL import Image
@@ -61,7 +59,7 @@ class NSFWService:
             ),
         }
 
-    async def check_image(self, file_bytes: bytes) -> Tuple[bool, float]:
+    async def check_image(self, file_bytes: bytes) -> tuple[bool, float]:
         """
         Analyze an image for NSFW content.
 

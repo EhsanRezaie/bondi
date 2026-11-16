@@ -1,7 +1,9 @@
 import uuid
-from sqlalchemy import Column, String, JSON
+
+from sqlalchemy import JSON, Column, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base import Base
 
 
@@ -20,4 +22,6 @@ class Interest(Base):
     translations = Column(JSON, nullable=True)
 
     # Relationships
-    user_interests = relationship("UserInterest", back_populates="interest", cascade="all, delete-orphan")
+    user_interests = relationship(
+        "UserInterest", back_populates="interest", cascade="all, delete-orphan"
+    )

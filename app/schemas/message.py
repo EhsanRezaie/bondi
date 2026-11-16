@@ -1,11 +1,13 @@
-from uuid import UUID
 from datetime import datetime
-from typing import Optional, List, Literal, Union
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel, Field, model_validator
 
 
 class ReplyToResponse(BaseModel):
     """Response for replied-to message"""
+
     id: UUID
     content: str
     sender_name: str
@@ -14,25 +16,26 @@ class ReplyToResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     """Response for a single message"""
+
     id: UUID
-    client_id: Optional[UUID] = None
+    client_id: UUID | None = None
     chat_id: UUID
     sender_id: UUID
     receiver_id: UUID
     message_type: str  # text, photo, voice
-    content: Optional[str] = None
-    media_url: Optional[str] = None
-    media_thumb_url: Optional[str] = None
-    media_duration: Optional[int] = None
-    reply_to: Optional[ReplyToResponse] = None
+    content: str | None = None
+    media_url: str | None = None
+    media_thumb_url: str | None = None
+    media_duration: int | None = None
+    reply_to: ReplyToResponse | None = None
     is_sent: bool
     is_delivered: bool
     is_read: bool
     is_edited: bool = False
     sent_at: datetime
-    delivered_at: Optional[datetime] = None
-    read_at: Optional[datetime] = None
-    edited_at: Optional[datetime] = None
+    delivered_at: datetime | None = None
+    read_at: datetime | None = None
+    edited_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -40,75 +43,87 @@ class MessageResponse(BaseModel):
 
 class MessageListResponse(BaseModel):
     """Response for chat history"""
-    messages: List[MessageResponse]
+
+    messages: list[MessageResponse]
     total: int
-    next_offset: Optional[int] = None
+    next_offset: int | None = None
 
 
 class TextMessageRequest(BaseModel):
     """Request for sending text message"""
+
     content: str = Field(..., min_length=1, max_length=5000)
-    reply_to_id: Optional[UUID] = None
-    client_id: Optional[UUID] = None
+    reply_to_id: UUID | None = None
+    client_id: UUID | None = None
 
 
 class PhotoMessageRequest(BaseModel):
     """Request for sending photo message"""
-    caption: Optional[str] = Field(None, max_length=500)
+
+    caption: str | None = Field(None, max_length=500)
 
 
 class VoiceMessageRequest(BaseModel):
     """Request for sending voice message"""
+
     duration: int = Field(..., ge=1, le=120)  # 1-120 seconds
 
 
 class DeleteMessageRequest(BaseModel):
     """Request for deleting message"""
+
     delete_for: str = Field("me", pattern="^(me|everyone)$")  # 'me' or 'everyone'
 
 
 class EditMessageRequest(BaseModel):
     """Request for editing a message"""
+
     content: str = Field(..., min_length=1, max_length=5000)
 
 
 class ForwardMessageRequest(BaseModel):
     """Request for forwarding message"""
+
     target_chat_id: UUID
 
 
 class MarkReadRequest(BaseModel):
     """Request for marking messages as read"""
-    message_ids: List[UUID]
+
+    message_ids: list[UUID]
 
 
 class MessageStatusResponse(BaseModel):
     """Response for message status"""
+
     id: UUID
     sent_at: datetime
-    delivered_at: Optional[datetime] = None
-    read_at: Optional[datetime] = None
+    delivered_at: datetime | None = None
+    read_at: datetime | None = None
     is_delivered: bool
     is_read: bool
 
 
 class SendMessageResponse(BaseModel):
     """Response after sending message"""
+
     id: UUID
     sent_at: datetime
     requires_acceptance: bool = False
     chat_accepted: bool = True
-    chats_remaining_today: Optional[int] = None
-    message: Optional[MessageResponse] = None
+    chats_remaining_today: int | None = None
+    message: MessageResponse | None = None
 
 
 class MessageActionResponse(BaseModel):
     """Response for simple message actions (delivered, read, delete)."""
+
     message: str
 
 
 class ForwardMessageResponse(BaseModel):
     """Response for forwarding a message."""
+
     message: str
     new_message_id: str
 
@@ -139,7 +154,7 @@ class WsTypingInbound(BaseModel):
 
 class WsReadInbound(BaseModel):
     type: Literal["read"]
-    message_ids: List[UUID] = Field(default_factory=list)
+    message_ids: list[UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _cap_message_ids(self):
@@ -150,16 +165,14 @@ class WsReadInbound(BaseModel):
 
 class WsInbound(BaseModel):
     """Union of all accepted inbound WS messages."""
+
     type: str
-    chat_id: Optional[UUID] = None
-    message_ids: Optional[List[UUID]] = None
+    chat_id: UUID | None = None
+    message_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self):
-        if self.type == "subscribe":
-            if self.chat_id is None:
-                raise ValueError("missing_chat_id")
-        elif self.type == "unsubscribe":
+        if self.type == "subscribe" or self.type == "unsubscribe":
             if self.chat_id is None:
                 raise ValueError("missing_chat_id")
         elif self.type in ("ping",):

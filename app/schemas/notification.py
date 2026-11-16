@@ -1,6 +1,7 @@
-from uuid import UUID
 from datetime import datetime
-from typing import Optional, List, Literal, Dict
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
@@ -8,8 +9,8 @@ class NotificationResponse(BaseModel):
     id: UUID
     type: str
     title: str
-    body: Optional[str] = None
-    data: Optional[dict] = None
+    body: str | None = None
+    data: dict | None = None
     is_read: bool
     created_at: datetime
 
@@ -18,19 +19,19 @@ class NotificationResponse(BaseModel):
 
 
 class MarkReadRequest(BaseModel):
-    notification_ids: List[UUID]
+    notification_ids: list[UUID]
 
 
 class NotificationListResponse(BaseModel):
-    notifications: List[NotificationResponse]
+    notifications: list[NotificationResponse]
     total: int
-    next_offset: Optional[int] = None
-    next_cursor: Optional[str] = None
+    next_offset: int | None = None
+    next_cursor: str | None = None
 
 
 class NotificationCountsResponse(BaseModel):
     total: int
-    by_type: Dict[str, int]
+    by_type: dict[str, int]
 
 
 class DeviceTokenRequest(BaseModel):

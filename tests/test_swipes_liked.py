@@ -1,15 +1,15 @@
-
-import pytest
-from httpx import AsyncClient
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
+
+from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-
-from app.core.config import settings
 
 # ============ URL Constants ============
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
@@ -103,8 +103,8 @@ async def register_female_3(client, mock_verification_code) -> dict:
 # GET /api/v1/swipes/liked
 # =============================================================================
 
-class TestSwipeLiked:
 
+class TestSwipeLiked:
     async def test_liked_users_empty(self, client, mock_verification_code):
         """Should return empty list when user has no likes."""
         male = await register_male(client, mock_verification_code)
@@ -135,7 +135,7 @@ class TestSwipeLiked:
         data = res.json()
         assert data["total"] == 1
         assert len(data["users"]) == 1
-        
+
         liked_user = data["users"][0]
         assert liked_user["id"] == female["user"]["id"]
         assert liked_user["name"] == FEMALE_PROFILE["name"]
@@ -202,9 +202,7 @@ class TestSwipeLiked:
         assert cursor
 
         first_ids = {u["id"] for u in first_body["users"]}
-        second = await client.get(
-            f"{LIKED_URL}?limit=2&cursor={cursor}", headers=male_headers
-        )
+        second = await client.get(f"{LIKED_URL}?limit=2&cursor={cursor}", headers=male_headers)
         assert second.status_code == 200
         second_body = second.json()
         second_ids = {u["id"] for u in second_body["users"]}
@@ -234,7 +232,7 @@ class TestSwipeLiked:
 
         # Male blocks first female
         from app.models.block import Block
-        
+
         block = Block(blocker_id=male["user"]["id"], blocked_id=female["user"]["id"])
         db_session.add(block)
         await db_session.commit()
@@ -261,9 +259,10 @@ class TestSwipeLiked:
         )
 
         # Deactivate female
-        from app.models.user import User
         from sqlalchemy import update
-        
+
+        from app.models.user import User
+
         await db_session.execute(
             update(User).where(User.id == female["user"]["id"]).values(is_active=False)
         )
@@ -296,9 +295,9 @@ class TestSwipeLiked:
         res = await client.get(LIKED_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
-        
+
         liked_user = data["users"][0]
-        
+
         # Verify all fields present
         assert "id" in liked_user
         assert "name" in liked_user
@@ -307,7 +306,7 @@ class TestSwipeLiked:
         assert "is_premium" in liked_user
         assert "is_verified" in liked_user
         assert "swiped_at" in liked_user
-        
+
         # Verify types
         UUID(liked_user["id"])  # valid UUID
         assert isinstance(liked_user["name"], str)
@@ -316,7 +315,7 @@ class TestSwipeLiked:
         assert isinstance(liked_user["is_premium"], bool)
         assert isinstance(liked_user["is_verified"], bool)
         assert isinstance(liked_user["swiped_at"], str)
-        
+
         # Verify swiped_at is valid ISO datetime
         datetime.fromisoformat(liked_user["swiped_at"].replace("Z", "+00:00"))
 
@@ -333,11 +332,12 @@ class TestSwipeLiked:
             json={"user_id": female["user"]["id"], "direction": "like"},
             headers=male_headers,
         )
-        
+
         # Small delay to ensure different timestamps
         import asyncio
+
         await asyncio.sleep(0.1)
-        
+
         # Like female2 second
         await client.post(
             SWIPE_URL,
@@ -348,7 +348,7 @@ class TestSwipeLiked:
         res = await client.get(LIKED_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
-        
+
         # Most recent (female2) should be first
         assert data["users"][0]["id"] == female2["user"]["id"]
         assert data["users"][1]["id"] == female["user"]["id"]
@@ -358,8 +358,8 @@ class TestSwipeLiked:
 # GET /api/v1/swipes/likers
 # =============================================================================
 
-class TestSwipeLikers:
 
+class TestSwipeLikers:
     async def test_likers_empty(self, client, mock_verification_code):
         """Should return empty list when no one has liked you."""
         male = await register_male(client, mock_verification_code)
@@ -391,7 +391,7 @@ class TestSwipeLikers:
         data = res.json()
         assert data["total"] == 1
         assert len(data["users"]) == 1
-        
+
         liker = data["users"][0]
         assert liker["id"] == female["user"]["id"]
         assert liker["name"] == FEMALE_PROFILE["name"]
@@ -411,7 +411,7 @@ class TestSwipeLikers:
             json={"user_id": male["user"]["id"], "direction": "like"},
             headers=female_headers,
         )
-        
+
         # Male likes female back (creates match)
         await client.post(
             SWIPE_URL,
@@ -492,7 +492,7 @@ class TestSwipeLikers:
 
         # Male blocks first female
         from app.models.block import Block
-        
+
         block = Block(blocker_id=male["user"]["id"], blocked_id=female["user"]["id"])
         db_session.add(block)
         await db_session.commit()
@@ -526,9 +526,9 @@ class TestSwipeLikers:
         res = await client.get(LIKERS_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
-        
+
         liker = data["users"][0]
-        
+
         # Verify all fields present
         assert "id" in liker
         assert "name" in liker
@@ -537,7 +537,7 @@ class TestSwipeLikers:
         assert "is_premium" in liker
         assert "is_verified" in liker
         assert "swiped_at" in liker
-        
+
         # Verify types
         UUID(liker["id"])
         assert isinstance(liker["name"], str)
@@ -546,7 +546,7 @@ class TestSwipeLikers:
         assert isinstance(liker["is_premium"], bool)
         assert isinstance(liker["is_verified"], bool)
         assert isinstance(liker["swiped_at"], str)
-        
+
         datetime.fromisoformat(liker["swiped_at"].replace("Z", "+00:00"))
 
     async def test_likers_sorted_by_most_recent(self, client, mock_verification_code):
@@ -564,10 +564,11 @@ class TestSwipeLikers:
             json={"user_id": male["user"]["id"], "direction": "like"},
             headers=female_headers,
         )
-        
+
         import asyncio
+
         await asyncio.sleep(0.1)
-        
+
         # Female2 likes male second
         await client.post(
             SWIPE_URL,
@@ -578,7 +579,7 @@ class TestSwipeLikers:
         res = await client.get(LIKERS_URL, headers=male_headers)
         assert res.status_code == 200
         data = res.json()
-        
+
         # Most recent (female2) should be first
         assert data["users"][0]["id"] == female2["user"]["id"]
         assert data["users"][1]["id"] == female["user"]["id"]

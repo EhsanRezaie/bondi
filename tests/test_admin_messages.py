@@ -1,10 +1,13 @@
-
 import pytest
 from httpx import AsyncClient
+
 from app.core.config import settings
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -43,14 +46,16 @@ class TestAdminMessageUser:
     async def test_admin_message_user_success(self, client: AsyncClient, mock_verification_code):
         """Admin should send message to a specific user"""
         # Create a user
-        user_data = await register_user(client, _phone("msguser@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("msguser@example.com"), mock_verification_code
+        )
 
         # Admin sends message
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
             json={"title": "Important Update", "message": "Please verify your email"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -71,38 +76,46 @@ class TestAdminMessageUser:
         res = await client.post(
             f"{ADMIN_USERS_URL}/00000000-0000-0000-0000-000000000001/message",
             json={"title": "Test", "message": "Hello"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 404
 
-    async def test_admin_message_requires_message(self, client: AsyncClient, mock_verification_code):
+    async def test_admin_message_requires_message(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should return 400 when message is missing"""
-        user_data = await register_user(client, _phone("msgreq@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("msgreq@example.com"), mock_verification_code
+        )
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
             json={"title": "Test", "message": ""},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 422
 
     async def test_admin_message_requires_title(self, client: AsyncClient, mock_verification_code):
         """Should return 400 when title is missing"""
-        user_data = await register_user(client, _phone("titlereq@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("titlereq@example.com"), mock_verification_code
+        )
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
             json={"title": "", "message": "Hello"},
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 422
 
     async def test_admin_message_requires_auth(self, client: AsyncClient, mock_verification_code):
         """Should return 403 without admin key"""
-        user_data = await register_user(client, _phone("msgauth@example.com"), mock_verification_code)
+        user_data = await register_user(
+            client, _phone("msgauth@example.com"), mock_verification_code
+        )
         res = await client.post(
             f"{ADMIN_USERS_URL}/{user_data['user']['id']}/message",
-            json={"title": "Test", "message": "Hello"}
+            json={"title": "Test", "message": "Hello"},
         )
         assert res.status_code == 403
 
@@ -116,27 +129,38 @@ class TestAdminAnnouncements:
         (AsyncSessionLocal) on the test's event loop — that trips the
         'Future attached to a different loop' error when tests run in sequence."""
         from unittest.mock import AsyncMock, patch
-        with (patch("app.api.v1.endpoints.admin_announcements.websocket_manager") as mock_ws,
-              patch("app.services.push_service.PushService.send_to_users",
-                    new_callable=AsyncMock) as mock_push,
-              patch("app.services.push_service.PushService.send_to_user",
-                    new_callable=AsyncMock)):
+
+        with (
+            patch("app.api.v1.endpoints.admin_announcements.websocket_manager") as mock_ws,
+            patch(
+                "app.services.push_service.PushService.send_to_users", new_callable=AsyncMock
+            ) as mock_push,
+            patch("app.services.push_service.PushService.send_to_user", new_callable=AsyncMock),
+        ):
             mock_ws.send_personal_message = AsyncMock()
             yield mock_push
 
-    async def test_admin_announcement_to_all_users(self, client: AsyncClient, mock_verification_code):
+    async def test_admin_announcement_to_all_users(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Admin should send announcement to all active users"""
         # Create multiple users
         user_ids = []
         for i in range(3):
-            data = await register_user(client, _phone(f"announce_{i}@example.com"), mock_verification_code)
+            data = await register_user(
+                client, _phone(f"announce_{i}@example.com"), mock_verification_code
+            )
             user_ids.append(data["user"]["id"])
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             ADMIN_ANNOUNCEMENTS_URL,
-            json={"title": "Site Maintenance", "message": "Site will be down at 2 AM", "to_premium_only": False},
-            headers=admin_headers
+            json={
+                "title": "Site Maintenance",
+                "message": "Site will be down at 2 AM",
+                "to_premium_only": False,
+            },
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -150,7 +174,7 @@ class TestAdminAnnouncements:
             await mock_verification_code(_phone(f"announce_{i}@example.com"), VALID_CODE)
             login_res = await client.post(
                 VERIFY_CODE_URL,
-                json={"phone": _phone(f"announce_{i}@example.com"), "code": VALID_CODE}
+                json={"phone": _phone(f"announce_{i}@example.com"), "code": VALID_CODE},
             )
             assert login_res.status_code == 200
             user_token = login_res.json()["access_token"]
@@ -162,19 +186,29 @@ class TestAdminAnnouncements:
             assert len(notifications) >= 1
             assert notifications[0]["title"] == "Site Maintenance"
 
-    async def test_admin_announcement_to_premium_only(self, client: AsyncClient, mock_verification_code):
+    async def test_admin_announcement_to_premium_only(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Admin should send announcement to premium users only"""
         # Create free user
-        free_data = await register_user(client, _phone("free_announce@example.com"), mock_verification_code)
+        free_data = await register_user(
+            client, _phone("free_announce@example.com"), mock_verification_code
+        )
 
         # Create premium user (gets welcome bonus)
-        premium_data = await register_user(client, _phone("premium_announce@example.com"), mock_verification_code)
+        premium_data = await register_user(
+            client, _phone("premium_announce@example.com"), mock_verification_code
+        )
 
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             ADMIN_ANNOUNCEMENTS_URL,
-            json={"title": "Premium Offer", "message": "Special discount for you", "to_premium_only": True},
-            headers=admin_headers
+            json={
+                "title": "Premium Offer",
+                "message": "Special discount for you",
+                "to_premium_only": True,
+            },
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -183,7 +217,9 @@ class TestAdminAnnouncements:
 
     async def test_admin_test_announcement(self, client: AsyncClient, mock_verification_code):
         """Admin should send a test announcement to an explicit target user"""
-        target = await register_user(client, _phone("test_announce_target@example.com"), mock_verification_code)
+        target = await register_user(
+            client, _phone("test_announce_target@example.com"), mock_verification_code
+        )
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
             f"{ADMIN_ANNOUNCEMENTS_URL}/test",
@@ -192,7 +228,7 @@ class TestAdminAnnouncements:
                 "message": "This is a test",
                 "target_user_id": target["user"]["id"],
             },
-            headers=admin_headers
+            headers=admin_headers,
         )
         assert res.status_code == 200
         body = res.json()
@@ -203,9 +239,7 @@ class TestAdminAnnouncements:
         """Should return 422 when message is missing"""
         admin_headers = {"X-Admin-Key": ADMIN_KEY}
         res = await client.post(
-            ADMIN_ANNOUNCEMENTS_URL,
-            json={"title": "Test", "message": ""},
-            headers=admin_headers
+            ADMIN_ANNOUNCEMENTS_URL, json={"title": "Test", "message": ""}, headers=admin_headers
         )
         assert res.status_code == 422
 
@@ -213,6 +247,6 @@ class TestAdminAnnouncements:
         """Should return 403 without admin key"""
         res = await client.post(
             ADMIN_ANNOUNCEMENTS_URL,
-            json={"title": "Test", "message": "Hello", "to_premium_only": False}
+            json={"title": "Test", "message": "Hello", "to_premium_only": False},
         )
         assert res.status_code == 403

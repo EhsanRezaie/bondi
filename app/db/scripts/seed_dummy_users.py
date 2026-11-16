@@ -29,7 +29,7 @@ import logging
 import random
 import string
 import uuid as uuid_lib
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import aioboto3
 from PIL import Image, ImageDraw
@@ -53,20 +53,20 @@ from app.models.user_profile import UserProfile
 from app.models.user_prompt import UserPrompt
 from app.models.user_settings import UserSettings
 from app.schemas.auth import (
-    Gender,
-    SexualOrientation,
     BodyType,
-    RelationshipStatus,
-    LivingSituation,
     ChildrenStatus,
-    HereFor,
-    Pets,
-    WorkoutFrequency,
-    ZodiacSign,
-    SmokingStatus,
     DrinkingStatus,
     EducationLevel,
+    Gender,
+    HereFor,
+    LivingSituation,
+    Pets,
     PoliticalOrientation,
+    RelationshipStatus,
+    SexualOrientation,
+    SmokingStatus,
+    WorkoutFrequency,
+    ZodiacSign,
 )
 
 logger = get_logger("scripts.seed_dummy_users")
@@ -84,6 +84,7 @@ def _make_uid(index: int, deterministic: bool) -> uuid_lib.UUID:
     if deterministic:
         return uuid_lib.uuid5(_DUMMY_NS, f"dummy-user-{index}")
     return uuid_lib.uuid4()
+
 
 # ---------------------------------------------------------------------------
 # Value pools (schemas enums are authoritative; the rest are free-text pools)
@@ -104,16 +105,29 @@ EDUCATION = [e.value for e in EducationLevel]
 POLITICAL = [p.value for p in PoliticalOrientation]
 
 BIOS = [
-    "عاشق سفر و کشف جاهای جدید.", "قهوه‌ای‌های همیشگی — بیا گپ بزنیم!",
-    "به دنبال یه ارتباط واقعی و صادقانه.", "ورزش صبحگاهی، رمز روز خوبم.",
-    "موسیقی زبان عشقه.", "آدم ساده‌ای هستم، زندگی ساده.", "کتاب‌خوان حرفه‌ای، همیشه دنبال پیشنهاد کتابم.",
-    "آخر هفته‌ها کوه یا دریا، بستگی به حال‌وهوا داره.", "در جستجوی همراهی برای خنده‌های بی‌دلیل.",
+    "عاشق سفر و کشف جاهای جدید.",
+    "قهوه‌ای‌های همیشگی — بیا گپ بزنیم!",
+    "به دنبال یه ارتباط واقعی و صادقانه.",
+    "ورزش صبحگاهی، رمز روز خوبم.",
+    "موسیقی زبان عشقه.",
+    "آدم ساده‌ای هستم، زندگی ساده.",
+    "کتاب‌خوان حرفه‌ای، همیشه دنبال پیشنهاد کتابم.",
+    "آخر هفته‌ها کوه یا دریا، بستگی به حال‌وهوا داره.",
+    "در جستجوی همراهی برای خنده‌های بی‌دلیل.",
     "هوای تازه و قهوه تلخ، بهترین شروع روزه.",
 ]
 RELIGIONS = ["islam", "christianity", "zoroastrian", "none", "baha'i"]
 ETHNICITIES = ["persian", "turk", "kurdish", "lor", "mazani", "gilak", "arab", "baloch"]
-WORKPLACES = ["education", "healthcare", "tech company", "startup", "freelancer",
-              "retail", "government", "self-employed"]
+WORKPLACES = [
+    "education",
+    "healthcare",
+    "tech company",
+    "startup",
+    "freelancer",
+    "retail",
+    "government",
+    "self-employed",
+]
 # (city, province, lat, lng) — jittered a bit per user.
 CITIES = [
     ("Tehran", "Tehran", 35.6892, 51.3890),
@@ -139,9 +153,10 @@ REFERRAL_ALPHABET = string.ascii_uppercase + string.digits
 # MinIO helpers
 # ---------------------------------------------------------------------------
 
+
 def _rand_dt(days_back: float, days_fwd: float = 0) -> datetime:
     seconds = random.uniform(0, (days_back + days_fwd) * 86400)
-    return datetime.now(timezone.utc) + timedelta(seconds=seconds - days_back * 86400)
+    return datetime.now(UTC) + timedelta(seconds=seconds - days_back * 86400)
 
 
 async def _upload_placeholder_images(photos: list[tuple[str, str]]) -> None:
@@ -197,6 +212,7 @@ async def _upload_placeholder_images(photos: list[tuple[str, str]]) -> None:
 # Builders
 # ---------------------------------------------------------------------------
 
+
 def build_person(index: int, deterministic: bool):
     """Return (user, profile, settings, photo_keys, premium_days) for one person."""
     uid = _make_uid(index, deterministic)
@@ -214,9 +230,7 @@ def build_person(index: int, deterministic: bool):
 
     is_verified = random.random() < 0.92
     premium_days = random.randint(7, 60) if random.random() < 0.12 else 0
-    premium_until = (
-        datetime.now(timezone.utc) + timedelta(days=premium_days) if premium_days else None
-    )
+    premium_until = datetime.now(UTC) + timedelta(days=premium_days) if premium_days else None
 
     user = User(
         id=uid,
@@ -260,7 +274,9 @@ def build_person(index: int, deterministic: bool):
         city=city,
         location_manual=False,
         is_verified=is_verified,
-        verified_at=datetime.now(timezone.utc) - timedelta(days=random.randint(1, 200)) if is_verified else None,
+        verified_at=datetime.now(UTC) - timedelta(days=random.randint(1, 200))
+        if is_verified
+        else None,
         premium_until=premium_until,
     )
 
@@ -307,6 +323,7 @@ def _pairs_with_mutual_likes(persons: list[tuple[uuid_lib.UUID, str]], count: in
 # Main
 # ---------------------------------------------------------------------------
 
+
 async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> None:
     if deterministic:
         random.seed(20260907)
@@ -314,8 +331,10 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
     async with AsyncSessionLocal() as session:
         test_phones = [f"+9891{i:08d}" for i in range(1, count + 1)]
         existing_ids = (
-            await session.execute(select(User.id).where(User.phone.in_(test_phones)))
-        ).scalars().all()
+            (await session.execute(select(User.id).where(User.phone.in_(test_phones))))
+            .scalars()
+            .all()
+        )
         if existing_ids:
             print(f"🧹  Removing {len(existing_ids)} existing dummy users …")
             await session.execute(delete(User).where(User.id.in_(existing_ids)))
@@ -344,16 +363,18 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
             if premium_days:
                 premium_user_ids.add(uid)
             for idx, key in enumerate(keys):
-                photos.append(Photo(
-                    user_id=uid,
-                    url=key,
-                    order=idx,
-                    is_main=idx == 0,
-                    status="approved",
-                    reject_reason=None,
-                    face_verified=True,
-                    crop=None,
-                ))
+                photos.append(
+                    Photo(
+                        user_id=uid,
+                        url=key,
+                        order=idx,
+                        is_main=idx == 0,
+                        status="approved",
+                        reject_reason=None,
+                        face_verified=True,
+                        crop=None,
+                    )
+                )
                 photo_keys.append((str(uid), key))
 
         session.add_all(users)
@@ -377,9 +398,13 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
             for iid in random.sample(list(all_interests), min(8, len(all_interests))):
                 uinterest_rows.append(UserInterest(user_id=uid, interest_id=iid))
             for pid in random.sample(list(all_prompts), min(3, len(all_prompts))):
-                uprompt_rows.append(UserPrompt(
-                    user_id=uid, prompt_id=pid, answer=random.choice(BIOS + CHAT_SEEDS),
-                ))
+                uprompt_rows.append(
+                    UserPrompt(
+                        user_id=uid,
+                        prompt_id=pid,
+                        answer=random.choice(BIOS + CHAT_SEEDS),
+                    )
+                )
 
         session.add_all(uinterest_rows)
         session.add_all(uprompt_rows)
@@ -418,9 +443,7 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
 
     async with AsyncSessionLocal() as session:
         swipes = [
-            Swipe(from_user=a, to_user=b, direction="like")
-            for a in user_ids
-            for b in liked[a]
+            Swipe(from_user=a, to_user=b, direction="like") for a in user_ids for b in liked[a]
         ]
         session.add_all(swipes)
         await session.commit()
@@ -438,9 +461,15 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
         messages = []
         for a, b in ordered_matches:
             chat_id = uuid_lib.uuid4()
-            chats.append(Chat(
-                id=chat_id, initiator_id=a, recipient_id=b, status="accepted", is_active=True,
-            ))
+            chats.append(
+                Chat(
+                    id=chat_id,
+                    initiator_id=a,
+                    recipient_id=b,
+                    status="accepted",
+                    is_active=True,
+                )
+            )
             for k, text in enumerate(random.sample(CHAT_SEEDS, k=random.randint(1, 3))):
                 sender, receiver = (a, b) if k % 2 == 0 else (b, a)
                 msg = Message(
@@ -458,30 +487,34 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
         print(f"   ✅  {len(chats)} chats + {len(messages)} encrypted messages inserted")
 
     # ---- daily_limits (today, Tehran) + subscriptions for premium ----
-    tehran_today = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).date()
+    tehran_today = (datetime.now(UTC) + timedelta(hours=3, minutes=30)).date()
     async with AsyncSessionLocal() as session:
         limits = []
         subs = []
         for uid in user_ids:
             is_premium = uid in premium_user_ids
             if not is_premium:
-                limits.append(DailyLimit(
-                    user_id=uid,
-                    date=tehran_today,
-                    likes_used=random.randint(0, 15),
-                    chats_used=random.randint(0, 5),
-                ))
+                limits.append(
+                    DailyLimit(
+                        user_id=uid,
+                        date=tehran_today,
+                        likes_used=random.randint(0, 15),
+                        chats_used=random.randint(0, 5),
+                    )
+                )
             else:
                 started = _rand_dt(10, 0)
-                expires = datetime.now(timezone.utc) + timedelta(days=random.randint(7, 60))
-                subs.append(Subscription(
-                    user_id=uid,
-                    plan="monthly",
-                    status="active",
-                    started_at=started,
-                    expires_at=expires,
-                    source="seed",
-                ))
+                expires = datetime.now(UTC) + timedelta(days=random.randint(7, 60))
+                subs.append(
+                    Subscription(
+                        user_id=uid,
+                        plan="monthly",
+                        status="active",
+                        started_at=started,
+                        expires_at=expires,
+                        source="seed",
+                    )
+                )
         session.add_all(limits)
         session.add_all(subs)
         await session.commit()
@@ -491,13 +524,19 @@ async def seed_dummy_users(count: int = 1000, deterministic: bool = True) -> Non
     print(f"    Email range:        test1@test.com … test{count}@test.com")
     print(f"    Phone range:        +989100000001 … +9891{count:08d}")
     print(f"    Photos:             {PHOTOS_PER_USER} per user")
-    print(f"    Swipes / matches:   {sum(len(v) for v in liked.values())} likes / {len(matched)} matches")
+    print(
+        f"    Swipes / matches:   {sum(len(v) for v in liked.values())} likes / {len(matched)} matches"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed dummy users from current models")
     parser.add_argument("--count", type=int, default=1000, help="number of users (default 1000)")
-    parser.add_argument("--no-seed", action="store_true", help="use fresh randomness instead of the reproducible seed")
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="use fresh randomness instead of the reproducible seed",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

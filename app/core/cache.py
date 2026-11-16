@@ -1,58 +1,69 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import UUID
+
 from redis.asyncio import Redis
 from sqlalchemy import Date, DateTime
+
 from app.core.logging import get_logger
-from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 
 logger = get_logger("core.cache")
 
 # ── TTLs ──────────────────────────────────────────────────────────────────────
-TTL_INTERESTS       = 86400      # 24h  — seed data, never changes at runtime
-TTL_PROMPTS         = 86400      # 24h  — seed data, never changes at runtime
-TTL_LOCATIONS       = 604800     # 7d   — countries/provinces/cities
-TTL_SYSTEM_STATUS   = 60         # 60s  — /system/status
-TTL_SUB_PLANS       = 3600       # 1h   — /subscriptions/plans
-TTL_USER_PROFILE    = 600        # 10m  — /users/me
-TTL_USER_PHOTOS     = 600        # 10m  — /users/me/photos
-TTL_PUBLIC_PROFILE  = 300        # 5m   — GET /users/{user_id} (public profile)
-TTL_DAILY_LIMITS    = None       # dynamic — until midnight
+TTL_INTERESTS = 86400  # 24h  — seed data, never changes at runtime
+TTL_PROMPTS = 86400  # 24h  — seed data, never changes at runtime
+TTL_LOCATIONS = 604800  # 7d   — countries/provinces/cities
+TTL_SYSTEM_STATUS = 60  # 60s  — /system/status
+TTL_SUB_PLANS = 3600  # 1h   — /subscriptions/plans
+TTL_USER_PROFILE = 600  # 10m  — /users/me
+TTL_USER_PHOTOS = 600  # 10m  — /users/me/photos
+TTL_PUBLIC_PROFILE = 300  # 5m   — GET /users/{user_id} (public profile)
+TTL_DAILY_LIMITS = None  # dynamic — until midnight
 
 
 # ── Cache Keys ────────────────────────────────────────────────────────────────
 def key_interests(language: str = "en") -> str:
     return f"cache:interests:{language.lower()}"
 
+
 def key_prompts(language: str) -> str:
     return f"cache:prompts:{language}"
+
 
 def key_countries() -> str:
     return "cache:locations:countries"
 
+
 def key_provinces(country: str) -> str:
     return f"cache:locations:provinces:{country}"
+
 
 def key_cities(country: str, province: str) -> str:
     return f"cache:locations:cities:{country}:{province}"
 
+
 def key_system_status() -> str:
     return "cache:system:status"
+
 
 def key_sub_plans() -> str:
     return "cache:subscriptions:plans"
 
+
 def key_user_profile(user_id: UUID) -> str:
     return f"cache:user:{user_id}:profile"
+
 
 def key_user_photos(user_id: UUID) -> str:
     return f"cache:user:{user_id}:photos"
 
+
 def key_public_profile(user_id: UUID) -> str:
     return f"cache:user:{user_id}:public_profile"
+
 
 def key_daily_limits(user_id: UUID, date: str) -> str:
     return f"cache:limits:{user_id}:{date}"
@@ -77,6 +88,14 @@ async def cache_set(redis: Redis, key: str, value, ttl: int):
         logger.warning("cache_set_failed", key=key, error=str(e), exc_info=True)
 
 
+async def cache_delete(redis: Redis, key: str):
+    """Delete a cached value. Best-effort, like cache_get/cache_set."""
+    try:
+        await redis.delete(key)
+    except Exception as e:
+        logger.warning("cache_delete_failed", key=key, error=str(e), exc_info=True)
+
+
 async def invalidate_user_cache(redis: Redis, user_id: UUID):
     """Invalidate all cached data for a user."""
     keys = [
@@ -90,51 +109,103 @@ async def invalidate_user_cache(redis: Redis, user_id: UUID):
         logger.warning("cache_invalidate_failed", keys=keys, error=str(e), exc_info=True)
 
 
-# ── Discover Card Stack ──────────────────────────────────────────────────────
-DISCOVER_STACK_TTL = 1800    # 30 minutes
-DISCOVER_STACK_SIZE = 50     # pre-fetch 50 cards at a time
-SWIPED_SET_TTL = 7 * 86400   # 7 days
+# ── Discover Deck ────────────────────────────────────────────────────────────
+# Per-user cached candidate list for GET /discover. Caches the ordered user-ID
+# list (+ total count) so page views cost one Redis read + one 20-row PK fetch
+# instead of a full filtered scan + full count per request. The DB only runs
+# on cache miss/refill. Signed by filter params so changed filters rebuild.
+DISCOVER_DECK_TTL = 300  # 5 minutes
+DISCOVER_DECK_CAP = 1000  # max cached candidate ids per user (deep pages fall back to DB)
+SWIPED_SET_TTL = 7 * 86400  # 7 days
 
 
-def key_discover_stack(user_id: UUID) -> str:
-    return f"cache:discover:{user_id}:stack"
+def key_discover_deck(user_id: UUID) -> str:
+    return f"cache:discover:{user_id}:deck"
 
 
-async def pop_discover_stack(redis: Redis, user_id: UUID, count: int) -> list[str]:
-    """Pop `count` user IDs from the cached discover stack."""
-    key = key_discover_stack(user_id)
+async def get_discover_deck(redis: Redis, user_id: UUID) -> dict | None:
+    """Return {"sig": str, "ids": [str], "total": int} or None on miss/error."""
     try:
-        pipe = redis.pipeline()
-        pipe.lrange(key, 0, count - 1)
-        pipe.ltrim(key, count, -1)
-        results = await pipe.execute()
-        return results[0]
+        raw = await redis.get(key_discover_deck(user_id))
+        return json.loads(raw) if raw else None
     except Exception as e:
-        logger.warning("discover_stack_pop_failed", key=key, error=str(e), exc_info=True)
-        return []
+        logger.warning(
+            "discover_deck_get_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+        return None
 
 
-async def set_discover_stack(redis: Redis, user_id: UUID, user_ids: list[str]):
-    """Replace the discover stack with a new list of user IDs."""
-    key = key_discover_stack(user_id)
+async def save_discover_deck(
+    redis: Redis, user_id: UUID, sig: str, ids: list[str], total: int
+) -> None:
     try:
-        await redis.delete(key)
-        if user_ids:
-            await redis.lpush(key, *reversed(user_ids))
-            await redis.expire(key, DISCOVER_STACK_TTL)
+        payload = json.dumps({"sig": sig, "ids": ids, "total": total})
+        await redis.set(key_discover_deck(user_id), payload, ex=DISCOVER_DECK_TTL)
     except Exception as e:
-        logger.warning("discover_stack_set_failed", key=key, error=str(e), exc_info=True)
+        logger.warning(
+            "discover_deck_save_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
 
 
-async def invalidate_discover_stack(redis: Redis, user_id: UUID):
-    """Invalidate discover stack (e.g. on location update)."""
+async def remove_from_discover_deck(redis: Redis, user_id: UUID, target_id: UUID) -> None:
+    """Drop a swiped user from the owner's deck so they never reappear mid-TTL."""
+    key = key_discover_deck(user_id)
     try:
-        await redis.delete(key_discover_stack(user_id))
+        raw = await redis.get(key)
+        if not raw:
+            return
+        deck = json.loads(raw)
+        ids = [i for i in deck.get("ids", []) if i != str(target_id)]
+        if len(ids) == len(deck.get("ids", [])):
+            return
+        deck["ids"] = ids
+        deck["total"] = max(0, int(deck.get("total", len(ids))) - 1)
+        ttl = await redis.ttl(key)
+        await redis.set(key, json.dumps(deck), ex=ttl if ttl > 0 else DISCOVER_DECK_TTL)
     except Exception as e:
-        logger.warning("discover_stack_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True)
+        logger.warning(
+            "discover_deck_remove_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+
+
+async def invalidate_discover_deck(redis: Redis, user_id: UUID) -> None:
+    try:
+        await redis.delete(key_discover_deck(user_id))
+    except Exception as e:
+        logger.warning(
+            "discover_deck_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+
+
+# ── Photo Epoch ──────────────────────────────────────────────────────────────
+# Global counter bumped on every photo event that changes discover visibility
+# (upload→pending hides, delete can unhide, admin approve/reject flips status).
+# The deck signature embeds it, so one INCR lazily invalidates every cached
+# deck without a scan — no per-user invalidation bookkeeping.
+
+
+def key_photo_epoch() -> str:
+    return "cache:discover:photo_epoch"
+
+
+async def get_photo_epoch(redis: Redis) -> int:
+    try:
+        raw = await redis.get(key_photo_epoch())
+        return int(raw) if raw else 0
+    except Exception as e:
+        logger.warning("photo_epoch_get_failed", error=str(e), exc_info=True)
+        return 0
+
+
+async def bump_photo_epoch(redis: Redis) -> None:
+    try:
+        await redis.incr(key_photo_epoch())
+    except Exception as e:
+        logger.warning("photo_epoch_bump_failed", error=str(e), exc_info=True)
 
 
 # ── Swipe Deduplication ──────────────────────────────────────────────────────
+
 
 async def record_swipe_cache(redis: Redis, swiper_id: UUID, swipee_id: UUID):
     """Add a swipe to the Redis set for fast exclusion in discover."""
@@ -143,7 +214,9 @@ async def record_swipe_cache(redis: Redis, swiper_id: UUID, swipee_id: UUID):
         await redis.sadd(key, str(swipee_id))
         await redis.expire(key, SWIPED_SET_TTL)
     except Exception as e:
-        logger.warning("record_swipe_cache_failed", swiper_id=str(swiper_id), error=str(e), exc_info=True)
+        logger.warning(
+            "record_swipe_cache_failed", swiper_id=str(swiper_id), error=str(e), exc_info=True
+        )
 
 
 async def get_swiped_ids(redis: Redis, user_id: UUID) -> set[str]:
@@ -195,7 +268,7 @@ def _profile_from_cache(data: dict) -> SimpleNamespace | None:
     p = _dict_to_obj(UserProfile, data)
     if p is None:
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     p.is_premium = p.premium_until is not None and p.premium_until > now
     if p.birth_date is None:
         p.age = 0
@@ -205,13 +278,15 @@ def _profile_from_cache(data: dict) -> SimpleNamespace | None:
         if (today.month, today.day) < (p.birth_date.month, p.birth_date.day):
             age -= 1
         p.age = age
-    p.is_profile_complete = all([
-        p.name is not None,
-        p.birth_date is not None,
-        p.gender is not None,
-        p.lat is not None,
-        p.lng is not None,
-    ])
+    p.is_profile_complete = all(
+        [
+            p.name is not None,
+            p.birth_date is not None,
+            p.gender is not None,
+            p.lat is not None,
+            p.lng is not None,
+        ]
+    )
     return p
 
 

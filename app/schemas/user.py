@@ -1,38 +1,39 @@
-from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator, model_validator
-from datetime import datetime, timezone, date
+from datetime import UTC, date, datetime
 from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.config import settings
 
-
 # ============ Request Schemas ============
+
 
 class UserUpdateRequest(BaseModel):
     """Update user profile - all fields optional."""
-    name: Optional[str] = Field(None, min_length=2, max_length=100)
-    bio: Optional[str] = Field(None, max_length=500)
-    gender: Optional[str] = None
-    sexual_orientation: Optional[str] = None
-    birth_date: Optional[date] = None
-    height: Optional[int] = None
-    weight: Optional[int] = None
-    body_type: Optional[str] = None
-    relationship_status: Optional[str] = None
-    living_situation: Optional[str] = None
-    children_status: Optional[str] = None
-    smoking: Optional[str] = None
-    drinking: Optional[str] = None
-    here_for: Optional[str] = None
-    pets: Optional[str] = None
-    workout_frequency: Optional[str] = None
-    zodiac_sign: Optional[str] = None
-    education: Optional[str] = None
-    workplace: Optional[str] = None
-    religion: Optional[str] = None
-    ethnicity: Optional[str] = None
-    political_orientation: Optional[str] = None
-    languages: Optional[List[str]] = None
+
+    name: str | None = Field(None, min_length=2, max_length=100)
+    bio: str | None = Field(None, max_length=500)
+    gender: str | None = None
+    sexual_orientation: str | None = None
+    birth_date: date | None = None
+    height: int | None = None
+    weight: int | None = None
+    body_type: str | None = None
+    relationship_status: str | None = None
+    living_situation: str | None = None
+    children_status: str | None = None
+    smoking: str | None = None
+    drinking: str | None = None
+    here_for: str | None = None
+    pets: str | None = None
+    workout_frequency: str | None = None
+    zodiac_sign: str | None = None
+    education: str | None = None
+    workplace: str | None = None
+    religion: str | None = None
+    ethnicity: str | None = None
+    political_orientation: str | None = None
+    languages: list[str] | None = None
 
     @field_validator("gender")
     @classmethod
@@ -51,7 +52,14 @@ class UserUpdateRequest(BaseModel):
     @field_validator("body_type")
     @classmethod
     def validate_body_type(cls, v: str) -> str:
-        if v is not None and v not in ["slim", "average", "athletic", "curvy", "muscular", "overweight"]:
+        if v is not None and v not in [
+            "slim",
+            "average",
+            "athletic",
+            "curvy",
+            "muscular",
+            "overweight",
+        ]:
             raise ValueError("Invalid body type")
         return v
 
@@ -72,14 +80,25 @@ class UserUpdateRequest(BaseModel):
     @field_validator("children_status")
     @classmethod
     def validate_children_status(cls, v: str) -> str:
-        if v is not None and v not in ["have_children", "want_children", "dont_want_children", "open_to_children"]:
+        if v is not None and v not in [
+            "have_children",
+            "want_children",
+            "dont_want_children",
+            "open_to_children",
+        ]:
             raise ValueError("Invalid children status")
         return v
 
     @field_validator("here_for")
     @classmethod
     def validate_here_for(cls, v: str) -> str:
-        if v is not None and v not in ["long_term_relationship", "casual_dating", "marriage", "new_friends", "not_sure_yet"]:
+        if v is not None and v not in [
+            "long_term_relationship",
+            "casual_dating",
+            "marriage",
+            "new_friends",
+            "not_sure_yet",
+        ]:
             raise ValueError("Invalid here_for value")
         return v
 
@@ -100,8 +119,20 @@ class UserUpdateRequest(BaseModel):
     @field_validator("zodiac_sign")
     @classmethod
     def validate_zodiac_sign(cls, v: str) -> str:
-        if v is not None and v not in ["aries", "taurus", "gemini", "cancer", "leo", "virgo",
-                                       "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"]:
+        if v is not None and v not in [
+            "aries",
+            "taurus",
+            "gemini",
+            "cancer",
+            "leo",
+            "virgo",
+            "libra",
+            "scorpio",
+            "sagittarius",
+            "capricorn",
+            "aquarius",
+            "pisces",
+        ]:
             raise ValueError("Invalid zodiac sign")
         return v
 
@@ -158,21 +189,25 @@ class UserUpdateRequest(BaseModel):
 
 class LocationTextUpdateRequest(BaseModel):
     """Update user location with text fields."""
-    country: Optional[str] = Field(None, max_length=100)
-    province: Optional[str] = Field(None, max_length=100)
-    city: Optional[str] = Field(None, max_length=100)
+
+    country: str | None = Field(None, max_length=100)
+    province: str | None = Field(None, max_length=100)
+    city: str | None = Field(None, max_length=100)
 
 
 class LocationUpdateRequest(BaseModel):
     """Update user location with GPS coordinates."""
+
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
 
 
 # ============ Response Schemas ============
 
+
 class UserSettingsResponse(BaseModel):
     """Response schema for user settings."""
+
     hide_last_seen: bool = False
     hide_online_status: bool = False
     push_enabled: bool = True
@@ -188,63 +223,64 @@ class UserSettingsResponse(BaseModel):
 
 class UserProfileResponse(BaseModel):
     """Response schema for user profile (excludes sensitive data)."""
+
     id: UUID
-    phone: Optional[str] = None
-    name: Optional[str] = None
-    age: Optional[int] = None
-    gender: Optional[str] = None
-    sexual_orientation: Optional[str] = None
-    bio: Optional[str] = None
-    height: Optional[int] = None
-    weight: Optional[int] = None
-    body_type: Optional[str] = None
-    relationship_status: Optional[str] = None
-    living_situation: Optional[str] = None
-    children_status: Optional[str] = None
-    smoking: Optional[str] = None
-    drinking: Optional[str] = None
-    here_for: Optional[str] = None
-    pets: Optional[str] = None
-    workout_frequency: Optional[str] = None
-    zodiac_sign: Optional[str] = None
-    education: Optional[str] = None
-    workplace: Optional[str] = None
-    religion: Optional[str] = None
-    ethnicity: Optional[str] = None
-    political_orientation: Optional[str] = None
-    languages: Optional[List[str]] = None
-    country: Optional[str] = None
-    province: Optional[str] = None
-    city: Optional[str] = None
-    lat: Optional[float] = None
-    lng: Optional[float] = None
+    phone: str | None = None
+    name: str | None = None
+    age: int | None = None
+    gender: str | None = None
+    sexual_orientation: str | None = None
+    bio: str | None = None
+    height: int | None = None
+    weight: int | None = None
+    body_type: str | None = None
+    relationship_status: str | None = None
+    living_situation: str | None = None
+    children_status: str | None = None
+    smoking: str | None = None
+    drinking: str | None = None
+    here_for: str | None = None
+    pets: str | None = None
+    workout_frequency: str | None = None
+    zodiac_sign: str | None = None
+    education: str | None = None
+    workplace: str | None = None
+    religion: str | None = None
+    ethnicity: str | None = None
+    political_orientation: str | None = None
+    languages: list[str] | None = None
+    country: str | None = None
+    province: str | None = None
+    city: str | None = None
+    lat: float | None = None
+    lng: float | None = None
     location_manual: bool = False
     is_premium: bool = False
-    premium_until: Optional[datetime] = None
+    premium_until: datetime | None = None
     is_verified: bool = False
     is_active: bool
     is_profile_complete: bool = False
     profile_completion: int = 0
     created_at: datetime
-    last_seen_at: Optional[datetime] = None
-    settings: Optional[UserSettingsResponse] = None
-    main_photo_url: Optional[str] = None
-    main_photo_thumb_url: Optional[str] = None
-    birth_date: Optional[str] = None
-    interests: Optional[List[str]] = None
-    prompts: Optional[List[dict]] = None
+    last_seen_at: datetime | None = None
+    settings: UserSettingsResponse | None = None
+    main_photo_url: str | None = None
+    main_photo_thumb_url: str | None = None
+    birth_date: str | None = None
+    interests: list[str] | None = None
+    prompts: list[dict] | None = None
 
     class Config:
         from_attributes = True
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def extract_profile_fields(cls, values):
         """
         Extract all profile fields from user.profile.
         This runs BEFORE validation so Pydantic sees these fields as present.
         """
-        if hasattr(values, 'profile'):
+        if hasattr(values, "profile"):
             profile = values.profile
             if profile:
                 values.name = profile.name
@@ -287,7 +323,8 @@ class UserProfileResponse(BaseModel):
                 # a relationship on the User ORM model — no descriptor to trip over.
                 values.interests = (
                     [ui.interest.name for ui in values.user_interests]
-                    if values.user_interests else []
+                    if values.user_interests
+                    else []
                 )
 
                 # prompts: IS a relationship on User, so assigning directly triggers
@@ -295,9 +332,8 @@ class UserProfileResponse(BaseModel):
                 # Fix: snapshot the ORM collection first, then bypass the descriptor
                 # by writing to __dict__ directly.
                 raw_prompts = list(values.prompts) if values.prompts else []
-                values.__dict__['prompts'] = [
-                    {"prompt_id": str(up.prompt_id), "answer": up.answer}
-                    for up in raw_prompts
+                values.__dict__["prompts"] = [
+                    {"prompt_id": str(up.prompt_id), "answer": up.answer} for up in raw_prompts
                 ]
 
                 # main_photo_url: first approved photo, public bucket URL (approved
@@ -352,27 +388,28 @@ class UserProfileResponse(BaseModel):
 
 class PublicUserResponse(BaseModel):
     """Public profile response for other users (respects privacy settings)."""
+
     id: UUID
     name: str
     age: int
     gender: str
-    sexual_orientation: Optional[str] = None
-    bio: Optional[str] = None
-    height: Optional[int] = None
-    weight: Optional[int] = None
-    body_type: Optional[str] = None
-    relationship_status: Optional[str] = None
-    education: Optional[str] = None
-    workplace: Optional[str] = None
-    country: Optional[str] = None
-    province: Optional[str] = None
-    city: Optional[str] = None
-    main_photo_url: Optional[str] = None
+    sexual_orientation: str | None = None
+    bio: str | None = None
+    height: int | None = None
+    weight: int | None = None
+    body_type: str | None = None
+    relationship_status: str | None = None
+    education: str | None = None
+    workplace: str | None = None
+    country: str | None = None
+    province: str | None = None
+    city: str | None = None
+    main_photo_url: str | None = None
     is_premium: bool
     is_verified: bool = False
-    last_seen_at: Optional[datetime] = None
-    is_online: Optional[bool] = None
-    interests: Optional[List[str]] = None
+    last_seen_at: datetime | None = None
+    is_online: bool | None = None
+    interests: list[str] | None = None
 
     class Config:
         from_attributes = True
@@ -403,8 +440,9 @@ class PublicUserResponse(BaseModel):
                 is_premium=user.profile.is_premium,
                 is_verified=user.profile.is_verified,
                 last_seen_at=user.last_seen_at,
-                is_online=user.last_seen_at and (datetime.now(timezone.utc) - user.last_seen_at).seconds < 300,
-                interests=None
+                is_online=user.last_seen_at
+                and (datetime.now(UTC) - user.last_seen_at).seconds < 300,
+                interests=None,
             )
 
         if settings.hide_last_seen:
@@ -429,7 +467,7 @@ class PublicUserResponse(BaseModel):
                 is_verified=user.profile.is_verified,
                 last_seen_at=None,
                 is_online=None,
-                interests=None
+                interests=None,
             )
         else:
             return cls(
@@ -452,38 +490,48 @@ class PublicUserResponse(BaseModel):
                 is_premium=user.profile.is_premium,
                 is_verified=user.profile.is_verified,
                 last_seen_at=user.last_seen_at,
-                is_online=user.last_seen_at and (datetime.now(timezone.utc) - user.last_seen_at).seconds < 300,
-                interests=None
+                is_online=user.last_seen_at
+                and (datetime.now(UTC) - user.last_seen_at).seconds < 300,
+                interests=None,
             )
 
 
 class LocationTextUpdateResponse(BaseModel):
     """Response for PATCH /users/me/location-text"""
-    country: Optional[str] = None
-    province: Optional[str] = None
-    city: Optional[str] = None
+
+    country: str | None = None
+    province: str | None = None
+    city: str | None = None
     location_manual: bool
 
 
 class DeleteAccountRequest(BaseModel):
     """Body for DELETE /users/me — requires an SMS confirmation code."""
-    code: str = Field(..., min_length=6, max_length=6, description="6-digit SMS code sent via POST /users/me/delete-code")
-    reason: Optional[str] = Field(None, max_length=255, description="Optional reason for leaving")
+
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        description="6-digit SMS code sent via POST /users/me/delete-code",
+    )
+    reason: str | None = Field(None, max_length=255, description="Optional reason for leaving")
 
 
 class DeleteAccountResponse(BaseModel):
     """Response for account deletion — account is deactivated immediately and
     hard-deleted by a Celery sweep after the grace period."""
+
     message: str = "Account deletion scheduled"
     deletion_scheduled_for: datetime
 
 
 class UserInterestResponse(BaseModel):
     """Response schema for user interests."""
+
     id: UUID
     name: str
-    category: Optional[str] = None
-    icon: Optional[str] = None
+    category: str | None = None
+    icon: str | None = None
 
     class Config:
         from_attributes = True
@@ -491,6 +539,7 @@ class UserInterestResponse(BaseModel):
 
 class UserPromptResponse(BaseModel):
     """Response schema for user prompts."""
+
     id: UUID
     prompt_id: UUID
     question: str
@@ -502,12 +551,16 @@ class UserPromptResponse(BaseModel):
 
 class InterestUpdateRequest(BaseModel):
     """Update user interests."""
-    interests: List[str] = Field(..., description="List of interest names")
+
+    interests: list[str] = Field(..., description="List of interest names")
 
 
 class PromptUpdateRequest(BaseModel):
     """Update user prompts."""
-    prompts: List[dict[str, str]] = Field(..., description="List of prompts with prompt_id and answer")
+
+    prompts: list[dict[str, str]] = Field(
+        ..., description="List of prompts with prompt_id and answer"
+    )
 
 
 # ============ Alias for backward compatibility ============

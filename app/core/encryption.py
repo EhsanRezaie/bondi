@@ -3,10 +3,11 @@ import asyncio
 import base64
 import functools
 import os
-from typing import Optional
+
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 from app.core.config import settings
 from app.core.logging import get_logger
 
@@ -27,7 +28,7 @@ def _derive_key(chat_id: str, secret: str) -> bytes:
     Returns:
         32-byte key for AES-256-GCM encryption
     """
-    salt = chat_id.encode('utf-8')
+    salt = chat_id.encode("utf-8")
 
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -36,7 +37,7 @@ def _derive_key(chat_id: str, secret: str) -> bytes:
         iterations=100000,
     )
 
-    return kdf.derive(secret.encode('utf-8'))
+    return kdf.derive(secret.encode("utf-8"))
 
 
 @functools.lru_cache(maxsize=4096)
@@ -75,10 +76,10 @@ def encrypt_message(content: str, chat_id: str) -> str:
 
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, content.encode('utf-8'), None)
+    ciphertext = aesgcm.encrypt(nonce, content.encode("utf-8"), None)
 
     combined = nonce + ciphertext
-    return base64.b64encode(combined).decode('utf-8')
+    return base64.b64encode(combined).decode("utf-8")
 
 
 def decrypt_message(encrypted: str, chat_id: str) -> str:
@@ -97,13 +98,13 @@ def decrypt_message(encrypted: str, chat_id: str) -> str:
 
     key = derive_chat_key(chat_id)
 
-    combined = base64.b64decode(encrypted.encode('utf-8'))
+    combined = base64.b64decode(encrypted.encode("utf-8"))
     nonce = combined[:12]
     ciphertext = combined[12:]
 
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return plaintext.decode('utf-8')
+    return plaintext.decode("utf-8")
 
 
 def encrypt_with_secret(content: str, chat_id: str, secret: str) -> str:
@@ -129,10 +130,10 @@ def encrypt_with_secret(content: str, chat_id: str, secret: str) -> str:
 
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, content.encode('utf-8'), None)
+    ciphertext = aesgcm.encrypt(nonce, content.encode("utf-8"), None)
 
     combined = nonce + ciphertext
-    return base64.b64encode(combined).decode('utf-8')
+    return base64.b64encode(combined).decode("utf-8")
 
 
 def decrypt_with_secret(encrypted: str, chat_id: str, secret: str) -> str:
@@ -155,13 +156,13 @@ def decrypt_with_secret(encrypted: str, chat_id: str, secret: str) -> str:
 
     key = _derive_key(chat_id, secret)
 
-    combined = base64.b64decode(encrypted.encode('utf-8'))
+    combined = base64.b64decode(encrypted.encode("utf-8"))
     nonce = combined[:12]
     ciphertext = combined[12:]
 
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return plaintext.decode('utf-8')
+    return plaintext.decode("utf-8")
 
 
 async def decrypt_message_async(encrypted: str, chat_id: str) -> str:

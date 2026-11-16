@@ -1,18 +1,21 @@
-from typing import Optional
 import json
+
 import redis.asyncio as aioredis
+from fastapi import HTTPException, status
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import (
-    RedisError,
-    TimeoutError as RedisTimeoutError,
     ConnectionError as RedisConnectionError,
+)
+from redis.exceptions import (
+    RedisError,
+)
+from redis.exceptions import (
+    TimeoutError as RedisTimeoutError,
 )
 
 from app.core.config import settings
 from app.core.logging import get_logger
-
-from fastapi import HTTPException, status
 
 logger = get_logger("core.redis")
 
@@ -35,8 +38,8 @@ redis_client: aioredis.Redis = aioredis.from_url(
 
 REFRESH_TOKEN_PREFIX = "refresh_token:"
 USER_TOKENS_PREFIX = "user_tokens:"
-TOKEN_FAMILY_PREFIX = "token_family:"      # token -> family id
-AUTH_FAMILY_PREFIX = "auth_family:"        # family id -> set of tokens
+TOKEN_FAMILY_PREFIX = "token_family:"  # token -> family id
+AUTH_FAMILY_PREFIX = "auth_family:"  # family id -> set of tokens
 ROTATED_TOKEN_PREFIX = "rotated_token:"
 REFRESH_TOKEN_TTL = 60 * 60 * 24 * 30  # 30 days in seconds
 
@@ -57,7 +60,8 @@ async def _safe_redis_operation(operation, fallback=None):
 
 # ============ Refresh Token Functions ============
 
-async def store_refresh_token(token: str, user_id: str, family_id: Optional[str] = None) -> str:
+
+async def store_refresh_token(token: str, user_id: str, family_id: str | None = None) -> str:
     """
     Save a refresh token → user_id mapping with 30-day TTL.
     Also tracks the token in a per-user set so revoke_all_user_tokens is O(tokens),
@@ -92,7 +96,7 @@ async def store_refresh_token(token: str, user_id: str, family_id: Optional[str]
         return ""
 
 
-async def get_refresh_token_owner(token: str) -> Optional[str]:
+async def get_refresh_token_owner(token: str) -> str | None:
     """
     Return the user_id that owns this refresh token, or None if missing/expired.
     Returns None if Redis is unavailable.
@@ -153,7 +157,7 @@ async def revoke_all_user_tokens(user_id: str) -> int:
         return -1
 
 
-async def get_token_family(token: str) -> Optional[str]:
+async def get_token_family(token: str) -> str | None:
     """
     Return the rotation-family id a token belongs to, or None.
     Used on refresh to keep a token in its existing family.
@@ -182,9 +186,7 @@ async def mark_token_rotated(token: str, family_id: str) -> bool:
     Mark a token as already-rotated so presenting it again triggers family revocation.
     """
     try:
-        await redis_client.set(
-            f"{ROTATED_TOKEN_PREFIX}{token}", family_id, ex=REFRESH_TOKEN_TTL
-        )
+        await redis_client.set(f"{ROTATED_TOKEN_PREFIX}{token}", family_id, ex=REFRESH_TOKEN_TTL)
         return True
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to mark token rotated", error=str(e))
@@ -221,7 +223,9 @@ OTP_COOLDOWN_PREFIX = "otp_cooldown:"
 OTP_COOLDOWN_TTL = 60  # seconds between resend requests
 
 
-async def store_verification_code(identifier: str, code: str, ttl: int = VERIFICATION_CODE_TTL) -> bool:
+async def store_verification_code(
+    identifier: str, code: str, ttl: int = VERIFICATION_CODE_TTL
+) -> bool:
     """
     Store verification code in Redis with attempt counter.
 
@@ -243,7 +247,7 @@ async def store_verification_code(identifier: str, code: str, ttl: int = VERIFIC
         return False
 
 
-async def get_verification_code(identifier: str) -> Optional[str]:
+async def get_verification_code(identifier: str) -> str | None:
     """
     Get raw verification code data from Redis (legacy — prefer verify_code_with_attempts).
     """
@@ -301,9 +305,7 @@ async def verify_code_with_attempts(identifier: str, submitted_code: str) -> boo
     """
     key = f"{VERIFICATION_CODE_PREFIX}{identifier}"
     try:
-        result = await redis_client.eval(
-            _VERIFY_CODE_LUA, 1, key, submitted_code, MAX_OTP_ATTEMPTS
-        )
+        result = await redis_client.eval(_VERIFY_CODE_LUA, 1, key, submitted_code, MAX_OTP_ATTEMPTS)
     except (RedisError, RedisTimeoutError) as e:
         logger.error("Failed to verify verification code", error=str(e))
         raise HTTPException(

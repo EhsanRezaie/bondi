@@ -1,6 +1,4 @@
-from typing import Optional
 from pydantic import BaseModel
-from uuid import UUID
 
 
 class UserSettingsResponse(BaseModel):
@@ -18,11 +16,11 @@ class UserSettingsResponse(BaseModel):
 
 
 class UserSettingsUpdateRequest(BaseModel):
-    hide_last_seen: Optional[bool] = None
-    hide_online_status: Optional[bool] = None
-    push_enabled: Optional[bool] = None
-    like_notifications: Optional[bool] = None
-    match_notifications: Optional[bool] = None
-    message_notifications: Optional[bool] = None
-    language: Optional[str] = None
-    dark_mode: Optional[bool] = None
+    hide_last_seen: bool | None = None
+    hide_online_status: bool | None = None
+    push_enabled: bool | None = None
+    like_notifications: bool | None = None
+    match_notifications: bool | None = None
+    message_notifications: bool | None = None
+    language: str | None = None
+    dark_mode: bool | None = None

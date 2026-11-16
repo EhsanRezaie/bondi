@@ -1,8 +1,7 @@
 # app/core/config.py
-from pydantic import field_validator
-from pydantic_settings import BaseSettings
-from typing import Optional
 
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings
 
 # ============================================
 # Hardware constants (not env-configurable)
@@ -106,7 +105,7 @@ class Settings(BaseSettings):
     # the phone is locked (no re-registration) and the user can restore the
     # account by logging in again.
     DELETE_ACCOUNT_GRACE_DAYS: int = 30
-    
+
     # ============================================
     # Chat Media Settings
     # ============================================
@@ -114,7 +113,7 @@ class Settings(BaseSettings):
     MAX_CHAT_VOICE_SIZE_MB: int = 2
     MAX_CHAT_VOICE_DURATION: int = 120
     ALLOWED_CHAT_IMAGE_FORMATS: str = "JPEG,PNG,WEBP,JPG"
-    
+
     # ============================================
     # MinIO / S3 Settings (NO DEFAULTS - MUST BE IN .env)
     # ============================================
@@ -126,21 +125,21 @@ class Settings(BaseSettings):
     S3_PRIVATE_BUCKET: str
     S3_PUBLIC_BASE_URL: str
     S3_SIGNED_URL_EXPIRE_SECONDS: int
-    
+
     # ===========================================
     # Encryption
     # ===========================================
     # Required: used to derive per-chat AES-256-GCM keys. A defaulted/placeholder
     # value would silently encrypt every message with a public key.
     ENCRYPTION_SECRET: str
-    
+
     # ============================================
     # App Version
     # ============================================
     APP_VERSION: str = "1.0.0"
     MIN_ANDROID_VERSION: str = "1.0.0"
     MIN_IOS_VERSION: str = "1.0.0"
-    
+
     # ============================================
     # App Store Links
     # ============================================
@@ -151,7 +150,9 @@ class Settings(BaseSettings):
     # Force Update
     # ============================================
     FORCE_UPDATE_ENABLED: bool = False
-    FORCE_UPDATE_MESSAGE: str = "A critical update is available. Please update to continue using the app."
+    FORCE_UPDATE_MESSAGE: str = (
+        "A critical update is available. Please update to continue using the app."
+    )
 
     # ============================================
     # Error Tracking (Bugsink)
@@ -193,14 +194,14 @@ class Settings(BaseSettings):
     # CORS
     # ============================================
     CORS_ORIGINS: str = ""
+    # Disable rate limiting for load tests / benchmarks (default: enabled).
+    RATELIMIT_ENABLED: bool = True
 
     @field_validator("ADMIN_SECRET_KEY")
     @classmethod
     def _admin_secret_must_be_set(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError(
-                "ADMIN_SECRET_KEY must be set to a non-empty value"
-            )
+            raise ValueError("ADMIN_SECRET_KEY must be set to a non-empty value")
         return v
 
     @field_validator("ENCRYPTION_SECRET")
@@ -211,10 +212,34 @@ class Settings(BaseSettings):
             "change-this-to-32-byte-key",
         }
         if not v or not v.strip() or v in weak:
-            raise ValueError(
-                "ENCRYPTION_SECRET must be set to a strong, non-default value"
-            )
+            raise ValueError("ENCRYPTION_SECRET must be set to a strong, non-default value")
         return v
+
+    @model_validator(mode="after")
+    def _production_secret_strength(self) -> "Settings":
+        """Fail fast on weak secrets — but only in production.
+
+        Dev/test .env files may carry short convenience keys; production
+        must not boot with one (a short HS256 key is brute-forceable).
+        """
+        if self.ENVIRONMENT != "production":
+            return self
+        weak_markers = ("changeme", "change-this", "your-secret", "secret-key", "super-secret")
+        if len(self.SECRET_KEY) < 32 or any(m in self.SECRET_KEY.lower() for m in weak_markers):
+            raise ValueError(
+                "SECRET_KEY is too weak for production: use at least 32 random chars "
+                "(e.g. `openssl rand -base64 48`)"
+            )
+        if len(self.ENCRYPTION_SECRET) < 32:
+            raise ValueError(
+                "ENCRYPTION_SECRET is too weak for production: use at least 32 random chars"
+            )
+        # X-Admin-Key gates every admin endpoint; same strength bar as JWT key.
+        if len(self.ADMIN_SECRET_KEY) < 32:
+            raise ValueError(
+                "ADMIN_SECRET_KEY is too weak for production: use at least 32 random chars"
+            )
+        return self
 
     # ============================================
     # Pydantic Config

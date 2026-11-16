@@ -1,22 +1,23 @@
-from sqlalchemy.exc import IntegrityError
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
+from datetime import UTC, datetime
 from uuid import UUID
-from datetime import datetime, timezone
 
-from app.db.session import get_session
-from app.models.user import User
-from app.models.block import Block
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import app.core.redis as redis_module
+from app.core.cache import invalidate_discover_deck
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
-from app.schemas.search import BlockResponse
-from app.services.websocket_manager import websocket_manager
-from app.services.photo_service import PhotoService
-import app.core.redis as redis_module
-
 from app.core.logging import get_logger
+from app.db.session import get_session
+from app.models.block import Block
+from app.models.user import User
+from app.schemas.search import BlockResponse
+from app.services.photo_service import PhotoService
+from app.services.websocket_manager import websocket_manager
 
 logger = get_logger("blocks")
 
@@ -38,25 +39,17 @@ async def block_user(
     A realtime `blocked` event is published to both users so any open chat
     shows "This conversation is over."
     """
-    
+
     if user_id == current_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot block yourself"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot block yourself")
+
     # Check if target user exists
-    result = await session.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
-    )
+    result = await session.execute(select(User).where(User.id == user_id, User.is_active == True))
     target_user = result.scalar_one_or_none()
-    
+
     if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     # Check if already blocked
     existing = await session.execute(
         select(Block).where(
@@ -65,11 +58,8 @@ async def block_user(
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already blocked"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already blocked")
+
     # Create block
     block = Block(
         blocker_id=current_user_id,
@@ -80,13 +70,23 @@ async def block_user(
         await session.flush()
     except IntegrityError as e:
         await session.rollback()
-        logger.warning("block_duplicate", blocker_id=str(current_user_id), blocked_id=str(user_id), error=str(e), exc_info=True)
+        logger.warning(
+            "block_duplicate",
+            blocker_id=str(current_user_id),
+            blocked_id=str(user_id),
+            error=str(e),
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User already blocked",
         )
     await session.commit()
 
+    # A block removes both users from each other's candidate pools — their
+    # cached discover decks must not keep showing each other.
+    await invalidate_discover_deck(redis_module.redis_client, current_user_id)
+    await invalidate_discover_deck(redis_module.redis_client, user_id)
     # End any active chat between the pair (conversation is over).
     await _end_blocked_chat(session, current_user_id, user_id)
 
@@ -110,8 +110,10 @@ async def _end_blocked_chat(
     user_b: UUID,
 ) -> None:
     """Mark any active chat between user_a and user_b as ended."""
-    from app.models.chat import Chat
     from sqlalchemy import or_
+
+    from app.models.chat import Chat
+
     result = await session.execute(
         select(Chat).where(
             Chat.is_active == True,
@@ -125,7 +127,7 @@ async def _end_blocked_chat(
     if chat and not chat.is_ended:
         chat.is_ended = True
         chat.ended_by = user_a
-        chat.ended_at = datetime.now(timezone.utc)
+        chat.ended_at = datetime.now(UTC)
         await session.commit()
 
 
@@ -147,7 +149,7 @@ async def unblock_user(
     """
     Unblock a user.
     """
-    
+
     result = await session.execute(
         select(Block).where(
             Block.blocker_id == current_user_id,
@@ -155,13 +157,10 @@ async def unblock_user(
         )
     )
     block = result.scalar_one_or_none()
-    
+
     if not block:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Block not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Block not found")
+
     await session.delete(block)
     await session.commit()
 
@@ -178,13 +177,13 @@ async def list_blocks(
     """
     List all users blocked by current user.
     """
-    
+
     # Count total
     count_query = select(func.count()).select_from(
         select(Block).where(Block.blocker_id == current_user.id).subquery()
     )
     total = await session.scalar(count_query)
-    
+
     result = await session.execute(
         select(Block, User)
         .options(
@@ -197,7 +196,7 @@ async def list_blocks(
         .offset(offset)
         .limit(limit)
     )
-    
+
     blocks = []
     for block, user in result:
         profile = user.profile
@@ -214,13 +213,15 @@ async def list_blocks(
                 first = approved[0]
                 main_photo_url = await PhotoService.get_photo_url(first.url, first.status)
 
-        blocks.append(BlockResponse(
-            id=block.id,
-            blocked_user_id=user.id,
-            blocked_user_name=name,
-            blocked_user_age=age,
-            main_photo_url=main_photo_url,
-            blocked_at=block.created_at.isoformat(),
-        ))
-    
+        blocks.append(
+            BlockResponse(
+                id=block.id,
+                blocked_user_id=user.id,
+                blocked_user_name=name,
+                blocked_user_age=age,
+                main_photo_url=main_photo_url,
+                blocked_at=block.created_at.isoformat(),
+            )
+        )
+
     return blocks

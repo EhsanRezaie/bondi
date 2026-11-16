@@ -1,9 +1,10 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -59,9 +60,9 @@ class TestUserTickets:
             TICKETS_URL,
             json={
                 "subject": "Help with account",
-                "message": "I need help with my account settings. Please assist."
+                "message": "I need help with my account settings. Please assist.",
             },
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 201
         body = res.json()
@@ -70,7 +71,9 @@ class TestUserTickets:
         assert body["status"] == "open"
         assert "id" in body
 
-    async def test_create_ticket_subject_too_short(self, client: AsyncClient, mock_verification_code):
+    async def test_create_ticket_subject_too_short(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject subject shorter than 3 characters"""
         data = await register_user(client, mock_verification_code=mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -78,52 +81,49 @@ class TestUserTickets:
         res = await client.post(
             TICKETS_URL,
             json={"subject": "Hi", "message": "This is a test message"},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 422
 
-    async def test_create_ticket_subject_too_long(self, client: AsyncClient, mock_verification_code):
+    async def test_create_ticket_subject_too_long(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject subject longer than 200 characters"""
         data = await register_user(client, mock_verification_code=mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            TICKETS_URL,
-            json={"subject": "a" * 201, "message": "Test message"},
-            headers=headers
+            TICKETS_URL, json={"subject": "a" * 201, "message": "Test message"}, headers=headers
         )
         assert res.status_code == 422
 
-    async def test_create_ticket_message_too_short(self, client: AsyncClient, mock_verification_code):
+    async def test_create_ticket_message_too_short(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject message shorter than 10 characters"""
         data = await register_user(client, mock_verification_code=mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            TICKETS_URL,
-            json={"subject": "Help", "message": "Too short"},
-            headers=headers
+            TICKETS_URL, json={"subject": "Help", "message": "Too short"}, headers=headers
         )
         assert res.status_code == 422
 
-    async def test_create_ticket_message_too_long(self, client: AsyncClient, mock_verification_code):
+    async def test_create_ticket_message_too_long(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject message longer than 2000 characters"""
         data = await register_user(client, mock_verification_code=mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            TICKETS_URL,
-            json={"subject": "Help", "message": "a" * 2001},
-            headers=headers
+            TICKETS_URL, json={"subject": "Help", "message": "a" * 2001}, headers=headers
         )
         assert res.status_code == 422
 
     async def test_create_ticket_requires_auth(self, client: AsyncClient):
         """Should return 401 without authentication"""
-        res = await client.post(
-            TICKETS_URL,
-            json={"subject": "Help", "message": "Need assistance"}
-        )
+        res = await client.post(TICKETS_URL, json={"subject": "Help", "message": "Need assistance"})
         assert res.status_code == 401
 
     async def test_get_my_tickets_empty(self, client: AsyncClient, mock_verification_code):
@@ -147,7 +147,7 @@ class TestUserTickets:
             await client.post(
                 TICKETS_URL,
                 json={"subject": f"Ticket {i}", "message": f"Message {i}" * 10},
-                headers=headers
+                headers=headers,
             )
 
         res = await client.get(TICKETS_URL, headers=headers)
@@ -165,7 +165,7 @@ class TestUserTickets:
             await client.post(
                 TICKETS_URL,
                 json={"subject": f"Ticket {i}", "message": f"Message {i}" * 10},
-                headers=headers
+                headers=headers,
             )
 
         res = await client.get(TICKETS_URL, params={"limit": 2}, headers=headers)
@@ -183,7 +183,7 @@ class TestUserTickets:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "My Ticket", "message": "This is my ticket message"},
-            headers=headers
+            headers=headers,
         )
         ticket_id = create_res.json()["id"]
 
@@ -200,8 +200,7 @@ class TestUserTickets:
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.get(
-            f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001",
-            headers=headers
+            f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001", headers=headers
         )
         assert res.status_code == 404
 
@@ -216,7 +215,7 @@ class TestUserTickets:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "User A Ticket", "message": "This is user A's ticket"},
-            headers=userA_headers
+            headers=userA_headers,
         )
         ticket_id = create_res.json()["id"]
 
@@ -238,7 +237,9 @@ class TestUserTickets:
 class TestUserTicketReplies:
     """Test user replying to their own ticket (conversation)"""
 
-    async def test_create_ticket_seeds_initial_message(self, client: AsyncClient, mock_verification_code):
+    async def test_create_ticket_seeds_initial_message(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Creating a ticket should seed the initial message in the thread"""
         data = await register_user(client, mock_verification_code=mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
@@ -246,7 +247,7 @@ class TestUserTicketReplies:
         res = await client.post(
             TICKETS_URL,
             json={"subject": "Thread Test", "message": "Initial message body here"},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 201
         body = res.json()
@@ -262,14 +263,14 @@ class TestUserTicketReplies:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "Reply Test", "message": "Please help me"},
-            headers=headers
+            headers=headers,
         )
         ticket_id = create_res.json()["id"]
 
         res = await client.post(
             f"{TICKETS_URL}/{ticket_id}/messages",
             json={"content": "Adding more details now"},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 201
         body = res.json()
@@ -279,7 +280,9 @@ class TestUserTicketReplies:
         assert body["messages"][1]["sender_type"] == "user"
         assert body["messages"][1]["content"] == "Adding more details now"
 
-    async def test_reply_to_closed_ticket_reopens(self, client: AsyncClient, mock_verification_code):
+    async def test_reply_to_closed_ticket_reopens(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Replying to a closed ticket should reopen it to 'open'"""
         from app.core.config import settings
 
@@ -289,23 +292,21 @@ class TestUserTicketReplies:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "Reopen Test", "message": "Ticket to be closed"},
-            headers=headers
+            headers=headers,
         )
         ticket_id = create_res.json()["id"]
 
         # Admin closes the ticket
         admin_headers = {"X-Admin-Key": settings.ADMIN_SECRET_KEY}
         await client.patch(
-            f"/api/v1/admin/tickets/{ticket_id}",
-            json={"status": "closed"},
-            headers=admin_headers
+            f"/api/v1/admin/tickets/{ticket_id}", json={"status": "closed"}, headers=admin_headers
         )
 
         # User replies → reopened
         res = await client.post(
             f"{TICKETS_URL}/{ticket_id}/messages",
             json={"content": "This should reopen the ticket"},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 201
         assert res.json()["status"] == "open"
@@ -320,7 +321,7 @@ class TestUserTicketReplies:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "User A Ticket", "message": "This is user A's ticket"},
-            headers=userA_headers
+            headers=userA_headers,
         )
         ticket_id = create_res.json()["id"]
 
@@ -332,7 +333,7 @@ class TestUserTicketReplies:
         res = await client.post(
             f"{TICKETS_URL}/{ticket_id}/messages",
             json={"content": "Intrusion attempt"},
-            headers=userB_headers
+            headers=userB_headers,
         )
         assert res.status_code == 404
 
@@ -344,7 +345,7 @@ class TestUserTicketReplies:
         res = await client.post(
             f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
             json={"content": "No such ticket"},
-            headers=headers
+            headers=headers,
         )
         assert res.status_code == 404
 
@@ -356,14 +357,12 @@ class TestUserTicketReplies:
         create_res = await client.post(
             TICKETS_URL,
             json={"subject": "Short Reply", "message": "Full message here"},
-            headers=headers
+            headers=headers,
         )
         ticket_id = create_res.json()["id"]
 
         res = await client.post(
-            f"{TICKETS_URL}/{ticket_id}/messages",
-            json={"content": "short"},
-            headers=headers
+            f"{TICKETS_URL}/{ticket_id}/messages", json={"content": "short"}, headers=headers
         )
         assert res.status_code == 422
 
@@ -371,6 +370,6 @@ class TestUserTicketReplies:
         """Should return 401 without authentication"""
         res = await client.post(
             f"{TICKETS_URL}/00000000-0000-0000-0000-000000000001/messages",
-            json={"content": "No auth message"}
+            json={"content": "No auth message"},
         )
         assert res.status_code == 401

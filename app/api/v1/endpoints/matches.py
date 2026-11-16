@@ -1,28 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
-from sqlalchemy.orm import selectinload
 from uuid import UUID
 
-from app.db.session import get_session
-from app.models.user import User
-from app.models.match import Match
-from app.models.chat import Chat
-from app.models.photo import Photo
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.pagination import (
     decode_cursor,
     encode_cursor,
     keyset_desc,
     parse_datetime_key,
 )
-from app.schemas.match import MatchResponse, MatchListResponse, MatchDetailResponse, MatchUserResponse, LastMessageResponse
-from app.services.notification_service import NotificationService
-from app.services.photo_service import PhotoService
+from app.db.session import get_session
+from app.models.chat import Chat
+from app.models.match import Match
+from app.models.user import User
+from app.schemas.match import (
+    LastMessageResponse,
+    MatchDetailResponse,
+    MatchListResponse,
+    MatchResponse,
+    MatchUserResponse,
+)
 from app.services.chat_service import get_last_messages_for_chats
-
-from app.core.logging import get_logger
+from app.services.photo_service import PhotoService
 
 logger = get_logger("matches")
 
@@ -44,25 +48,24 @@ async def get_matches(
     Returns matches sorted by most recent message or match date.
     """
 
-    user_filter = or_(
-        Match.user1_id == current_user.id,
-        Match.user2_id == current_user.id
-    )
+    user_filter = or_(Match.user1_id == current_user.id, Match.user2_id == current_user.id)
 
     # Count total — no eager loads, no ORDER BY
     total = await session.scalar(
         select(func.count(Match.id)).where(user_filter, Match.is_active == True)
     )
 
-    query = select(Match).options(
-        selectinload(Match.user1).selectinload(User.profile),
-        selectinload(Match.user1).selectinload(User.photos),
-        selectinload(Match.user2).selectinload(User.profile),
-        selectinload(Match.user2).selectinload(User.photos),
-    ).where(
-        user_filter,
-        Match.is_active == True
-    ).order_by(Match.matched_at.desc(), Match.id.desc())
+    query = (
+        select(Match)
+        .options(
+            selectinload(Match.user1).selectinload(User.profile),
+            selectinload(Match.user1).selectinload(User.photos),
+            selectinload(Match.user2).selectinload(User.profile),
+            selectinload(Match.user2).selectinload(User.photos),
+        )
+        .where(user_filter, Match.is_active == True)
+        .order_by(Match.matched_at.desc(), Match.id.desc())
+    )
 
     # Keyset cursor takes precedence over offset when supplied and valid.
     used_cursor = False
@@ -70,9 +73,7 @@ async def get_matches(
         raw_key, last_id = decode_cursor(cursor)
         cursor_key = parse_datetime_key(raw_key)
         if cursor_key is not None and last_id is not None:
-            query = query.where(
-                keyset_desc(Match.matched_at, Match.id, cursor_key, last_id)
-            )
+            query = query.where(keyset_desc(Match.matched_at, Match.id, cursor_key, last_id))
             used_cursor = True
 
     if not used_cursor:
@@ -85,12 +86,12 @@ async def get_matches(
     online_map = {}
     if matches:
         other_ids = [
-            (m.user2_id if m.user1_id == current_user.id else m.user1_id).__str__()
-            for m in matches
+            (m.user2_id if m.user1_id == current_user.id else m.user1_id).__str__() for m in matches
         ]
         if other_ids:
-            from app.services.websocket_manager import websocket_manager
             import app.core.redis as redis_module
+            from app.services.websocket_manager import websocket_manager
+
             online_map = await websocket_manager.get_online_status_bulk(
                 other_ids, redis_module.redis_client
             )
@@ -111,7 +112,7 @@ async def get_matches(
                             (Chat.initiator_id == a) & (Chat.recipient_id == b),
                             (Chat.initiator_id == b) & (Chat.recipient_id == a),
                         )
-                        for (a, b) in pair_to_match.keys()
+                        for (a, b) in pair_to_match
                     ]
                 ),
             )
@@ -126,9 +127,7 @@ async def get_matches(
             if match_id:
                 chat_to_match[chat.id] = match_id
 
-        chat_id_to_last = await get_last_messages_for_chats(
-            session, list(chat_to_match.keys())
-        )
+        chat_id_to_last = await get_last_messages_for_chats(session, list(chat_to_match.keys()))
         for chat_id, match_id in chat_to_match.items():
             if chat_id in chat_id_to_last:
                 last_messages[match_id] = chat_id_to_last[chat_id]
@@ -140,29 +139,41 @@ async def get_matches(
         else:
             other_user = match.user1
 
-        main_photo = next((p for p in other_user.photos if p.is_main and p.status == "approved"), None) if other_user.photos else None
-        main_photo_url = await PhotoService.get_photo_url(main_photo.url, main_photo.status) if main_photo else None
+        main_photo = (
+            next((p for p in other_user.photos if p.is_main and p.status == "approved"), None)
+            if other_user.photos
+            else None
+        )
+        main_photo_url = (
+            await PhotoService.get_photo_url(main_photo.url, main_photo.status)
+            if main_photo
+            else None
+        )
 
         last_msg = last_messages.get(match.id)
-        last_message = LastMessageResponse(
-            content=last_msg.content,
-            sent_at=last_msg.sent_at,
-            is_read=last_msg.is_read
-        ) if last_msg else None
+        last_message = (
+            LastMessageResponse(
+                content=last_msg.content, sent_at=last_msg.sent_at, is_read=last_msg.is_read
+            )
+            if last_msg
+            else None
+        )
 
-        match_responses.append(MatchResponse(
-            id=match.id,
-            matched_at=match.matched_at,
-            user=MatchUserResponse(
-                id=other_user.id,
-                name=other_user.profile.name,
-                age=other_user.profile.age,
-                main_photo_url=main_photo_url,
-                is_online=online_map.get(str(other_user.id), False),
-                last_seen_at=other_user.last_seen_at,
-            ),
-            last_message=last_message
-        ))
+        match_responses.append(
+            MatchResponse(
+                id=match.id,
+                matched_at=match.matched_at,
+                user=MatchUserResponse(
+                    id=other_user.id,
+                    name=other_user.profile.name,
+                    age=other_user.profile.age,
+                    main_photo_url=main_photo_url,
+                    is_online=online_map.get(str(other_user.id), False),
+                    last_seen_at=other_user.last_seen_at,
+                ),
+                last_message=last_message,
+            )
+        )
 
     next_cursor = None
     if len(matches) == limit:
@@ -189,17 +200,18 @@ async def get_match_detail(
     Get detailed information about a specific match.
     """
 
-    query = select(Match).options(
-        selectinload(Match.user1).selectinload(User.profile),
-        selectinload(Match.user1).selectinload(User.photos),
-        selectinload(Match.user2).selectinload(User.profile),
-        selectinload(Match.user2).selectinload(User.photos),
-    ).where(
-        Match.id == match_id,
-        Match.is_active == True,
-        or_(
-            Match.user1_id == current_user.id,
-            Match.user2_id == current_user.id
+    query = (
+        select(Match)
+        .options(
+            selectinload(Match.user1).selectinload(User.profile),
+            selectinload(Match.user1).selectinload(User.photos),
+            selectinload(Match.user2).selectinload(User.profile),
+            selectinload(Match.user2).selectinload(User.photos),
+        )
+        .where(
+            Match.id == match_id,
+            Match.is_active == True,
+            or_(Match.user1_id == current_user.id, Match.user2_id == current_user.id),
         )
     )
 
@@ -207,15 +219,28 @@ async def get_match_detail(
     match = result.scalar_one_or_none()
 
     if not match:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Match not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
 
-    user1_photo = next((p for p in match.user1.photos if p.is_main and p.status == "approved"), None) if match.user1.photos else None
-    user1_photo_url = await PhotoService.get_photo_url(user1_photo.url, user1_photo.status) if user1_photo else None
-    user2_photo = next((p for p in match.user2.photos if p.is_main and p.status == "approved"), None) if match.user2.photos else None
-    user2_photo_url = await PhotoService.get_photo_url(user2_photo.url, user2_photo.status) if user2_photo else None
+    user1_photo = (
+        next((p for p in match.user1.photos if p.is_main and p.status == "approved"), None)
+        if match.user1.photos
+        else None
+    )
+    user1_photo_url = (
+        await PhotoService.get_photo_url(user1_photo.url, user1_photo.status)
+        if user1_photo
+        else None
+    )
+    user2_photo = (
+        next((p for p in match.user2.photos if p.is_main and p.status == "approved"), None)
+        if match.user2.photos
+        else None
+    )
+    user2_photo_url = (
+        await PhotoService.get_photo_url(user2_photo.url, user2_photo.status)
+        if user2_photo
+        else None
+    )
 
     return MatchDetailResponse(
         id=match.id,
@@ -232,5 +257,5 @@ async def get_match_detail(
             age=match.user2.profile.age,
             main_photo_url=user2_photo_url,
         ),
-        is_active=match.is_active
+        is_active=match.is_active,
     )

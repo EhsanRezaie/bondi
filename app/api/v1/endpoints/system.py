@@ -1,33 +1,32 @@
 # app/api/v1/endpoints/system.py
-from fastapi import APIRouter, Depends, Request, HTTPException, status, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-from datetime import datetime, timezone
-from typing import Optional, Dict
 import json
 import os
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
-from app.db.session import get_session, engine
-from app.core.redis import redis_client
-from app.core.limiter import limiter
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
+
+from app.core.cache import TTL_SYSTEM_STATUS, cache_get, cache_set, key_system_status
 from app.core.config import settings
-from app.core.deps import get_admin_user, AdminIdentity
-from app.core.cache import cache_get, cache_set, key_system_status, TTL_SYSTEM_STATUS
+from app.core.deps import AdminIdentity, get_admin_user
+from app.core.limiter import limiter
+from app.core.logging import get_logger
+from app.core.redis import redis_client
+from app.db.session import engine
 from app.schemas.system import (
-    SystemStatusResponse,
-    ServiceStatus,
-    ServicesStatus,
-    MaintenanceStatus,
     MaintenanceEnableRequest,
     MaintenanceEnableResponse,
+    MaintenanceStatus,
     MaintenanceStatusResponse,
-    VersionCheckResponse,
+    ServicesStatus,
+    ServiceStatus,
+    SystemStatusResponse,
     VersionCheckRequest,
+    VersionCheckResponse,
 )
-
-from app.core.logging import get_logger
 
 logger = get_logger("system")
 
@@ -40,69 +39,126 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 MAINTENANCE_FILE = Path("maintenance.json")
 
+# Phase 2.4: state moved to Redis (shared across workers); the JSON files remain
+# as durable bootstrap/backup so state survives Redis flush or restart.
+_MAINTENANCE_REDIS_KEY = "system:maintenance"
+_VERSION_OVERRIDE_REDIS_KEY = "system:version_override"
+
+
+def _read_file_json(path: Path) -> dict | None:
+    """Blocking file read — call ONLY via run_in_threadpool."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.warning("system_state_file_read_failed", file=path.name, error=str(e))
+        return None
+
+
+def _write_file_json(path: Path, data_dict: dict) -> None:
+    """Blocking atomic file write — call ONLY via run_in_threadpool."""
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data_dict, f, indent=2)
+        os.replace(tmp_path, str(path))
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.error("system_state_file_write_failed", file=path.name, error=str(e), exc_info=True)
+        raise
+
+
+def _delete_file(path: Path) -> None:
+    """Blocking file delete — call ONLY via run_in_threadpool."""
+    path.unlink(missing_ok=True)
+
+
+async def _redis_get(key: str) -> str | None:
+    try:
+        raw = await redis_client.get(key)
+        return str(raw) if raw is not None else None
+    except Exception as e:
+        logger.warning("system_state_redis_read_failed", key=key, error=str(e))
+        return None
+
+
+async def _redis_set(key: str, value: str) -> None:
+    try:
+        await redis_client.set(key, value)
+    except Exception as e:
+        logger.warning("system_state_redis_write_failed", key=key, error=str(e))
+
+
+async def _redis_delete(key: str) -> None:
+    try:
+        await redis_client.delete(key)
+    except Exception as e:
+        logger.warning("system_state_redis_delete_failed", key=key, error=str(e))
+
 
 async def get_maintenance_status() -> MaintenanceStatus:
-    """Read maintenance status from file."""
-    if not MAINTENANCE_FILE.exists():
-        return MaintenanceStatus(
-            enabled=False,
-            message=None,
-            start_time=None,
-            end_time=None,
+    """Read maintenance status — Redis primary, JSON file fallback."""
+    raw = await _redis_get(_MAINTENANCE_REDIS_KEY)
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+            return MaintenanceStatus(
+                enabled=data.get("maintenance_mode", False),
+                message=data.get("message"),
+                start_time=data.get("start_time"),
+                end_time=data.get("end_time"),
+            )
+        except Exception as e:
+            logger.warning("maintenance_status_parse_failed", error=str(e), exc_info=True)
+
+    # Redis miss/flush → bootstrap from the durable file (off the event loop).
+    data_file = await run_in_threadpool(_read_file_json, MAINTENANCE_FILE)
+    if data_file is not None:
+        status = MaintenanceStatus(
+            enabled=data_file.get("maintenance_mode", False),
+            message=data_file.get("message"),
+            start_time=data_file.get("start_time"),
+            end_time=data_file.get("end_time"),
         )
-    
-    try:
-        with open(MAINTENANCE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return MaintenanceStatus(
-            enabled=data.get("maintenance_mode", False),
-            message=data.get("message"),
-            start_time=data.get("start_time"),
-            end_time=data.get("end_time"),
-        )
-    except Exception as e:
-        logger.warning("maintenance_status_read_failed", error=str(e), exc_info=True)
-        return MaintenanceStatus(
-            enabled=False,
-            message=None,
-            start_time=None,
-            end_time=None,
-        )
+        await _redis_set(_MAINTENANCE_REDIS_KEY, json.dumps(data_file))
+        return status
+
+    return MaintenanceStatus(enabled=False, message=None, start_time=None, end_time=None)
 
 
 async def set_maintenance_status(
-    maintenance_mode: bool,
-    message: Optional[str] = None
+    maintenance_mode: bool, message: str | None = None
 ) -> MaintenanceStatus:
-    """Set maintenance status."""
+    """Set maintenance status — Redis primary, durable file backup."""
     data = MaintenanceStatus(
         enabled=maintenance_mode,
-        message=message or ("System is currently under maintenance. Please try again later." if maintenance_mode else None),
-        start_time=datetime.now(timezone.utc).isoformat() if maintenance_mode else None,
+        message=message
+        or (
+            "System is currently under maintenance. Please try again later."
+            if maintenance_mode
+            else None
+        ),
+        start_time=datetime.now(UTC).isoformat() if maintenance_mode else None,
         end_time=None,
     )
-    
+
+    data_dict = {
+        "maintenance_mode": data.enabled,
+        "message": data.message,
+        "start_time": data.start_time,
+        "end_time": data.end_time,
+    }
+    encoded = json.dumps(data_dict)
+    await _redis_set(_MAINTENANCE_REDIS_KEY, encoded)
+
     if maintenance_mode:
-        data_dict = {
-            "maintenance_mode": data.enabled,
-            "message": data.message,
-            "start_time": data.start_time,
-            "end_time": data.end_time,
-        }
-        fd, tmp_path = tempfile.mkstemp(dir=str(MAINTENANCE_FILE.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data_dict, f, indent=2)
-            os.replace(tmp_path, str(MAINTENANCE_FILE))
-        except Exception as e:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            logger.error("maintenance_status_write_failed", error=str(e), exc_info=True)
-            raise
+        await run_in_threadpool(_write_file_json, MAINTENANCE_FILE, data_dict)
     else:
-        if MAINTENANCE_FILE.exists():
-            MAINTENANCE_FILE.unlink()
-    
+        await run_in_threadpool(_delete_file, MAINTENANCE_FILE)
+
     return data
 
 
@@ -111,12 +167,13 @@ def version_compare(v1: str, v2: str) -> int:
     Compare two version strings.
     Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
     """
+
     def normalize(v: str) -> tuple:
-        return tuple(int(x) for x in v.split('.'))
-    
+        return tuple(int(x) for x in v.split("."))
+
     v1_parts = normalize(v1)
     v2_parts = normalize(v2)
-    
+
     for i in range(max(len(v1_parts), len(v2_parts))):
         a = v1_parts[i] if i < len(v1_parts) else 0
         b = v2_parts[i] if i < len(v2_parts) else 0
@@ -141,6 +198,7 @@ async def check_admin_auth(request: Request) -> bool:
 # Public Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/status", response_model=SystemStatusResponse)
 @limiter.limit("60/minute")
 async def system_status(request: Request, response: Response) -> SystemStatusResponse:
@@ -154,46 +212,47 @@ async def system_status(request: Request, response: Response) -> SystemStatusRes
         return SystemStatusResponse(**cached)
     # Get maintenance status
     maintenance = await get_maintenance_status()
-    
+
     # Check database connectivity
     db_status = "ok"
     db_latency = None
     try:
         async with engine.connect() as conn:
-            start = datetime.now(timezone.utc)
+            start = datetime.now(UTC)
             await conn.execute(text("SELECT 1"))
-            db_latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+            db_latency = (datetime.now(UTC) - start).total_seconds() * 1000
     except Exception as e:
         logger.warning("system_status_db_check_failed", error=str(e), exc_info=True)
         db_status = "error"
-    
+
     # Check Redis connectivity
     redis_status = "ok"
     redis_latency = None
     try:
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         await redis_client.ping()
-        redis_latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+        redis_latency = (datetime.now(UTC) - start).total_seconds() * 1000
     except Exception as e:
         logger.warning("system_status_redis_check_failed", error=str(e), exc_info=True)
         redis_status = "error"
-    
+
     # Check MinIO connectivity
     minio_status = "ok"
     try:
         from app.services.photo_service import PhotoService
+
         async with PhotoService._s3_client() as s3:
             await s3.head_bucket(Bucket=settings.S3_PRIVATE_BUCKET)
     except Exception as e:
         logger.warning("system_status_minio_check_failed", error=str(e), exc_info=True)
         minio_status = "error"
-    
+
     # Determine overall status
     overall_status = "ok" if db_status == "ok" and redis_status == "ok" else "degraded"
-    
+
     result = SystemStatusResponse(
         status=overall_status,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         version=getattr(settings, "APP_VERSION", "1.0.0"),
         environment=getattr(settings, "ENVIRONMENT", "production"),
         services=ServicesStatus(
@@ -212,13 +271,16 @@ async def system_status(request: Request, response: Response) -> SystemStatusRes
         ),
         maintenance=maintenance,
     )
-    await cache_set(redis_client, key_system_status(), result.model_dump(mode='json'), TTL_SYSTEM_STATUS)
+    await cache_set(
+        redis_client, key_system_status(), result.model_dump(mode="json"), TTL_SYSTEM_STATUS
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
 # Version Check Endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.post("/version-check", response_model=VersionCheckResponse)
 @limiter.limit("30/minute")
@@ -242,37 +304,41 @@ async def version_check(
             update_url=None,
             force_update=False,
         )
-    
+
     # ✅ Get version override (runtime overrides)
     override = await get_version_override()
-    
+
     # ✅ Get minimum version from settings, then override if present
     if body.platform == "android":
-        min_version = override.get("minimum_versions", {}).get("android", settings.MIN_ANDROID_VERSION)
+        min_version = override.get("minimum_versions", {}).get(
+            "android", settings.MIN_ANDROID_VERSION
+        )
         update_url = settings.PLAY_STORE_URL
     else:
         min_version = override.get("minimum_versions", {}).get("ios", settings.MIN_IOS_VERSION)
         update_url = settings.APP_STORE_URL
-    
+
     # ✅ Get force update from override or settings
     force_update = override.get("force_update", settings.FORCE_UPDATE_ENABLED)
     force_update_message = override.get("force_update_message", settings.FORCE_UPDATE_MESSAGE)
-    
+
     # Compare versions
     compare_result = version_compare(body.version, min_version)
-    
+
     if compare_result < 0:
         # Version is older than minimum - update required
         return VersionCheckResponse(
             status="update_required",
-            message=force_update_message if force_update else "A new version is available. Please update to get the latest features.",
+            message=force_update_message
+            if force_update
+            else "A new version is available. Please update to get the latest features.",
             current_version=body.version,
             minimum_version=min_version,
             platform=body.platform,
             update_url=update_url,
             force_update=force_update,
         )
-    
+
     # Version is compatible
     return VersionCheckResponse(
         status="ok",
@@ -288,6 +354,7 @@ async def version_check(
 # ---------------------------------------------------------------------------
 # Admin Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/maintenance/enable", response_model=MaintenanceEnableResponse)
 async def enable_maintenance(
@@ -346,31 +413,28 @@ async def maintenance_status(
 VERSION_OVERRIDE_FILE = Path("version_override.json")
 
 
-async def get_version_override() -> Dict:
-    """Read version override from file."""
-    if not VERSION_OVERRIDE_FILE.exists():
-        return {}
-    
-    try:
-        with open(VERSION_OVERRIDE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning("version_override_read_failed", error=str(e), exc_info=True)
-        return {}
+async def get_version_override() -> dict:
+    """Read version override — Redis primary, JSON file fallback."""
+    raw = await _redis_get(_VERSION_OVERRIDE_REDIS_KEY)
+    if raw is not None:
+        try:
+            return json.loads(raw)
+        except Exception as e:
+            logger.warning("version_override_parse_failed", error=str(e), exc_info=True)
+
+    # Redis miss/flush → bootstrap from the durable file (off the event loop).
+    data_file = await run_in_threadpool(_read_file_json, VERSION_OVERRIDE_FILE)
+    if data_file is not None:
+        await _redis_set(_VERSION_OVERRIDE_REDIS_KEY, json.dumps(data_file))
+        return data_file
+
+    return {}
 
 
-async def set_version_override(data: Dict) -> None:
-    """Write version override to file atomically."""
-    fd, tmp_path = tempfile.mkstemp(dir=str(VERSION_OVERRIDE_FILE.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp_path, str(VERSION_OVERRIDE_FILE))
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        logger.error("version_override_write_failed", error=str(e), exc_info=True)
-        raise
+async def set_version_override(data: dict) -> None:
+    """Write version override — Redis primary, durable file backup (atomic)."""
+    await _redis_set(_VERSION_OVERRIDE_REDIS_KEY, json.dumps(data))
+    await run_in_threadpool(_write_file_json, VERSION_OVERRIDE_FILE, data)
 
 
 @router.post("/version/set-minimum")
@@ -388,14 +452,14 @@ async def set_minimum_version(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Platform must be 'android' or 'ios'",
         )
-    
+
     override = await get_version_override()
     if "minimum_versions" not in override:
         override["minimum_versions"] = {}
     override["minimum_versions"][platform] = version
-    
+
     await set_version_override(override)
-    
+
     return {
         "status": "ok",
         "message": f"Minimum version for {platform} set to {version}",
@@ -406,7 +470,7 @@ async def set_minimum_version(
 @router.post("/version/force-update")
 async def set_force_update(
     force: bool,
-    message: Optional[str] = None,
+    message: str | None = None,
     admin: AdminIdentity = Depends(get_admin_user),
 ) -> dict:
     """
@@ -417,9 +481,9 @@ async def set_force_update(
     override["force_update"] = force
     if message:
         override["force_update_message"] = message
-    
+
     await set_version_override(override)
-    
+
     return {
         "status": "ok",
         "message": f"Force update {'enabled' if force else 'disabled'}",
@@ -436,11 +500,13 @@ async def get_version_config(
     Admin only endpoint.
     """
     override = await get_version_override()
-    
+
     # Merge settings with overrides
     config = {
         "minimum_versions": {
-            "android": override.get("minimum_versions", {}).get("android", settings.MIN_ANDROID_VERSION),
+            "android": override.get("minimum_versions", {}).get(
+                "android", settings.MIN_ANDROID_VERSION
+            ),
             "ios": override.get("minimum_versions", {}).get("ios", settings.MIN_IOS_VERSION),
         },
         "force_update": override.get("force_update", settings.FORCE_UPDATE_ENABLED),
@@ -449,7 +515,7 @@ async def get_version_config(
         "play_store_url": settings.PLAY_STORE_URL,
         "app_store_url": settings.APP_STORE_URL,
     }
-    
+
     return {
         "status": "ok",
         "data": config,
@@ -464,9 +530,9 @@ async def clear_version_override(
     Clear all version overrides (revert to settings).
     Admin only endpoint.
     """
-    if VERSION_OVERRIDE_FILE.exists():
-        VERSION_OVERRIDE_FILE.unlink()
-    
+    await _redis_delete(_VERSION_OVERRIDE_REDIS_KEY)
+    await run_in_threadpool(_delete_file, VERSION_OVERRIDE_FILE)
+
     return {
         "status": "ok",
         "message": "Version overrides cleared. Using settings values.",

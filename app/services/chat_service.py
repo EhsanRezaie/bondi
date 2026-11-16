@@ -1,26 +1,25 @@
 # app/services/chat_service.py
-import asyncio
 import hashlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from uuid import UUID
-from typing import Optional, Tuple, List, Dict, Any
+
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, update
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.services.reward_service import RewardService
-from app.services.notification_service import NotificationService
-from app.services.media_service import MediaService
-from app.models.user import User
+from app.core.encryption import decrypt_message_async
+from app.core.logging import get_logger
+from app.core.timezone import utcnow
+from app.models.block import Block
 from app.models.chat import Chat
+from app.models.daily_limit import DailyLimit
 from app.models.message import Message
 from app.models.swipe import Swipe
-from app.models.block import Block
-from app.models.daily_limit import DailyLimit
-from app.core.logging import get_logger
-from app.core.encryption import encrypt_message, decrypt_message, decrypt_message_async
-from app.core.timezone import utcnow
+from app.models.user import User
+from app.services.media_service import MediaService
+from app.services.reward_service import RewardService
 
 logger = get_logger("chat_service")
 
@@ -29,9 +28,7 @@ PENDING_INITIATOR_MESSAGE_LIMIT = 2
 
 
 async def get_or_create_daily_limit(
-    session: AsyncSession,
-    user_id: UUID,
-    target_date: date
+    session: AsyncSession, user_id: UUID, target_date: date
 ) -> DailyLimit:
     """Get or create daily limit record for a user"""
     stmt = select(DailyLimit).where(
@@ -57,9 +54,7 @@ async def get_or_create_daily_limit(
 def pair_lock_key(a: UUID, b: UUID) -> int:
     """Stable signed 64-bit key for a user pair, for pg_advisory_xact_lock."""
     s = ":".join(sorted([str(a), str(b)]))
-    return int.from_bytes(
-        hashlib.blake2b(s.encode(), digest_size=8).digest(), "big", signed=True
-    )
+    return int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "big", signed=True)
 
 
 async def find_chat_for_pair(
@@ -67,7 +62,7 @@ async def find_chat_for_pair(
     user1_id: UUID,
     user2_id: UUID,
     only_active: bool = True,
-) -> Optional[Chat]:
+) -> Chat | None:
     """Find the active chat between a pair regardless of stored order."""
     stmt = select(Chat).where(
         or_(
@@ -83,7 +78,7 @@ async def find_chat_for_pair(
 async def get_last_messages_for_chats(
     session: AsyncSession,
     chat_ids: list[UUID],
-) -> Dict[UUID, Message]:
+) -> dict[UUID, Message]:
     """Return the newest message per chat for the given chat ids."""
     if not chat_ids:
         return {}
@@ -100,7 +95,7 @@ async def get_user_chat(
     session: AsyncSession,
     chat_id: UUID,
     user_id: UUID,
-) -> Optional[Chat]:
+) -> Chat | None:
     """Get an active chat the user is a member of (or None)."""
     return (
         await session.execute(
@@ -124,20 +119,18 @@ async def chat_is_ended(
     """True when the conversation is over for this user (blocked either
     direction, or the chat was ended/deleted by a participant)."""
     me_initiator = chat.initiator_id == user_id
-    peer_deleted = (
-        chat.deleted_for_recipient if me_initiator else chat.deleted_for_initiator
-    )
+    peer_deleted = chat.deleted_for_recipient if me_initiator else chat.deleted_for_initiator
     if chat.is_ended or peer_deleted:
         return True
     blocked = await session.scalar(
-        select(Block.id).where(
+        select(Block.id)
+        .where(
             or_(
-                (Block.blocker_id == chat.initiator_id)
-                & (Block.blocked_id == chat.recipient_id),
-                (Block.blocker_id == chat.recipient_id)
-                & (Block.blocked_id == chat.initiator_id),
+                (Block.blocker_id == chat.initiator_id) & (Block.blocked_id == chat.recipient_id),
+                (Block.blocker_id == chat.recipient_id) & (Block.blocked_id == chat.initiator_id),
             )
-        ).limit(1)
+        )
+        .limit(1)
     )
     return bool(blocked)
 
@@ -169,9 +162,11 @@ async def have_mutual_like(
     result = await session.execute(
         select(func.count(Swipe.id)).where(
             or_(
-                (Swipe.from_user == user1_id) & (Swipe.to_user == user2_id)
+                (Swipe.from_user == user1_id)
+                & (Swipe.to_user == user2_id)
                 & (Swipe.direction == "like"),
-                (Swipe.from_user == user2_id) & (Swipe.to_user == user1_id)
+                (Swipe.from_user == user2_id)
+                & (Swipe.to_user == user1_id)
                 & (Swipe.direction == "like"),
             )
         )
@@ -183,7 +178,7 @@ async def can_start_new_chat(
     session: AsyncSession,
     user_id: UUID,
     is_premium: bool,
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Check if the user may start a NEW chat (consumes a daily chat slot).
     Returns: (can_start, reason)
@@ -201,7 +196,10 @@ async def can_start_new_chat(
     reward_service = RewardService(session)
     remaining = await reward_service.get_remaining_chats(user)
     if remaining <= 0:
-        return False, f"Daily new chat limit reached ({settings.FREE_USER_DAILY_CHATS} per day). Watch an ad or upgrade to premium."
+        return (
+            False,
+            f"Daily new chat limit reached ({settings.FREE_USER_DAILY_CHATS} per day). Watch an ad or upgrade to premium.",
+        )
 
     return True, None
 
@@ -222,7 +220,7 @@ async def can_send_message(
     session: AsyncSession,
     chat: Chat,
     sender_id: UUID,
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Check whether a user may send a message in the chat.
     Pending chats: the initiator may send at most 2 starter messages;
@@ -243,7 +241,10 @@ async def can_send_message(
         )
     )
     if (count or 0) >= PENDING_INITIATOR_MESSAGE_LIMIT:
-        return False, "Recipient must accept the conversation before sending more messages. They have received 2 messages already."
+        return (
+            False,
+            "Recipient must accept the conversation before sending more messages. They have received 2 messages already.",
+        )
 
     return True, None
 
@@ -265,10 +266,10 @@ async def create_encrypted_message(
     receiver_id: UUID,
     content: str,
     message_type: str = "text",
-    reply_to_id: Optional[UUID] = None,
-    media_url: Optional[str] = None,
-    media_duration: Optional[int] = None,
-    client_id: Optional[UUID] = None,
+    reply_to_id: UUID | None = None,
+    media_url: str | None = None,
+    media_duration: int | None = None,
+    client_id: UUID | None = None,
 ) -> Message:
     """Create a new message with encrypted content (always encrypted)."""
     new_message = Message(
@@ -293,7 +294,7 @@ async def get_decrypted_message_for_client(
     session: AsyncSession,
     message: Message,
     current_user_id: UUID,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get message data with decrypted content for client delivery.
     Decrypt runs in a threadpool to avoid blocking the event loop.
@@ -325,7 +326,7 @@ async def get_decrypted_message_for_client(
 async def get_message_for_admin(
     session: AsyncSession,
     message_id: UUID,
-) -> Tuple[Optional[Message], Optional[str]]:
+) -> tuple[Message | None, str | None]:
     """
     Get a message with decrypted content for admin review.
     Decrypt runs in a threadpool to avoid blocking the event loop.
@@ -386,7 +387,7 @@ async def delete_message(
     message_id: UUID,
     user_id: UUID,
     delete_for: str,
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Delete a message. Returns: (success, error_message)"""
     result = await session.execute(select(Message).where(Message.id == message_id))
     message = result.scalar_one_or_none()
@@ -401,12 +402,12 @@ async def delete_message(
         if message.sender_id != user_id:
             return False, "Only the sender can delete for everyone"
 
-        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
         if message.sent_at < one_hour_ago:
             return False, "Cannot delete for everyone after 1 hour. Use delete for me instead."
 
         message.is_deleted_for_all = True
-        message.deleted_at = datetime.now(timezone.utc)
+        message.deleted_at = datetime.now(UTC)
         message._content = "[Message deleted]"  # Store as-is (not encrypted)
 
         # Remove the stored media object (photo/voice) so deleted media doesn't
@@ -418,9 +419,7 @@ async def delete_message(
                     str(message.chat_id), str(message.id), message.message_type
                 )
             except Exception:
-                logger.exception(
-                    "delete_message_media_failed", message_id=str(message.id)
-                )
+                logger.exception("delete_message_media_failed", message_id=str(message.id))
     else:
         if message.sender_id == user_id:
             message.is_deleted_for_sender = True
@@ -436,11 +435,9 @@ async def edit_message(
     message_id: UUID,
     user_id: UUID,
     content: str,
-) -> Tuple[Optional[Message], Optional[str]]:
+) -> tuple[Message | None, str | None]:
     """Edit a message's text content. Returns: (message, error_message)."""
-    result = await session.execute(
-        select(Message).where(Message.id == message_id)
-    )
+    result = await session.execute(select(Message).where(Message.id == message_id))
     message = result.scalar_one_or_none()
 
     if not message:
@@ -456,7 +453,7 @@ async def edit_message(
 
     message.content = content.strip()
     message.is_edited = True
-    message.edited_at = datetime.now(timezone.utc)
+    message.edited_at = datetime.now(UTC)
     await session.commit()
     return message, None
 
@@ -466,7 +463,7 @@ async def forward_message(
     message_id: UUID,
     target_chat_id: UUID,
     user_id: UUID,
-) -> Tuple[Optional[Message], Optional[str]]:
+) -> tuple[Message | None, str | None]:
     """Forward a message to another chat. Returns: (new_message, error_message)"""
     result = await session.execute(select(Message).where(Message.id == message_id))
     original = result.scalar_one_or_none()
@@ -489,7 +486,8 @@ async def forward_message(
         return None, "Not part of target chat"
 
     receiver_id = (
-        target_chat.recipient_id if target_chat.initiator_id == user_id
+        target_chat.recipient_id
+        if target_chat.initiator_id == user_id
         else target_chat.initiator_id
     )
 
@@ -498,7 +496,9 @@ async def forward_message(
     else:
         original_content = original._content
 
-    forwarded_content = f"📨 Forwarded: {original_content}" if original_content else "📨 Forwarded message"
+    forwarded_content = (
+        f"📨 Forwarded: {original_content}" if original_content else "📨 Forwarded message"
+    )
 
     new_message = await create_encrypted_message(
         session=session,

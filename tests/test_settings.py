@@ -1,13 +1,12 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
-
-from app.core.config import settings as app_settings
 
 # ============ URL Constants ============
 VERIFY_CODE_URL = "/api/v1/auth/verify-code"
@@ -26,7 +25,9 @@ COMPLETE_PROFILE_PAYLOAD = {
 }
 
 
-async def register_user_full(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+async def register_user_full(
+    client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -48,6 +49,7 @@ async def register_user_full(client: AsyncClient, mock_verification_code=None, p
 # PUT /api/v1/users/me/settings
 # =============================================================================
 
+
 class TestUpdateSettings:
     """Test PUT /users/me/settings endpoint."""
 
@@ -56,16 +58,20 @@ class TestUpdateSettings:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        res = await client.put(SETTINGS_URL, headers=headers, json={
-            "hide_last_seen": True,
-            "hide_online_status": True,
-            "push_enabled": False,
-            "like_notifications": False,
-            "match_notifications": False,
-            "message_notifications": False,
-            "language": "en",
-            "dark_mode": True,
-        })
+        res = await client.put(
+            SETTINGS_URL,
+            headers=headers,
+            json={
+                "hide_last_seen": True,
+                "hide_online_status": True,
+                "push_enabled": False,
+                "like_notifications": False,
+                "match_notifications": False,
+                "message_notifications": False,
+                "language": "en",
+                "dark_mode": True,
+            },
+        )
         assert res.status_code == 200
         data = res.json()
 
@@ -83,9 +89,13 @@ class TestUpdateSettings:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        res = await client.put(SETTINGS_URL, headers=headers, json={
-            "dark_mode": True,
-        })
+        res = await client.put(
+            SETTINGS_URL,
+            headers=headers,
+            json={
+                "dark_mode": True,
+            },
+        )
         assert res.status_code == 200
         data = res.json()
 
@@ -129,15 +139,21 @@ class TestUpdateSettings:
         res = await client.put(SETTINGS_URL, headers=headers, json={"language": "de"})
         assert res.status_code == 200
 
-    async def test_settings_persist_across_requests(self, client: AsyncClient, mock_verification_code):
+    async def test_settings_persist_across_requests(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should persist updated settings across multiple GET requests."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        await client.put(SETTINGS_URL, headers=headers, json={
-            "language": "en",
-            "dark_mode": True,
-        })
+        await client.put(
+            SETTINGS_URL,
+            headers=headers,
+            json={
+                "language": "en",
+                "dark_mode": True,
+            },
+        )
 
         res1 = await client.get("/api/v1/users/me", headers=headers)
         assert res1.status_code == 200
@@ -156,10 +172,14 @@ class TestUpdateSettings:
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        res = await client.put(SETTINGS_URL, headers=headers, json={
-            "hide_last_seen": None,
-            "dark_mode": True,
-        })
+        res = await client.put(
+            SETTINGS_URL,
+            headers=headers,
+            json={
+                "hide_last_seen": None,
+                "dark_mode": True,
+            },
+        )
         assert res.status_code == 200
         data = res.json()
         assert data["hide_last_seen"] is False

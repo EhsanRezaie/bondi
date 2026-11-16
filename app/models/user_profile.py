@@ -1,39 +1,68 @@
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from sqlalchemy import Column, String, Boolean, SmallInteger, Double, DateTime, Text, Date as SQLDate, ForeignKey, JSON, Index, text
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    Computed,
+    DateTime,
+    Double,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    text,
+)
+from sqlalchemy import Date as SQLDate
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from app.db.base import Base
+from app.db.types import Geography
 
 
 class UserProfile(Base):
     __tablename__ = "user_profiles"
     __table_args__ = (
-        Index('idx_profiles_gender', 'gender'),
-        Index('idx_profiles_lat_lng', 'lat', 'lng'),
-        Index('idx_profiles_birth_date', 'birth_date'),
-        Index('idx_profiles_country', 'country'),
-        Index('idx_profiles_province', 'province'),
-        Index('idx_profiles_city', 'city'),
-        Index('idx_profiles_religion', 'religion'),
-        Index('idx_profiles_ethnicity', 'ethnicity'),
-        Index('idx_profiles_education', 'education'),
-        Index('idx_profiles_body_type', 'body_type'),
-        Index('idx_profiles_smoking', 'smoking'),
-        Index('idx_profiles_drinking', 'drinking'),
-        Index('idx_profiles_relationship_status', 'relationship_status'),
-        Index('idx_profiles_height', 'height'),
-        Index('idx_profiles_here_for', 'here_for'),
-        Index('idx_profiles_pets', 'pets'),
-        Index('idx_profiles_workout_frequency', 'workout_frequency'),
-        Index('idx_profiles_zodiac_sign', 'zodiac_sign'),
-        Index('idx_profiles_is_verified', 'is_verified', postgresql_where=text("is_verified = true")),
-        Index('idx_profiles_premium_until', 'premium_until'),
+        Index("idx_profiles_gender", "gender"),
+        Index("idx_profiles_lat_lng", "lat", "lng"),
+        Index(
+            "idx_profiles_location_gist",
+            "location",
+            postgresql_using="gist",
+        ),
+        # Highly selective in early launch (most profiles lack approved
+        # photos); lets candidate queries prune non-searchable rows cheaply.
+        Index("idx_profiles_searchable", "is_searchable"),
+        Index("idx_profiles_birth_date", "birth_date"),
+        Index("idx_profiles_country", "country"),
+        Index("idx_profiles_province", "province"),
+        Index("idx_profiles_city", "city"),
+        Index("idx_profiles_religion", "religion"),
+        Index("idx_profiles_ethnicity", "ethnicity"),
+        Index("idx_profiles_education", "education"),
+        Index("idx_profiles_body_type", "body_type"),
+        Index("idx_profiles_smoking", "smoking"),
+        Index("idx_profiles_drinking", "drinking"),
+        Index("idx_profiles_relationship_status", "relationship_status"),
+        Index("idx_profiles_height", "height"),
+        Index("idx_profiles_here_for", "here_for"),
+        Index("idx_profiles_pets", "pets"),
+        Index("idx_profiles_workout_frequency", "workout_frequency"),
+        Index("idx_profiles_zodiac_sign", "zodiac_sign"),
+        Index(
+            "idx_profiles_is_verified", "is_verified", postgresql_where=text("is_verified = true")
+        ),
+        Index("idx_profiles_premium_until", "premium_until"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
 
     # Identity
     name = Column(String(100), nullable=True)
@@ -69,6 +98,18 @@ class UserProfile(Base):
     # Location
     lat = Column(Double, nullable=True)
     lng = Column(Double, nullable=True)
+    # PostGIS geography point, auto-derived from lat/lng (stored generated
+    # column — never written directly). Null-safe: NULL lat/lng → NULL here.
+    location = Column(
+        Geography(),
+        Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography", persisted=True),
+        nullable=True,
+    )
+    # Denormalized visibility flag for discover/search: has >= 1 approved
+    # photo AND no pending/rejected photo. Maintained by
+    # PhotoService.recompute_is_searchable at every photo status event —
+    # lets candidate queries filter a boolean instead of joining photos.
+    is_searchable = Column(Boolean, nullable=False, server_default=text("false"))
     country = Column(String(100), nullable=True)
     province = Column(String(100), nullable=True)
     city = Column(String(100), nullable=True)
@@ -82,8 +123,12 @@ class UserProfile(Base):
     premium_until = Column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)  # ← اضافه شد
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )  # ← اضافه شد
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True
+    )
 
     # Relationships
     user = relationship("User", back_populates="profile")
@@ -102,20 +147,22 @@ class UserProfile(Base):
     def is_premium(self) -> bool:
         if self.premium_until is None:
             return False
-        return self.premium_until > datetime.now(timezone.utc)
+        return self.premium_until > datetime.now(UTC)
 
     @property
     def is_profile_complete(self) -> bool:
-        return all([
-            self.name is not None,
-            self.birth_date is not None,
-            self.gender is not None,
-            self.lat is not None,
-            self.lng is not None,
-        ])
+        return all(
+            [
+                self.name is not None,
+                self.birth_date is not None,
+                self.gender is not None,
+                self.lat is not None,
+                self.lng is not None,
+            ]
+        )
 
     def add_premium_days(self, days: int):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.premium_until is None or self.premium_until < now:
             self.premium_until = now + timedelta(days=days)
         else:

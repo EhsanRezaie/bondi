@@ -1,35 +1,32 @@
 # app/services/profile_serializer.py
 """Shared profile serialization used by discover and the public profile endpoint."""
-from datetime import datetime, timezone
-from typing import Optional
-from math import radians, sin, cos, asin, sqrt
+
+from datetime import UTC, datetime
+from math import asin, cos, radians, sin, sqrt
 
 from fastapi import HTTPException, status
 
 from app.models.user import User
-from app.schemas.discover import ProfileResponse
 from app.schemas.card import CardProfileResponse
+from app.schemas.discover import ProfileResponse
 from app.services.photo_service import PhotoService
 
 
-def haversine_km(lat1, lng1, lat2, lng2) -> Optional[float]:
+def haversine_km(lat1, lng1, lat2, lng2) -> float | None:
     """Distance in km between two lat/lng points. Returns None if coords missing."""
     if lat1 is None or lng1 is None or lat2 is None or lng2 is None:
         return None
     r = 6371.0
     dlat = radians(lat2 - lat1)
     dlng = radians(lng2 - lng1)
-    a = (
-        sin(dlat / 2) ** 2
-        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
-    )
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
     return r * 2 * asin(sqrt(min(1.0, a)))
 
 
 async def serialize_profile(
     user: User,
-    is_online: Optional[bool] = None,
-    distance_km: Optional[float] = None,
+    is_online: bool | None = None,
+    distance_km: float | None = None,
 ) -> ProfileResponse:
     """Build a ProfileResponse from a User with profile/settings/photos/interests/prompts loaded."""
     if not user.profile:
@@ -50,8 +47,7 @@ async def serialize_profile(
         else []
     )
     approved_photos = [
-        await PhotoService.get_photo_url(p.url, p.status)
-        for p in approved_photos_raw
+        await PhotoService.get_photo_url(p.url, p.status) for p in approved_photos_raw
     ]
     main_photo_url = approved_photos[0] if approved_photos else None
     main_photo_thumb_url = (
@@ -92,7 +88,7 @@ async def serialize_profile(
             last_seen_at = user.last_seen_at.isoformat()
     elif resolved_online:
         if not hide_last_seen:
-            last_seen_at = datetime.now(timezone.utc).isoformat()
+            last_seen_at = datetime.now(UTC).isoformat()
 
     return ProfileResponse(
         id=user.id,
@@ -137,10 +133,10 @@ async def serialize_profile(
 
 async def serialize_card(
     user: User,
-    is_online: Optional[bool] = None,
-    distance_km: Optional[float] = None,
-    is_verified: Optional[bool] = None,
-    current_user_action: Optional[str] = None,
+    is_online: bool | None = None,
+    distance_km: float | None = None,
+    is_verified: bool | None = None,
+    current_user_action: str | None = None,
 ) -> CardProfileResponse:
     """Build a slim CardProfileResponse for discover/search list responses.
 

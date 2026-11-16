@@ -31,14 +31,13 @@ import argparse
 import asyncio
 import logging
 import sys
-from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.encryption import decrypt_with_secret, encrypt_with_secret
 from app.db.session import AsyncSessionLocal
 from app.models.message import Message
-from app.core.encryption import decrypt_with_secret, encrypt_with_secret
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +144,9 @@ async def run_rotation(
 ) -> None:
     label = DRY_RUN_BANNER if dry_run else "APPLY"
     logger.info("Starting ENCRYPTION_SECRET rotation [%s]", label)
-    logger.info("Old secret: %s*** (len=%d)", old_secret[:6], len(old_secret))
-    logger.info("New secret: %s*** (len=%d)", new_secret[:6], len(new_secret))
+    # Lengths only — even a 6-char prefix of a secret belongs nowhere in logs.
+    logger.info("Old secret: (len=%d)", len(old_secret))
+    logger.info("New secret: (len=%d)", len(new_secret))
 
     if dry_run and not dry_run:
         pass  # unreachable, kept for clarity
@@ -161,11 +161,7 @@ async def run_rotation(
         batch_num = 0
 
         while True:
-            stmt = (
-                select(Message)
-                .where(Message.chat_id.is_not(None))
-                .order_by(Message.id)
-            )
+            stmt = select(Message).where(Message.chat_id.is_not(None)).order_by(Message.id)
             if last_id is not None:
                 stmt = stmt.where(Message.id > last_id)
             stmt = stmt.limit(batch_size)
@@ -208,11 +204,15 @@ async def run_rotation(
     )
 
     if dry_run:
-        print(f"[DRY RUN] Would re-encrypt {total_re_encrypted} messages "
-              f"({total_skipped} skipped, {total_errors} errors)")
+        print(
+            f"[DRY RUN] Would re-encrypt {total_re_encrypted} messages "
+            f"({total_skipped} skipped, {total_errors} errors)"
+        )
     else:
-        print(f"Re-encrypted {total_re_encrypted} messages "
-              f"({total_skipped} skipped, {total_errors} errors)")
+        print(
+            f"Re-encrypted {total_re_encrypted} messages "
+            f"({total_skipped} skipped, {total_errors} errors)"
+        )
 
 
 def main() -> None:

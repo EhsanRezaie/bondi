@@ -1,13 +1,15 @@
-
 # tests/test_messages.py
-import pytest
-from httpx import AsyncClient
 import base64
+
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -47,10 +49,7 @@ COMPLETE_PROFILE_PAYLOAD_FEMALE = {
 
 
 async def register_and_get_headers(
-    client: AsyncClient,
-    phone: str,
-    complete_payload: dict,
-    mock_verification_code
+    client: AsyncClient, phone: str, complete_payload: dict, mock_verification_code
 ) -> tuple[dict, str]:
     """Register a user via phone OTP and return headers with user_id."""
     await mock_verification_code(phone, VALID_CODE)
@@ -76,8 +75,12 @@ async def load_profiles(client, db_session, ids):
 
 async def make_match(client, male_headers, female_id, female_headers, male_id):
     """Mutual like → start chat (auto-accepted) → return chat_id."""
-    await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
-    await client.post(SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers)
+    await client.post(
+        SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+    )
+    await client.post(
+        SWIPE_URL, json={"user_id": male_id, "direction": "like"}, headers=female_headers
+    )
     res = await client.post(
         CHATS_URL, json={"user_id": female_id, "content": "Hi!"}, headers=male_headers
     )
@@ -118,10 +121,16 @@ class TestMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("chat_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("chat_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("chat_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("chat_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -136,19 +145,25 @@ class TestMessages:
         assert data["id"] is not None
         assert data["chat_accepted"] == True
 
-    async def test_get_chat_history(
-        self, client: AsyncClient, mock_verification_code, db_session
-    ):
+    async def test_get_chat_history(self, client: AsyncClient, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("hist_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("hist_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("hist_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("hist_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Hello"}, headers=male_headers)
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Hello"}, headers=male_headers
+        )
 
         res = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         assert res.status_code == 200
@@ -161,15 +176,23 @@ class TestMessages:
     ):
         """Initiator can send at most 2 starter messages while chat is pending."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("pending_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("pending_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("pending_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("pending_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
 
         # One-sided like → chat created pending (initiator = male, 1 message sent).
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
         res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "First message"}, headers=male_headers
         )
@@ -179,29 +202,39 @@ class TestMessages:
 
         # 2nd initiator message (allowed).
         res2 = await client.post(
-            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Second message"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "Second message"},
+            headers=male_headers,
         )
         assert res2.status_code == 200
 
         # 3rd initiator message → blocked.
         res3 = await client.post(
-            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Third message"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "Third message"},
+            headers=male_headers,
         )
         assert res3.status_code == 403
         assert "must accept" in res3.json()["detail"]
 
-    async def test_accept_chat(
-        self, client: AsyncClient, mock_verification_code, db_session
-    ):
+    async def test_accept_chat(self, client: AsyncClient, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("acc_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("acc_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("acc_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("acc_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
         res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "Hi"}, headers=male_headers
         )
@@ -223,10 +256,16 @@ class TestMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("delme_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("delme_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("delme_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("delme_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -243,10 +282,16 @@ class TestMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("read_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("read_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("read_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("read_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -256,7 +301,9 @@ class TestMessages:
         )
         msg_id = msg_res.json()["id"]
 
-        res = await client.post(f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers)
+        res = await client.post(
+            f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers
+        )
         assert res.status_code == 200
 
         status_res = await client.get(f"{MESSAGES_URL}/{msg_id}/status", headers=male_headers)
@@ -271,10 +318,16 @@ class TestPhotoMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ph1_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ph1_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ph1_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ph1_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -294,14 +347,22 @@ class TestPhotoMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ph2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ph2_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ph2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ph2_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
         res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hey"}, headers=male_headers
         )
@@ -319,14 +380,22 @@ class TestPhotoMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ph3_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ph3_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ph3_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ph3_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
         res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "Hi"}, headers=male_headers
         )
@@ -345,10 +414,16 @@ class TestPhotoMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("pl_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("pl_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("pl_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("pl_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -370,10 +445,16 @@ class TestVoiceMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("vc_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("vc_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("vc_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("vc_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -393,14 +474,22 @@ class TestVoiceMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("vp_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("vp_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("vp_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("vp_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
 
-        await client.post(SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers)
+        await client.post(
+            SWIPE_URL, json={"user_id": female_id, "direction": "like"}, headers=male_headers
+        )
         res = await client.post(
             CHATS_URL, json={"user_id": female_id, "content": "hey"}, headers=male_headers
         )
@@ -419,10 +508,16 @@ class TestVoiceMessages:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("vl_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("vl_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("vl_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("vl_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -444,10 +539,16 @@ class TestMediaInChatHistory:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("m1_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("m1_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("m1_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("m1_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -470,10 +571,16 @@ class TestMediaInChatHistory:
         self, client: AsyncClient, mock_verification_code, db_session
     ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("m2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("m2_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("m2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("m2_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -498,10 +605,16 @@ class TestMessageDelivery:
 
     async def test_mark_delivered_success(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("del_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("del_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("del_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("del_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -511,7 +624,9 @@ class TestMessageDelivery:
         )
         msg_id = msg_res.json()["id"]
 
-        res = await client.post(f"{MESSAGES_URL}/delivered", json={"message_ids": [msg_id]}, headers=female_headers)
+        res = await client.post(
+            f"{MESSAGES_URL}/delivered", json={"message_ids": [msg_id]}, headers=female_headers
+        )
         assert res.status_code == 200
         assert "1 messages marked as delivered" in res.json()["message"]
 
@@ -525,10 +640,16 @@ class TestMessageDelivery:
     async def test_mark_read_success(self, client, mock_verification_code, db_session):
         """Marking a message read flips is_read and read_at for the receiver."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("markread_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("markread_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("markread_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("markread_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -538,7 +659,9 @@ class TestMessageDelivery:
         )
         msg_id = msg_res.json()["id"]
 
-        res = await client.post(f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers)
+        res = await client.post(
+            f"{MESSAGES_URL}/read", json={"message_ids": [msg_id]}, headers=female_headers
+        )
         assert res.status_code == 200
         assert "messages marked as read" in res.json()["message"]
 
@@ -553,10 +676,16 @@ class TestMessageStatus:
 
     async def test_message_status_shape(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("stat_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("stat_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("stat_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("stat_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -578,10 +707,16 @@ class TestMessageStatus:
 
     async def test_message_status_unauthorized(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("status2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("status2_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("status2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("status2_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -600,31 +735,49 @@ class TestMessageDeleteForEveryone:
 
     async def test_delete_message_for_everyone(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("delall_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("delall_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("delall_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("delall_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Delete for everyone"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "Delete for everyone"},
+            headers=male_headers,
         )
         msg_id = msg_res.json()["id"]
 
-        res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=male_headers)
+        res = await client.delete(
+            f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=male_headers
+        )
         assert res.status_code == 200
 
         history = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         assert not any(m["id"] == msg_id for m in history.json()["messages"])
 
-    async def test_delete_message_for_everyone_non_sender(self, client, mock_verification_code, db_session):
+    async def test_delete_message_for_everyone_non_sender(
+        self, client, mock_verification_code, db_session
+    ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("delns_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("delns_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("delns_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("delns_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -634,19 +787,30 @@ class TestMessageDeleteForEveryone:
         )
         msg_id = msg_res.json()["id"]
 
-        res = await client.delete(f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=female_headers)
+        res = await client.delete(
+            f"{MESSAGES_URL}/{msg_id}?delete_for=everyone", headers=female_headers
+        )
         assert res.status_code == 400
 
     async def test_delete_message_not_a_member(self, client, mock_verification_code, db_session):
         """A non-participant cannot delete someone else's message."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("delnm_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("delnm_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("delnm_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("delnm_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         third_headers, _ = await register_and_get_headers(
-            client, _phone("delnm_third@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("delnm_third@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -666,22 +830,33 @@ class TestForwardMessage:
 
     async def test_forward_message_success(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("fwd_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("fwd_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("fwd_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwd_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{chat1}/text", json={"content": "Forward this message"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat1}/text",
+            json={"content": "Forward this message"},
+            headers=male_headers,
         )
         msg_id = msg_res.json()["id"]
 
         # Second chat to forward INTO (any active chat the user belongs to).
         f2_headers, f2_id = await register_and_get_headers(
-            client, _phone("fwd_female2@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwd_female2@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, f2_id])
         chat2 = await make_match(client, male_headers, f2_id, f2_headers, male_id)
@@ -701,17 +876,26 @@ class TestForwardMessage:
 
     async def test_forward_to_nonexistent_chat(self, client, mock_verification_code, db_session):
         from uuid import uuid4
+
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("fwerr_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("fwerr_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("fwerr_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwerr_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         msg_res = await client.post(
-            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Forward error"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "Forward error"},
+            headers=male_headers,
         )
         msg_id = msg_res.json()["id"]
 
@@ -724,15 +908,23 @@ class TestForwardMessage:
 
     async def test_forward_to_chat_not_a_member(self, client, mock_verification_code, db_session):
         """Forwarding into a chat the user does not belong to → 400."""
-        from uuid import uuid4
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("fwnm_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("fwnm_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("fwnm_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwnm_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         other_headers, other_id = await register_and_get_headers(
-            client, _phone("fwnm_other@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwnm_other@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id, other_id])
         chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -755,13 +947,22 @@ class TestForwardMessage:
     async def test_forward_message_not_yours(self, client, mock_verification_code, db_session):
         """Forwarding a message you are neither sender nor receiver of → 400."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("fwnt_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("fwnt_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("fwnt_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwnt_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         third_headers, third_id = await register_and_get_headers(
-            client, _phone("fwnt_third@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("fwnt_third@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id, third_id])
         chat1 = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -786,19 +987,29 @@ class TestForwardMessage:
 class TestCursorPagination:
     """Test cursor-based pagination with before parameter."""
 
-    async def test_cursor_pagination_returns_older_messages(self, client, mock_verification_code, db_session):
+    async def test_cursor_pagination_returns_older_messages(
+        self, client, mock_verification_code, db_session
+    ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("cur1_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("cur1_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("cur1_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("cur1_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         for i in range(5):
             await client.post(
-                f"{MESSAGES_URL}/{chat_id}/text", json={"content": f"Message {i}"}, headers=male_headers
+                f"{MESSAGES_URL}/{chat_id}/text",
+                json={"content": f"Message {i}"},
+                headers=male_headers,
             )
 
         full = await client.get(f"{MESSAGES_URL}/{chat_id}?limit=5", headers=male_headers)
@@ -813,17 +1024,27 @@ class TestCursorPagination:
         for msg in cursor_res.json()["messages"]:
             assert msg["sent_at"] < cursor
 
-    async def test_cursor_pagination_with_no_older_messages(self, client, mock_verification_code, db_session):
+    async def test_cursor_pagination_with_no_older_messages(
+        self, client, mock_verification_code, db_session
+    ):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("cur2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("cur2_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("cur2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("cur2_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
-        await client.post(f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Only message"}, headers=male_headers)
+        await client.post(
+            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Only message"}, headers=male_headers
+        )
 
         res = await client.get(
             f"{MESSAGES_URL}/{chat_id}?before=2000-01-01T00:00:00Z&limit=10", headers=male_headers
@@ -837,16 +1058,24 @@ class TestSendResponseContract:
 
     async def test_send_text_returns_full_message(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ct_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ct_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ct_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ct_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
 
         res = await client.post(
-            f"{MESSAGES_URL}/{chat_id}/text", json={"content": "Contract hello"}, headers=male_headers
+            f"{MESSAGES_URL}/{chat_id}/text",
+            json={"content": "Contract hello"},
+            headers=male_headers,
         )
         assert res.status_code == 200
         data = res.json()
@@ -864,7 +1093,10 @@ class TestChatMembership:
 
     async def test_send_text_to_nonexistent_chat(self, client, mock_verification_code):
         male_headers, _ = await register_and_get_headers(
-            client, _phone("nx_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("nx_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         res = await client.post(
             f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000aaa/text",
@@ -877,13 +1109,22 @@ class TestChatMembership:
     async def test_send_text_not_a_member(self, client, mock_verification_code, db_session):
         """A third user cannot send messages in someone else's chat."""
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("nmb_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("nmb_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("nmb_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("nmb_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         third_headers, _ = await register_and_get_headers(
-            client, _phone("nmb_third@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("nmb_third@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -898,13 +1139,22 @@ class TestChatMembership:
 
     async def test_get_history_not_a_member(self, client, mock_verification_code, db_session):
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("nh_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("nh_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("nh_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("nh_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         third_headers, _ = await register_and_get_headers(
-            client, _phone("nh_third@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("nh_third@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -914,7 +1164,10 @@ class TestChatMembership:
 
     async def test_send_photo_to_nonexistent_chat(self, client, mock_verification_code):
         male_headers, _ = await register_and_get_headers(
-            client, _phone("nxp_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("nxp_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         res = await client.post(
             f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000bbb/photo",
@@ -925,7 +1178,10 @@ class TestChatMembership:
 
     async def test_message_status_nonexistent(self, client, mock_verification_code):
         male_headers, _ = await register_and_get_headers(
-            client, _phone("nxs_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("nxs_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         res = await client.get(
             f"{MESSAGES_URL}/00000000-0000-0000-0000-000000000ccc/status",
@@ -937,18 +1193,22 @@ class TestChatMembership:
 class TestChatListRealTime:
     """Real-time chat_updated events on the recipient's personal channel."""
 
-    async def test_chat_updated_on_text(
-        self, client, mock_verification_code, db_session
-    ):
+    async def test_chat_updated_on_text(self, client, mock_verification_code, db_session):
         from app.api.v1.endpoints.messages import websocket_manager as ws_mock
 
         ws_mock.send_personal_message.reset_mock()
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("rt_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("rt_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("rt_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("rt_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -971,18 +1231,22 @@ class TestChatListRealTime:
         assert data["last_message"]["message_type"] == "text"
         assert data["unread_count"] == 2
 
-    async def test_chat_updated_on_photo(
-        self, client, mock_verification_code, db_session
-    ):
+    async def test_chat_updated_on_photo(self, client, mock_verification_code, db_session):
         from app.api.v1.endpoints.messages import websocket_manager as ws_mock
 
         ws_mock.send_personal_message.reset_mock()
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("rtp_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("rtp_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("rtp_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("rtp_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1000,18 +1264,22 @@ class TestChatListRealTime:
         assert payload["type"] == "chat_updated"
         assert payload["data"]["last_message"]["message_type"] == "photo"
 
-    async def test_chat_updated_on_voice(
-        self, client, mock_verification_code, db_session
-    ):
+    async def test_chat_updated_on_voice(self, client, mock_verification_code, db_session):
         from app.api.v1.endpoints.messages import websocket_manager as ws_mock
 
         ws_mock.send_personal_message.reset_mock()
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("rtv_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("rtv_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("rtv_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("rtv_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1037,10 +1305,16 @@ class TestChatListRealTime:
         ws_mock.send_personal_message.reset_mock()
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("rtu_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("rtu_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("rtu_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("rtu_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1057,21 +1331,29 @@ class TestChatListRealTime:
         last = calls[-1].args[1]["data"]
         assert last["unread_count"] == 3
 
+
 # =============================================================================
 # client_id round-trip (optimistic-send dedup)
 # =============================================================================
 
-class TestClientIdRoundTrip:
 
+class TestClientIdRoundTrip:
     async def test_text_send_echoes_client_id(self, client, mock_verification_code, db_session):
         import uuid
+
         from app.models.message import Message
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("cid_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("cid_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("cid_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("cid_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1087,28 +1369,38 @@ class TestClientIdRoundTrip:
 
         hist = await client.get(f"{MESSAGES_URL}/{chat_id}", headers=male_headers)
         row = next(
-            m for m in hist.json()["messages"]
+            m
+            for m in hist.json()["messages"]
             if m["message_type"] == "text" and m["content"] == "dedup me"
         )
         assert row["client_id"] == str(cid)
 
         db_row = (
-            await db_session.execute(
-                select(Message).where(
-                    Message.chat_id == chat_id, Message.client_id == cid
+            (
+                await db_session.execute(
+                    select(Message).where(Message.chat_id == chat_id, Message.client_id == cid)
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert db_row is not None
         assert str(db_row.client_id) == str(cid)
 
     async def test_photo_send_echoes_client_id(self, client, mock_verification_code, db_session):
         import uuid
+
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("cidp_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("cidp_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("cidp_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("cidp_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1128,16 +1420,24 @@ class TestClientIdRoundTrip:
 # Chat media: store key, re-sign at read time
 # =============================================================================
 
-class TestMediaReSign:
 
-    async def test_photo_stores_key_returns_signed_url(self, client, mock_verification_code, db_session):
+class TestMediaReSign:
+    async def test_photo_stores_key_returns_signed_url(
+        self, client, mock_verification_code, db_session
+    ):
         from app.models.message import Message
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ms1_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ms1_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ms1_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ms1_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1156,12 +1456,16 @@ class TestMediaReSign:
 
         # ...but the DB row stores the object key (no expiry).
         db_row = (
-            await db_session.execute(
-                select(Message).where(
-                    Message.chat_id == chat_id, Message.message_type == "photo"
+            (
+                await db_session.execute(
+                    select(Message).where(
+                        Message.chat_id == chat_id, Message.message_type == "photo"
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert db_row is not None
         assert db_row.media_url.startswith("chat/photos/")
 
@@ -1174,10 +1478,16 @@ class TestMediaReSign:
         from app.models.message import Message
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("ms2_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("ms2_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("ms2_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("ms2_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1192,26 +1502,31 @@ class TestMediaReSign:
         assert res.json()["message"]["media_url"].startswith("http")
 
         db_row = (
-            await db_session.execute(
-                select(Message).where(
-                    Message.chat_id == chat_id, Message.message_type == "voice"
+            (
+                await db_session.execute(
+                    select(Message).where(
+                        Message.chat_id == chat_id, Message.message_type == "voice"
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert db_row is not None
         assert db_row.media_url.startswith("chat/voice/")
 
 
 class TestMediaResolve:
-
     async def test_resolve_key_returns_signed_url(self):
         from app.services.media_service import MediaService
+
         url = await MediaService.resolve_media_url("chat/photos/c1/m1.jpg")
         assert url.startswith("http")
         assert "X-Amz-Signature" in url or "Signature" in url
 
     async def test_resolve_legacy_url_extracts_key_and_resigns(self):
         from app.services.media_service import MediaService
+
         legacy = "http://localhost:9090/photos-private/chat/voice/c1/m1.mp3?X-Amz-Signature=stale"
         url = await MediaService.resolve_media_url(legacy)
         assert url.startswith("http")
@@ -1219,6 +1534,7 @@ class TestMediaResolve:
 
     async def test_resolve_none_returns_none(self):
         from app.services.media_service import MediaService
+
         assert await MediaService.resolve_media_url(None) is None
 
     async def test_resolve_caches_url(self):
@@ -1236,10 +1552,13 @@ class TestMediaResolve:
 
 
 class TestBackfillMediaUrls:
-
     async def test_extract_key(self):
         from scripts.backfill_chat_media_urls import extract_key
-        assert extract_key("http://minio:9000/photos-private/chat/photos/c1/m1.jpg?x=1") == "chat/photos/c1/m1.jpg"
+
+        assert (
+            extract_key("http://minio:9000/photos-private/chat/photos/c1/m1.jpg?x=1")
+            == "chat/photos/c1/m1.jpg"
+        )
         assert extract_key("chat/photos/c1/m1.jpg") == "chat/photos/c1/m1.jpg"
 
     async def test_backfill_converts_legacy_rows(self, client, mock_verification_code, db_session):
@@ -1247,10 +1566,16 @@ class TestBackfillMediaUrls:
         from scripts.backfill_chat_media_urls import backfill
 
         male_headers, male_id = await register_and_get_headers(
-            client, _phone("bk_male@example.com"), COMPLETE_PROFILE_PAYLOAD_MALE, mock_verification_code
+            client,
+            _phone("bk_male@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_MALE,
+            mock_verification_code,
         )
         female_headers, female_id = await register_and_get_headers(
-            client, _phone("bk_female@example.com"), COMPLETE_PROFILE_PAYLOAD_FEMALE, mock_verification_code
+            client,
+            _phone("bk_female@example.com"),
+            COMPLETE_PROFILE_PAYLOAD_FEMALE,
+            mock_verification_code,
         )
         await load_profiles(client, db_session, [male_id, female_id])
         chat_id = await make_match(client, male_headers, female_id, female_headers, male_id)
@@ -1263,12 +1588,16 @@ class TestBackfillMediaUrls:
         )
 
         db_row = (
-            await db_session.execute(
-                select(Message).where(
-                    Message.chat_id == chat_id, Message.message_type == "photo"
+            (
+                await db_session.execute(
+                    select(Message).where(
+                        Message.chat_id == chat_id, Message.message_type == "photo"
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         key = db_row.media_url
         assert key.startswith("chat/photos/")
 

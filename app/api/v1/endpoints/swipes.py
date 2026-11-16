@@ -1,24 +1,23 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
-from sqlalchemy.orm import selectinload
-from datetime import date
 from uuid import UUID
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.cache import (
+    cache_delete,
+    get_swiped_ids,
+    invalidate_discover_deck,
+    key_daily_limits,
+    record_swipe_cache,
+    remove_from_discover_deck,
+)
 from app.core.config import settings
-from app.services.reward_service import RewardService
-from app.services.notification_service import NotificationService
-from app.db.session import get_session
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.swipe import Swipe
-from app.models.match import Match
-from app.models.message import Message
-from app.models.block import Block
-from app.services.photo_service import PhotoService
-from app.models.photo import Photo
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.pagination import (
     decode_cursor,
     encode_cursor,
@@ -26,13 +25,21 @@ from app.core.pagination import (
     parse_datetime_key,
 )
 from app.core.redis import redis_client
-from app.core.cache import record_swipe_cache, get_swiped_ids
+from app.db.session import get_session
+from app.models.block import Block
+from app.models.match import Match
+from app.models.message import Message
+from app.models.photo import Photo
+from app.models.swipe import Swipe
+from app.models.user import User
+from app.models.user_profile import UserProfile
 from app.schemas.discover import SwipeRequest, SwipeResponse
-from app.schemas.swipe import SwipeStatsResponse, LikedUsersResponse, LikedUserResponse
+from app.schemas.swipe import LikedUsersResponse, SwipeStatsResponse
+from app.services.chat_service import pair_lock_key
+from app.services.notification_service import NotificationService
+from app.services.photo_service import PhotoService
+from app.services.reward_service import RewardService, utc_today
 from app.services.websocket_manager import websocket_manager
-
-from app.core.logging import get_logger
-from sqlalchemy.exc import IntegrityError
 
 logger = get_logger("swipes")
 
@@ -43,15 +50,33 @@ async def get_user_main_photo_url(session: AsyncSession, user_id: UUID) -> str |
     """Get user's main approved photo URL (resolved to full URL)"""
     result = await session.execute(
         select(Photo.url, Photo.status).where(
-            Photo.user_id == user_id,
-            Photo.is_main == True,
-            Photo.status == "approved"
+            Photo.user_id == user_id, Photo.is_main == True, Photo.status == "approved"
         )
     )
     row = result.one_or_none()
     if row:
         return await PhotoService.get_photo_url(row[0], row[1])
     return None
+
+
+async def get_main_photo_urls(
+    session: AsyncSession, user_ids: list[UUID]
+) -> dict[UUID, tuple[str, str]]:
+    """Main approved photo (raw url, status) per user — one query for the page.
+
+    `is_main` has a partial unique index per user, so at most one row each.
+    Used by list endpoints to avoid a per-row photo lookup (N+1).
+    """
+    rows = (
+        await session.execute(
+            select(Photo.user_id, Photo.url, Photo.status).where(
+                Photo.user_id.in_(user_ids),
+                Photo.is_main == True,
+                Photo.status == "approved",
+            )
+        )
+    ).all()
+    return {row[0]: (row[1], row[2]) for row in rows}
 
 
 async def _background_match_notification(
@@ -101,7 +126,9 @@ async def _background_match_notification(
             redis_client,
         )
     except Exception as e:
-        logger.error("bg_match_notification_failed", match_id=str(match_id), error=str(e), exc_info=True)
+        logger.error(
+            "bg_match_notification_failed", match_id=str(match_id), error=str(e), exc_info=True
+        )
 
 
 @router.post("", response_model=SwipeResponse)
@@ -115,7 +142,7 @@ async def swipe(
 ) -> SwipeResponse:
     """
     Swipe right (like) or left (pass) on a user.
-    
+
     Rules:
     1. Cannot swipe on yourself
     2. Cannot swipe twice on same user
@@ -123,55 +150,50 @@ async def swipe(
     4. Premium users: unlimited likes
     5. If both like each other → create match
     """
-    
+
     # Cannot swipe on yourself
     if body.user_id == current_user_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot swipe on yourself"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot swipe on yourself"
         )
-    
+
     # Load current user's profile (name, age, is_premium)
     profile_result = await session.execute(
         select(UserProfile).where(UserProfile.user_id == current_user_id)
     )
     current_profile = profile_result.scalar_one_or_none()
     if not current_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
+
     # Check if target user exists and is active
     result = await session.execute(
         select(User)
         .options(selectinload(User.profile))
-        .where(
-            User.id == body.user_id,
-            User.is_active == True
-        )
+        .where(User.id == body.user_id, User.is_active == True)
     )
     target_user = result.scalar_one_or_none()
-    
+
     if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Serialize all pair-state reads/writes for this user pair. Without this,
+    # two concurrent mutual likes (A→B and B→A) each run in READ COMMITTED
+    # isolation, neither sees the other's uncommitted swipe, and NO match is
+    # created even though both liked each other. The lock is transaction-
+    # scoped and released at commit; same pattern as POST /chats.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(pair_lock_key(current_user_id, body.user_id)))
+    )
     # Check if already swiped (DB check first so a direction change is allowed)
     existing_result = await session.execute(
-        select(Swipe).where(
-            Swipe.from_user == current_user_id,
-            Swipe.to_user == body.user_id
-        )
+        select(Swipe).where(Swipe.from_user == current_user_id, Swipe.to_user == body.user_id)
     )
     existing_swipe = existing_result.scalar_one_or_none()
 
     if existing_swipe and existing_swipe.direction == body.direction:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Already swiped {existing_swipe.direction} on this user"
+            detail=f"Already swiped {existing_swipe.direction} on this user",
         )
 
     # Redis fast path — only blocks brand-new duplicates. A prior swipe in the
@@ -181,8 +203,7 @@ async def swipe(
         swiped_ids = await get_swiped_ids(redis_client, current_user_id)
         if str(body.user_id) in swiped_ids:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Already swiped on this user"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Already swiped on this user"
             )
 
     # Re-swiping a user in a different direction (e.g. pass -> like after a
@@ -190,7 +211,7 @@ async def swipe(
     if existing_swipe:
         await session.delete(existing_swipe)
         await session.flush()
-    
+
     # Check daily like limit using RewardService
     reward_service = RewardService(session)
     likes_remaining = None
@@ -200,20 +221,24 @@ async def swipe(
         can_like = await reward_service.consume_like(current_user_id, current_profile.is_premium)
 
         if not can_like:
-            remaining = await reward_service.get_remaining_likes(current_user_id, current_profile.is_premium)
+            remaining = await reward_service.get_remaining_likes(
+                current_user_id, current_profile.is_premium
+            )
             if remaining == 0:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"Daily like limit reached ({settings.FREE_USER_DAILY_LIKES} per day). Watch an ad or upgrade to premium."
+                    detail=f"Daily like limit reached ({settings.FREE_USER_DAILY_LIKES} per day). Watch an ad or upgrade to premium.",
                 )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Daily like limit reached. Watch an ad or upgrade to premium."
+                    detail="Daily like limit reached. Watch an ad or upgrade to premium.",
                 )
 
     # Always return both remaining counts so the client stays in sync
-    likes_result = await reward_service.get_remaining_likes(current_user_id, current_profile.is_premium)
+    likes_result = await reward_service.get_remaining_likes(
+        current_user_id, current_profile.is_premium
+    )
     likes_remaining = likes_result if likes_result != -1 else None
 
     # Load full user for get_remaining_chats (needs user.profile)
@@ -223,7 +248,7 @@ async def swipe(
     current_user = user_result.scalar_one()
     chats_result = await reward_service.get_remaining_chats(current_user)
     chats_remaining = chats_result if chats_result != -1 else None
-    
+
     # Create swipe record
     new_swipe = Swipe(
         from_user=current_user_id,
@@ -235,24 +260,35 @@ async def swipe(
         await session.flush()
     except IntegrityError as e:
         await session.rollback()
-        logger.warning("swipe_duplicate", from_user=str(current_user_id), to_user=str(body.user_id), error=str(e), exc_info=True)
+        logger.warning(
+            "swipe_duplicate",
+            from_user=str(current_user_id),
+            to_user=str(body.user_id),
+            error=str(e),
+            exc_info=True,
+        )
+        # consume_like already incremented the daily counter in the rolled-back
+        # transaction and pushed that value to Redis. Drop the cached row so
+        # the next read recomputes from the DB (the like is NOT consumed — the
+        # swipe failed).
+        await cache_delete(redis_client, key_daily_limits(current_user_id, utc_today().isoformat()))
         existing = await session.execute(
-            select(Swipe).where(
-                Swipe.from_user == current_user_id,
-                Swipe.to_user == body.user_id
-            )
+            select(Swipe).where(Swipe.from_user == current_user_id, Swipe.to_user == body.user_id)
         )
         dup = existing.scalar_one_or_none()
         if dup:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Already swiped {dup.direction} on this user"
+                detail=f"Already swiped {dup.direction} on this user",
             )
         raise
 
     # Record swipe in Redis set for fast discover exclusion
     await record_swipe_cache(redis_client, current_user_id, body.user_id)
-    
+    # Drop the swiped user from the swiper's cached discover deck so they
+    # never reappear mid-TTL (refill excludes them via the swiped set anyway).
+    await remove_from_discover_deck(redis_client, current_user_id, body.user_id)
+
     # Send like notification (only if recipient is premium)
     if body.direction == "like":
         notification_service = NotificationService(session)
@@ -270,22 +306,22 @@ async def swipe(
             target_user_id=target_user.id,
             target_name=target_user.profile.name if target_user.profile else "Someone",
         )
-    
+
     # Check for match (if both liked each other)
     matched = False
     match_id = None
-    
+
     if body.direction == "like":
         # Check if target user liked current user
         mutual_result = await session.execute(
             select(Swipe).where(
                 Swipe.from_user == body.user_id,
                 Swipe.to_user == current_user_id,
-                Swipe.direction == "like"
+                Swipe.direction == "like",
             )
         )
         mutual_swipe = mutual_result.scalar_one_or_none()
-        
+
         if mutual_swipe:
             # Create the match inside a SAVEPOINT so a concurrent duplicate
             # (unique constraint) rolls back only this insert — not the swipe
@@ -345,15 +381,20 @@ async def swipe(
             elif existing_match_id is not None:
                 matched = True
                 match_id = existing_match_id
-    
+
+    if matched:
+        # A match removes both users from each other's candidate pools —
+        # their cached discover decks must not keep showing each other.
+        await invalidate_discover_deck(redis_client, current_user_id)
+        await invalidate_discover_deck(redis_client, body.user_id)
     await session.commit()
-    
+
     return SwipeResponse(
         matched=matched,
         match_id=match_id,
         likes_remaining_today=likes_remaining,
         chats_remaining_today=chats_remaining,
-        message="Swiped successfully" + (" You matched!" if matched else "")
+        message="Swiped successfully" + (" You matched!" if matched else ""),
     )
 
 
@@ -365,46 +406,37 @@ async def get_swipe_stats(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Get swipe statistics for current user"""
-    
+
     reward_service = RewardService(session)
     stats = await reward_service.get_daily_stats(current_user)
-    
+
     # Count total likes sent
     total_likes_result = await session.execute(
-        select(func.count()).where(
-            Swipe.from_user == current_user.id,
-            Swipe.direction == "like"
-        )
+        select(func.count()).where(Swipe.from_user == current_user.id, Swipe.direction == "like")
     )
     total_likes = total_likes_result.scalar()
-    
+
     # Count total passes sent
     total_passes_result = await session.execute(
-        select(func.count()).where(
-            Swipe.from_user == current_user.id,
-            Swipe.direction == "pass"
-        )
+        select(func.count()).where(Swipe.from_user == current_user.id, Swipe.direction == "pass")
     )
     total_passes = total_passes_result.scalar()
-    
+
     # Count matches
     matches_result = await session.execute(
         select(func.count()).where(
-            or_(
-                Match.user1_id == current_user.id,
-                Match.user2_id == current_user.id
-            ),
-            Match.is_active == True
+            or_(Match.user1_id == current_user.id, Match.user2_id == current_user.id),
+            Match.is_active == True,
         )
     )
     total_matches = matches_result.scalar()
-    
+
     # Count total messages sent
     total_messages_result = await session.execute(
         select(func.count()).where(Message.sender_id == current_user.id)
     )
     total_messages = total_messages_result.scalar()
-    
+
     return {
         "daily_likes_remaining": stats["likes_remaining_today"],
         "is_unlimited": stats["is_premium"],
@@ -429,38 +461,34 @@ async def get_liked_users(
 ) -> LikedUsersResponse:
     """
     Get paginated list of users the current user has liked (swiped right on).
-    
+
     Returns users sorted by most recent swipe first.
     Excludes blocked users and inactive users.
     """
-    
+
     # Users this user has liked
-    liked_user_ids = select(Swipe.to_user).where(
-        Swipe.from_user == current_user_id,
-        Swipe.direction == "like"
-    ).subquery()
-    
+    liked_user_ids = (
+        select(Swipe.to_user)
+        .where(Swipe.from_user == current_user_id, Swipe.direction == "like")
+        .subquery()
+    )
+
     # Blocked by current user
-    blocked_by_me = select(Block.blocked_id).where(
-        Block.blocker_id == current_user_id
-    ).subquery()
-    
+    blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == current_user_id).subquery()
+
     # Users who blocked current user
-    blocked_me = select(Block.blocker_id).where(
-        Block.blocked_id == current_user_id
-    ).subquery()
-    
+    blocked_me = select(Block.blocker_id).where(Block.blocked_id == current_user_id).subquery()
+
     # Get total count first — plain count, no profile join, no ORDER BY
     total = await session.scalar(
-        select(func.count(User.id))
-        .where(
+        select(func.count(User.id)).where(
             User.id.in_(select(liked_user_ids.c.to_user)),
             User.is_active == True,
             User.id.not_in(select(blocked_by_me.c.blocked_id)),
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
     )
-    
+
     # Get paginated results with profile data and swipe timestamp
     query = (
         select(User, UserProfile, Swipe.created_at, Swipe.id)
@@ -482,9 +510,7 @@ async def get_liked_users(
         raw_key, last_id = decode_cursor(cursor)
         cursor_key = parse_datetime_key(raw_key)
         if cursor_key is not None and last_id is not None:
-            query = query.where(
-                keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id)
-            )
+            query = query.where(keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id))
             used_cursor = True
     if not used_cursor:
         query = query.offset(offset)
@@ -495,6 +521,7 @@ async def get_liked_users(
 
     # Resolve online status for the page (bulk Redis lookup)
     from app.services.websocket_manager import websocket_manager
+
     online_map = {}
     if rows:
         online_map = await websocket_manager.get_online_status_bulk(
@@ -502,22 +529,26 @@ async def get_liked_users(
         )
 
     users = []
+    main_photos = await get_main_photo_urls(session, [row[0].id for row in rows]) if rows else {}
     for user, profile, swiped_at, _swipe_id in rows:
         # Get main photo URL
-        main_photo_url = await get_user_main_photo_url(session, user.id)
-        
-        users.append({
-            "id": user.id,
-            "name": profile.name,
-            "age": profile.age,
-            "main_photo_url": main_photo_url,
-            "is_premium": profile.is_premium,
-            "is_verified": user.phone_verified if user.phone_verified is not None else False,
-            "is_online": online_map.get(str(user.id), False),
-            "last_seen_at": user.last_seen_at,
-            "swiped_at": swiped_at,
-        })
-    
+        photo = main_photos.get(user.id)
+        main_photo_url = await PhotoService.get_photo_url(photo[0], photo[1]) if photo else None
+
+        users.append(
+            {
+                "id": user.id,
+                "name": profile.name,
+                "age": profile.age,
+                "main_photo_url": main_photo_url,
+                "is_premium": profile.is_premium,
+                "is_verified": user.phone_verified if user.phone_verified is not None else False,
+                "is_online": online_map.get(str(user.id), False),
+                "last_seen_at": user.last_seen_at,
+                "swiped_at": swiped_at,
+            }
+        )
+
     next_offset = offset + limit if offset + limit < total else None
     next_cursor = None
     if len(rows) == limit:
@@ -544,46 +575,40 @@ async def get_likers(
 ) -> LikedUsersResponse:
     """
     Get paginated list of users who liked (swiped right on) the current user.
-    
+
     Excludes:
     - Users already matched with
     - Blocked users (both directions)
     - Inactive users
-    
+
     Returns users sorted by most recent like first.
     """
-    
+
     # Users who liked current user
-    liker_ids = select(Swipe.from_user).where(
-        Swipe.to_user == current_user_id,
-        Swipe.direction == "like"
-    ).subquery()
-    
+    liker_ids = (
+        select(Swipe.from_user)
+        .where(Swipe.to_user == current_user_id, Swipe.direction == "like")
+        .subquery()
+    )
+
     # Matched users (both directions)
     matched_as_user1 = select(Match.user2_id).where(
-        Match.user1_id == current_user_id,
-        Match.is_active == True
+        Match.user1_id == current_user_id, Match.is_active == True
     )
     matched_as_user2 = select(Match.user1_id).where(
-        Match.user2_id == current_user_id,
-        Match.is_active == True
+        Match.user2_id == current_user_id, Match.is_active == True
     )
     matched_user_ids = matched_as_user1.union(matched_as_user2).subquery()
-    
+
     # Blocked by current user
-    blocked_by_me = select(Block.blocked_id).where(
-        Block.blocker_id == current_user_id
-    ).subquery()
-    
+    blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == current_user_id).subquery()
+
     # Users who blocked current user
-    blocked_me = select(Block.blocker_id).where(
-        Block.blocked_id == current_user_id
-    ).subquery()
-    
+    blocked_me = select(Block.blocker_id).where(Block.blocked_id == current_user_id).subquery()
+
     # Get total count — plain count, no profile join, no ORDER BY
     total = await session.scalar(
-        select(func.count(User.id))
-        .where(
+        select(func.count(User.id)).where(
             User.id.in_(select(liker_ids.c.from_user)),
             User.is_active == True,
             User.id.not_in(select(matched_user_ids.c.user2_id)),
@@ -591,7 +616,7 @@ async def get_likers(
             User.id.not_in(select(blocked_me.c.blocker_id)),
         )
     )
-    
+
     # Get paginated results
     query = (
         select(User, UserProfile, Swipe.created_at, Swipe.id)
@@ -614,9 +639,7 @@ async def get_likers(
         raw_key, last_id = decode_cursor(cursor)
         cursor_key = parse_datetime_key(raw_key)
         if cursor_key is not None and last_id is not None:
-            query = query.where(
-                keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id)
-            )
+            query = query.where(keyset_desc(Swipe.created_at, Swipe.id, cursor_key, last_id))
             used_cursor = True
     if not used_cursor:
         query = query.offset(offset)
@@ -627,6 +650,7 @@ async def get_likers(
 
     # Resolve online status for the page (bulk Redis lookup)
     from app.services.websocket_manager import websocket_manager
+
     online_map = {}
     if rows:
         online_map = await websocket_manager.get_online_status_bulk(
@@ -634,21 +658,25 @@ async def get_likers(
         )
 
     users = []
+    main_photos = await get_main_photo_urls(session, [row[0].id for row in rows]) if rows else {}
     for user, profile, swiped_at, _swipe_id in rows:
-        main_photo_url = await get_user_main_photo_url(session, user.id)
-        
-        users.append({
-            "id": user.id,
-            "name": profile.name,
-            "age": profile.age,
-            "main_photo_url": main_photo_url,
-            "is_premium": profile.is_premium,
-            "is_verified": user.phone_verified if user.phone_verified is not None else False,
-            "is_online": online_map.get(str(user.id), False),
-            "last_seen_at": user.last_seen_at,
-            "swiped_at": swiped_at,
-        })
-    
+        photo = main_photos.get(user.id)
+        main_photo_url = await PhotoService.get_photo_url(photo[0], photo[1]) if photo else None
+
+        users.append(
+            {
+                "id": user.id,
+                "name": profile.name,
+                "age": profile.age,
+                "main_photo_url": main_photo_url,
+                "is_premium": profile.is_premium,
+                "is_verified": user.phone_verified if user.phone_verified is not None else False,
+                "is_online": online_map.get(str(user.id), False),
+                "last_seen_at": user.last_seen_at,
+                "swiped_at": swiped_at,
+            }
+        )
+
     next_offset = offset + limit if offset + limit < total else None
     next_cursor = None
     if len(rows) == limit:

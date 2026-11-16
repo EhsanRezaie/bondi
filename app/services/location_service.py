@@ -6,10 +6,11 @@ Reverse geocoding is fully OFFLINE: GPS coordinates are resolved against the
 bundled city/state/country centroids (haversine nearest-neighbour) so there
 are no external API calls, API keys, rate limits or provider blocks.
 """
+
 import json
 import math
 from functools import lru_cache
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
@@ -20,12 +21,13 @@ logger = get_logger("location_service")
 
 # Import countrystatecity-countries
 from countrystatecity_countries import (
-    get_countries as _get_countries,
-    get_country_by_code,
-    get_states_of_country,
-    get_cities_of_state,
     get_cities_of_country,
+    get_cities_of_state,
+    get_states_of_country,
     search_cities,
+)
+from countrystatecity_countries import (
+    get_countries as _get_countries,
 )
 
 REVERSE_GC_CACHE_TTL = 60 * 60 * 24
@@ -34,6 +36,7 @@ REVERSE_GC_CACHE_TTL = 60 * 60 * 24
 # ============================================================================
 # Helper: Convert library objects to dicts
 # ============================================================================
+
 
 def _country_to_dict(country) -> dict:
     """Convert Country object to dictionary."""
@@ -83,15 +86,13 @@ def _city_to_dict(city) -> dict:
 # Country Functions
 # ============================================================================
 
+
 @lru_cache(maxsize=1)
 def _countries_cached() -> list[dict]:
     """Get all countries with their details."""
     try:
         countries = _get_countries()
-        return sorted(
-            [_country_to_dict(c) for c in countries],
-            key=lambda c: c["name"]
-        )
+        return sorted([_country_to_dict(c) for c in countries], key=lambda c: c["name"])
     except Exception as e:
         logger.error("Error loading countries", error=str(e))
         return []
@@ -102,7 +103,7 @@ def get_countries() -> list[dict]:
     return _countries_cached()
 
 
-def get_country_by_iso2(iso2: str) -> Optional[dict]:
+def get_country_by_iso2(iso2: str) -> dict | None:
     """Get country by ISO2 code."""
     iso2 = iso2.upper()
     for c in get_countries():
@@ -115,15 +116,13 @@ def get_country_by_iso2(iso2: str) -> Optional[dict]:
 # State/Province Functions
 # ============================================================================
 
+
 @lru_cache(maxsize=256)
 def _states_cached(country_iso2: str) -> list[dict]:
     """Get all states/provinces for a country."""
     try:
         states = get_states_of_country(country_iso2.upper())
-        return sorted(
-            [_state_to_dict(s) for s in states],
-            key=lambda s: s["name"]
-        )
+        return sorted([_state_to_dict(s) for s in states], key=lambda s: s["name"])
     except Exception as e:
         logger.error("Error loading states", country=country_iso2, error=str(e))
         return []
@@ -134,7 +133,7 @@ def get_states(country_iso2: str) -> list[dict]:
     return _states_cached(country_iso2.upper())
 
 
-def get_state_by_code(country_iso2: str, code: str) -> Optional[dict]:
+def get_state_by_code(country_iso2: str, code: str) -> dict | None:
     """Get state by code."""
     code = code.upper()
     for s in get_states(country_iso2):
@@ -143,7 +142,7 @@ def get_state_by_code(country_iso2: str, code: str) -> Optional[dict]:
     return None
 
 
-def get_state_by_name(country_iso2: str, name: str) -> Optional[dict]:
+def get_state_by_name(country_iso2: str, name: str) -> dict | None:
     """Get state by name (case-insensitive)."""
     name_lower = name.lower().strip()
     for s in get_states(country_iso2):
@@ -156,19 +155,20 @@ def get_state_by_name(country_iso2: str, name: str) -> Optional[dict]:
 # City Functions
 # ============================================================================
 
+
 @lru_cache(maxsize=256)
 def _cities_by_state_cached(country_iso2: str, state_code: str) -> list[dict]:
     """Get all cities for a specific state/province."""
     try:
         cities = get_cities_of_state(country_iso2.upper(), state_code.upper())
-        
+
         if not cities:
             return []
-        
+
         result = [_city_to_dict(c) for c in cities]
         result.sort(key=lambda c: (-(c["population"] or 0) if c["population"] else 0, c["name"]))
         return result
-        
+
     except Exception as e:
         logger.error("Error loading cities for state", state_code=state_code, error=str(e))
         return []
@@ -179,38 +179,32 @@ def _cities_by_country_cached(country_iso2: str) -> list[dict]:
     """Get all cities for a country (cached)."""
     try:
         cities = get_cities_of_country(country_iso2.upper())
-        
+
         if not cities:
             return []
-        
+
         result = [_city_to_dict(c) for c in cities]
         result.sort(key=lambda c: (-(c["population"] or 0) if c["population"] else 0, c["name"]))
         return result
-        
+
     except Exception as e:
         logger.error("Error loading cities for country", country=country_iso2, error=str(e))
         return []
 
 
-def get_cities(
-    country_iso2: str,
-    state_code: Optional[str] = None
-) -> list[dict]:
+def get_cities(country_iso2: str, state_code: str | None = None) -> list[dict]:
     """
     Get cities for a country, optionally filtered by state/province.
     """
     country_iso2 = country_iso2.upper()
-    
+
     if state_code:
         return _cities_by_state_cached(country_iso2, state_code.upper())
     else:
         return _cities_by_country_cached(country_iso2)
 
 
-def get_cities_by_state_name(
-    country_iso2: str,
-    state_name: str
-) -> list[dict]:
+def get_cities_by_state_name(country_iso2: str, state_name: str) -> list[dict]:
     """
     Get cities for a state/province by name.
     """
@@ -222,18 +216,14 @@ def get_cities_by_state_name(
 
 
 def search_cities_by_name(
-    country_iso2: str,
-    query: str,
-    state_code: Optional[str] = None
+    country_iso2: str, query: str, state_code: str | None = None
 ) -> list[dict]:
     """
     Search cities by name.
     """
     try:
         results = search_cities(
-            country_iso2.upper(),
-            state_code.upper() if state_code else None,
-            query
+            country_iso2.upper(), state_code.upper() if state_code else None, query
         )
         return [_city_to_dict(c) for c in results]
     except Exception as e:
@@ -242,10 +232,8 @@ def search_cities_by_name(
 
 
 def get_city_centroid(
-    country_iso2: str,
-    city_name: str,
-    state_code: Optional[str] = None
-) -> Optional[dict]:
+    country_iso2: str, city_name: str, state_code: str | None = None
+) -> dict | None:
     """
     Get centroid coordinates for a city.
     """
@@ -268,6 +256,7 @@ def clear_cache() -> None:
 # Reverse Geocoding (OFFLINE — nearest city centroid)
 # ============================================================================
 
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two coordinates in kilometres."""
     R = 6371.0
@@ -279,13 +268,13 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 @lru_cache(maxsize=512)
-def _geocode_cache_key(lat: float, lng: float, radius: float) -> Optional[dict]:
+def _geocode_cache_key(lat: float, lng: float, radius: float) -> dict | None:
     """In-process cached lookup; radius is only a cache-buster."""
     return _offline_reverse_uncached(lat, lng)
 
 
 @lru_cache(maxsize=1)
-def _country_centroids() -> List[Dict[str, Any]]:
+def _country_centroids() -> list[dict[str, Any]]:
     """Cached list of every country with its centroid (iso2, name, lat, lon)."""
     countries = _countries_cached()
     return [
@@ -300,7 +289,7 @@ def _country_centroids() -> List[Dict[str, Any]]:
     ]
 
 
-def _nearest_country(lat: float, lng: float) -> Optional[dict]:
+def _nearest_country(lat: float, lng: float) -> dict | None:
     """Nearest country centroid to a coordinate (only ~250 entries — cheap)."""
     best = None
     best_km = float("inf")
@@ -312,7 +301,7 @@ def _nearest_country(lat: float, lng: float) -> Optional[dict]:
     return best
 
 
-def _offline_reverse_uncached(lat: float, lng: float) -> Optional[dict]:
+def _offline_reverse_uncached(lat: float, lng: float) -> dict | None:
     """
     Offline reverse geocode without building a global index.
 
@@ -345,7 +334,7 @@ def _offline_reverse_uncached(lat: float, lng: float) -> Optional[dict]:
             best_city_km = km
             best_city = city
 
-    def as_result(city_name: Optional[str], province: Optional[str]) -> dict:
+    def as_result(city_name: str | None, province: str | None) -> dict:
         return {
             "country": country_name,
             "country_iso2": iso2,
@@ -361,12 +350,12 @@ def _offline_reverse_uncached(lat: float, lng: float) -> Optional[dict]:
     return as_result(city_name, province)
 
 
-def _offline_reverse(lat: float, lng: float) -> Optional[dict]:
+def _offline_reverse(lat: float, lng: float) -> dict | None:
     """Reverse geocode using the bundled offline dataset (long names)."""
     return _geocode_cache_key(round(lat, 4), round(lng, 4), GEO_REVERSE_MAX_DISTANCE_KM)
 
 
-async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional[dict]:
+async def reverse_geocode(lat: float, lng: float, redis_client=None) -> dict | None:
     """Convert GPS coordinates to location text using the offline dataset.
 
     The 24h Redis cache is still used for coordinated caching; there is no
@@ -400,56 +389,48 @@ async def reverse_geocode(lat: float, lng: float, redis_client=None) -> Optional
 # LocationService Class
 # =============================================================================
 
+
 class LocationService:
     """Service class for location operations."""
-    
+
     @staticmethod
-    def get_countries() -> List[Dict[str, Any]]:
+    def get_countries() -> list[dict[str, Any]]:
         return get_countries()
-    
+
     @staticmethod
-    def get_states(country_iso2: str) -> List[Dict[str, Any]]:
+    def get_states(country_iso2: str) -> list[dict[str, Any]]:
         return get_states(country_iso2)
-    
+
     @staticmethod
-    def get_cities(
-        country_iso2: str,
-        state_code: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    def get_cities(country_iso2: str, state_code: str | None = None) -> list[dict[str, Any]]:
         return get_cities(country_iso2, state_code)
-    
+
     @staticmethod
-    def get_cities_by_state_name(
-        country_iso2: str,
-        state_name: str
-    ) -> List[Dict[str, Any]]:
+    def get_cities_by_state_name(country_iso2: str, state_name: str) -> list[dict[str, Any]]:
         return get_cities_by_state_name(country_iso2, state_name)
-    
+
     @staticmethod
     def search_cities(
-        country_iso2: str,
-        query: str,
-        state_code: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        country_iso2: str, query: str, state_code: str | None = None
+    ) -> list[dict[str, Any]]:
         return search_cities_by_name(country_iso2, query, state_code)
-    
+
     @staticmethod
     def get_city_centroid(
-        country_iso2: str,
-        city_name: str,
-        state_code: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        country_iso2: str, city_name: str, state_code: str | None = None
+    ) -> dict[str, Any] | None:
         return get_city_centroid(country_iso2, city_name, state_code)
-    
+
     @staticmethod
-    async def reverse_geocode(lat: float, lng: float) -> Optional[Dict[str, Any]]:
+    async def reverse_geocode(lat: float, lng: float) -> dict[str, Any] | None:
         from app.core.redis import redis_client
+
         return await reverse_geocode(lat, lng, redis_client=redis_client)
-    
+
     @staticmethod
-    def get_state_by_code(country_iso2: str, code: str) -> Optional[Dict[str, Any]]:
+    def get_state_by_code(country_iso2: str, code: str) -> dict[str, Any] | None:
         return get_state_by_code(country_iso2, code)
-    
+
     @staticmethod
-    def get_state_by_name(country_iso2: str, name: str) -> Optional[Dict[str, Any]]:
+    def get_state_by_name(country_iso2: str, name: str) -> dict[str, Any] | None:
         return get_state_by_name(country_iso2, name)

@@ -1,12 +1,12 @@
 # tests/test_system.py
-import pytest
 import json
-from pathlib import Path
-from httpx import AsyncClient
 from unittest.mock import patch
 
-from app.core.config import settings
+import pytest
+from httpx import AsyncClient
+
 from app.api.v1.endpoints.system import MAINTENANCE_FILE, VERSION_OVERRIDE_FILE
+from app.core.config import settings
 
 SYSTEM_STATUS_URL = "/api/v1/system/status"
 VERSION_CHECK_URL = "/api/v1/system/version-check"
@@ -27,9 +27,9 @@ def cleanup_files():
         MAINTENANCE_FILE.unlink()
     if VERSION_OVERRIDE_FILE.exists():
         VERSION_OVERRIDE_FILE.unlink()
-    
+
     yield
-    
+
     # After test
     if MAINTENANCE_FILE.exists():
         MAINTENANCE_FILE.unlink()
@@ -45,7 +45,7 @@ def admin_headers() -> dict:
 
 class TestSystemStatus:
     """Test /system/status endpoint."""
-    
+
     async def test_system_status_ok(
         self,
         client: AsyncClient,
@@ -54,23 +54,23 @@ class TestSystemStatus:
         res = await client.get(SYSTEM_STATUS_URL)
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] in ["ok", "degraded"]
         assert "timestamp" in data
         assert "version" in data
         assert "environment" in data
         assert "services" in data
         assert "maintenance" in data
-        
+
         services = data["services"]
         assert "database" in services
         assert "redis" in services
         assert "storage" in services
-        
+
         maintenance = data["maintenance"]
         assert "enabled" in maintenance
         assert maintenance["enabled"] is False
-    
+
     async def test_system_status_maintenance_mode(
         self,
         client: AsyncClient,
@@ -84,22 +84,22 @@ class TestSystemStatus:
             headers=admin_headers,
         )
         assert res.status_code == 200
-        
+
         res = await client.get(SYSTEM_STATUS_URL)
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["maintenance"]["enabled"] is True
         assert data["maintenance"]["message"] == "System maintenance"
         assert data["maintenance"]["start_time"] is not None
-        
+
         # Cleanup
         await client.post(MAINTENANCE_DISABLE_URL, headers=admin_headers)
 
 
 class TestVersionCheck:
     """Test /system/version-check endpoint."""
-    
+
     async def test_version_check_ok(
         self,
         client: AsyncClient,
@@ -114,13 +114,13 @@ class TestVersionCheck:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert data["current_version"] == "1.0.0"
         assert data["platform"] == "android"
         assert data["force_update"] is False
         assert data["minimum_version"] is not None
-    
+
     async def test_version_check_ios(
         self,
         client: AsyncClient,
@@ -135,10 +135,10 @@ class TestVersionCheck:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert data["platform"] == "ios"
-    
+
     async def test_version_check_update_required(
         self,
         client: AsyncClient,
@@ -154,12 +154,12 @@ class TestVersionCheck:
             )
             assert res.status_code == 200
             data = res.json()
-            
+
             assert data["status"] == "update_required"
             assert data["current_version"] == "1.5.0"
             assert data["minimum_version"] == "2.0.0"
             assert data["update_url"] is not None
-    
+
     async def test_version_check_force_update(
         self,
         client: AsyncClient,
@@ -176,11 +176,11 @@ class TestVersionCheck:
                 )
                 assert res.status_code == 200
                 data = res.json()
-                
+
                 assert data["status"] == "update_required"
                 assert data["force_update"] is True
                 assert data["message"] == settings.FORCE_UPDATE_MESSAGE
-    
+
     async def test_version_check_maintenance_mode(
         self,
         client: AsyncClient,
@@ -193,7 +193,7 @@ class TestVersionCheck:
             json={"message": "Maintenance"},
             headers=admin_headers,
         )
-        
+
         res = await client.post(
             VERSION_CHECK_URL,
             json={
@@ -203,13 +203,13 @@ class TestVersionCheck:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "maintenance"
         assert data["message"] == "Maintenance"
-        
+
         # Cleanup
         await client.post(MAINTENANCE_DISABLE_URL, headers=admin_headers)
-    
+
     async def test_version_check_invalid_platform(
         self,
         client: AsyncClient,
@@ -226,7 +226,7 @@ class TestVersionCheck:
         data = res.json()
         assert data["platform"] == "windows"
         assert data["status"] in ["ok", "update_required"]
-    
+
     async def test_version_check_missing_fields(
         self,
         client: AsyncClient,
@@ -241,7 +241,7 @@ class TestVersionCheck:
 
 class TestMaintenanceAdmin:
     """Test maintenance admin endpoints."""
-    
+
     async def test_enable_maintenance_success(
         self,
         client: AsyncClient,
@@ -255,18 +255,18 @@ class TestMaintenanceAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert data["message"] == "Maintenance mode enabled"
         assert data["data"]["enabled"] is True
         assert data["data"]["message"] == "Scheduled maintenance"
-        
+
         # Verify file exists
         assert MAINTENANCE_FILE.exists()
-        
+
         # Cleanup
         await client.post(MAINTENANCE_DISABLE_URL, headers=admin_headers)
-    
+
     async def test_enable_maintenance_unauthorized(
         self,
         client: AsyncClient,
@@ -277,7 +277,7 @@ class TestMaintenanceAdmin:
             json={"message": "Maintenance"},
         )
         assert res.status_code == 403
-    
+
     async def test_disable_maintenance_success(
         self,
         client: AsyncClient,
@@ -291,7 +291,7 @@ class TestMaintenanceAdmin:
             headers=admin_headers,
         )
         assert MAINTENANCE_FILE.exists()
-        
+
         # Disable
         res = await client.post(
             MAINTENANCE_DISABLE_URL,
@@ -299,14 +299,14 @@ class TestMaintenanceAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert data["message"] == "Maintenance mode disabled"
         assert data["data"]["enabled"] is False
-        
+
         # Verify file deleted
         assert not MAINTENANCE_FILE.exists()
-    
+
     async def test_disable_maintenance_unauthorized(
         self,
         client: AsyncClient,
@@ -314,7 +314,7 @@ class TestMaintenanceAdmin:
         """Should return 403 without admin auth."""
         res = await client.post(MAINTENANCE_DISABLE_URL)
         assert res.status_code == 403
-    
+
     async def test_maintenance_status_success(
         self,
         client: AsyncClient,
@@ -327,10 +327,10 @@ class TestMaintenanceAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert "maintenance_mode" in data
         assert data["maintenance_mode"] is False
-    
+
     async def test_maintenance_status_unauthorized(
         self,
         client: AsyncClient,
@@ -342,7 +342,7 @@ class TestMaintenanceAdmin:
 
 class TestVersionAdmin:
     """Test version control admin endpoints."""
-    
+
     async def test_set_minimum_version_success(
         self,
         client: AsyncClient,
@@ -356,17 +356,17 @@ class TestVersionAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert "Minimum version for android set to 2.0.0" in data["message"]
         assert data["data"]["minimum_versions"]["android"] == "2.0.0"
-        
+
         # Verify override file exists
         assert VERSION_OVERRIDE_FILE.exists()
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_set_minimum_version_ios(
         self,
         client: AsyncClient,
@@ -380,12 +380,12 @@ class TestVersionAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["data"]["minimum_versions"]["ios"] == "2.0.0"
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_set_minimum_version_invalid_platform(
         self,
         client: AsyncClient,
@@ -399,7 +399,7 @@ class TestVersionAdmin:
         )
         assert res.status_code == 400
         assert "Platform must be" in res.json()["detail"]
-    
+
     async def test_set_minimum_version_unauthorized(
         self,
         client: AsyncClient,
@@ -410,7 +410,7 @@ class TestVersionAdmin:
             params={"platform": "android", "version": "2.0.0"},
         )
         assert res.status_code == 403
-    
+
     async def test_force_update_enable(
         self,
         client: AsyncClient,
@@ -424,14 +424,14 @@ class TestVersionAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert data["data"]["force_update"] is True
         assert data["data"]["force_update_message"] == "Critical update"
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_force_update_disable(
         self,
         client: AsyncClient,
@@ -444,7 +444,7 @@ class TestVersionAdmin:
             params={"force": True},
             headers=admin_headers,
         )
-        
+
         # Disable
         res = await client.post(
             VERSION_FORCE_UPDATE_URL,
@@ -453,12 +453,12 @@ class TestVersionAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["data"]["force_update"] is False
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_force_update_unauthorized(
         self,
         client: AsyncClient,
@@ -469,7 +469,7 @@ class TestVersionAdmin:
             params={"force": True},
         )
         assert res.status_code == 403
-    
+
     async def test_get_version_config(
         self,
         client: AsyncClient,
@@ -487,18 +487,18 @@ class TestVersionAdmin:
             params={"force": True, "message": "Test message"},
             headers=admin_headers,
         )
-        
+
         res = await client.get(
             VERSION_CONFIG_URL,
             headers=admin_headers,
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert "data" in data
         config = data["data"]
-        
+
         assert "minimum_versions" in config
         assert config["minimum_versions"]["android"] == "2.0.0"
         assert config["force_update"] is True
@@ -506,10 +506,10 @@ class TestVersionAdmin:
         assert "app_version" in config
         assert "play_store_url" in config
         assert "app_store_url" in config
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_get_version_config_unauthorized(
         self,
         client: AsyncClient,
@@ -517,7 +517,7 @@ class TestVersionAdmin:
         """Should return 403 without admin auth."""
         res = await client.get(VERSION_CONFIG_URL)
         assert res.status_code == 403
-    
+
     async def test_clear_version_override(
         self,
         client: AsyncClient,
@@ -531,7 +531,7 @@ class TestVersionAdmin:
             headers=admin_headers,
         )
         assert VERSION_OVERRIDE_FILE.exists()
-        
+
         # Clear
         res = await client.delete(
             VERSION_OVERRIDE_DELETE_URL,
@@ -539,11 +539,11 @@ class TestVersionAdmin:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
         assert "overrides cleared" in data["message"].lower()
         assert not VERSION_OVERRIDE_FILE.exists()
-    
+
     async def test_clear_version_override_unauthorized(
         self,
         client: AsyncClient,
@@ -555,38 +555,38 @@ class TestVersionAdmin:
 
 class TestVersionEdgeCases:
     """Test version edge cases."""
-    
+
     async def test_version_compare_equal(self):
         """Should handle equal versions."""
         from app.api.v1.endpoints.system import version_compare
-        
+
         assert version_compare("1.0.0", "1.0.0") == 0
         assert version_compare("2.1.3", "2.1.3") == 0
-    
+
     async def test_version_compare_greater(self):
         """Should handle greater versions."""
         from app.api.v1.endpoints.system import version_compare
-        
+
         assert version_compare("2.0.0", "1.0.0") == 1
         assert version_compare("1.1.0", "1.0.9") == 1
         assert version_compare("2.0.0", "1.9.9") == 1
-    
+
     async def test_version_compare_less(self):
         """Should handle lesser versions."""
         from app.api.v1.endpoints.system import version_compare
-        
+
         assert version_compare("1.0.0", "2.0.0") == -1
         assert version_compare("1.0.9", "1.1.0") == -1
         assert version_compare("1.9.9", "2.0.0") == -1
-    
+
     async def test_version_compare_different_lengths(self):
         """Should handle versions with different number of parts."""
         from app.api.v1.endpoints.system import version_compare
-        
+
         assert version_compare("1.0", "1.0.0") == 0
         assert version_compare("1.1", "1.0.9") == 1
         assert version_compare("1.0.0", "1.0") == 0
-    
+
     async def test_version_check_old_version_with_override(
         self,
         client: AsyncClient,
@@ -599,14 +599,14 @@ class TestVersionEdgeCases:
             params={"platform": "android", "version": "2.0.0"},
             headers=admin_headers,
         )
-        
+
         # ✅ Verify the override file exists and has the correct content
         assert VERSION_OVERRIDE_FILE.exists()
-        with open(VERSION_OVERRIDE_FILE, "r") as f:
+        with open(VERSION_OVERRIDE_FILE) as f:
             content = json.load(f)
             print(f"Override content: {content}")
             assert content["minimum_versions"]["android"] == "2.0.0"
-        
+
         # Now check version
         res = await client.post(
             VERSION_CHECK_URL,
@@ -618,13 +618,13 @@ class TestVersionEdgeCases:
         assert res.status_code == 200
         data = res.json()
         print(f"Version check response: {data}")
-        
+
         assert data["status"] == "update_required"
         assert data["minimum_version"] == "2.0.0"
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)
-    
+
     async def test_version_check_new_version_with_override(
         self,
         client: AsyncClient,
@@ -637,7 +637,7 @@ class TestVersionEdgeCases:
             params={"platform": "android", "version": "2.0.0"},
             headers=admin_headers,
         )
-        
+
         res = await client.post(
             VERSION_CHECK_URL,
             json={
@@ -647,8 +647,8 @@ class TestVersionEdgeCases:
         )
         assert res.status_code == 200
         data = res.json()
-        
+
         assert data["status"] == "ok"
-        
+
         # Cleanup
         await client.delete(VERSION_OVERRIDE_DELETE_URL, headers=admin_headers)

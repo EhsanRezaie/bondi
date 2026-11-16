@@ -1,19 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 from uuid import UUID
 
-from app.db.session import get_session
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
-from app.models.user import User
-from app.models.ticket import Ticket
-from app.models.ticket_message import TicketMessage
-from app.schemas.ticket import TicketCreate, TicketResponse, TicketListResponse, TicketMessageCreate
-
 from app.core.logging import get_logger
 from app.core.timezone import utcnow
+from app.db.session import get_session
+from app.models.ticket import Ticket
+from app.models.ticket_message import TicketMessage
+from app.models.user import User
+from app.schemas.ticket import TicketCreate, TicketListResponse, TicketMessageCreate, TicketResponse
 
 logger = get_logger("tickets")
 
@@ -31,21 +30,20 @@ async def create_ticket(
     """Submit a support ticket"""
 
     ticket = Ticket(
-        user_id=current_user.id,
-        subject=body.subject,
-        message=body.message,
-        status="open"
+        user_id=current_user.id, subject=body.subject, message=body.message, status="open"
     )
     session.add(ticket)
     await session.flush()
 
     # Seed the initial message as the first entry in the conversation thread
-    session.add(TicketMessage(
-        ticket_id=ticket.id,
-        sender_type="user",
-        sender_user_id=current_user.id,
-        content=body.message,
-    ))
+    session.add(
+        TicketMessage(
+            ticket_id=ticket.id,
+            sender_type="user",
+            sender_user_id=current_user.id,
+            content=body.message,
+        )
+    )
     await session.commit()
 
     return await _build_ticket_response(session, ticket)
@@ -62,9 +60,11 @@ async def get_my_tickets(
 ):
     """Get user's own tickets"""
 
-    query = select(Ticket).where(
-        Ticket.user_id == current_user.id
-    ).order_by(Ticket.created_at.desc(), Ticket.id.desc())
+    query = (
+        select(Ticket)
+        .where(Ticket.user_id == current_user.id)
+        .order_by(Ticket.created_at.desc(), Ticket.id.desc())
+    )
 
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.scalar(count_query)
@@ -76,7 +76,7 @@ async def get_my_tickets(
     return TicketListResponse(
         tickets=[await _build_ticket_response(session, t, include_messages=False) for t in tickets],
         total=total or 0,
-        next_offset=offset + limit if offset + limit < (total or 0) else None
+        next_offset=offset + limit if offset + limit < (total or 0) else None,
     )
 
 
@@ -91,10 +91,7 @@ async def get_ticket(
     """Get ticket details (user can only see their own)"""
 
     result = await session.execute(
-        select(Ticket).where(
-            Ticket.id == ticket_id,
-            Ticket.user_id == current_user.id
-        )
+        select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == current_user.id)
     )
     ticket = result.scalar_one_or_none()
 
@@ -104,7 +101,9 @@ async def get_ticket(
     return await _build_ticket_response(session, ticket)
 
 
-@router.post("/{ticket_id}/messages", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{ticket_id}/messages", response_model=TicketResponse, status_code=status.HTTP_201_CREATED
+)
 @limiter.limit("5/minute")
 async def reply_to_ticket(
     request: Request,
@@ -116,10 +115,7 @@ async def reply_to_ticket(
     """Reply to one of the user's own tickets. Replying to a closed ticket reopens it."""
 
     result = await session.execute(
-        select(Ticket).where(
-            Ticket.id == ticket_id,
-            Ticket.user_id == current_user.id
-        )
+        select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == current_user.id)
     )
     ticket = result.scalar_one_or_none()
 
@@ -131,12 +127,14 @@ async def reply_to_ticket(
         ticket.status = "open"
     ticket.updated_at = utcnow()
 
-    session.add(TicketMessage(
-        ticket_id=ticket.id,
-        sender_type="user",
-        sender_user_id=current_user.id,
-        content=body.content,
-    ))
+    session.add(
+        TicketMessage(
+            ticket_id=ticket.id,
+            sender_type="user",
+            sender_user_id=current_user.id,
+            content=body.content,
+        )
+    )
     await session.commit()
 
     return await _build_ticket_response(session, ticket)

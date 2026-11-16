@@ -1,32 +1,42 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import selectinload
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
-from datetime import datetime, timedelta, timezone, date
-from typing import Optional
-from app.models.notification import Notification
-from app.db.session import get_session
-from app.core.deps import get_admin_user
-from app.core.limiter import limiter
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 import app.core.redis as redis_module
 from app.core.cache import invalidate_auth_user
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_interest import UserInterest
+from app.core.deps import get_admin_user
+from app.core.limiter import limiter
+from app.core.logging import get_logger
+from app.db.session import get_session
 from app.models.interest import Interest
-from app.models.photo import Photo
-from app.models.swipe import Swipe
 from app.models.match import Match
 from app.models.message import Message
+from app.models.notification import Notification
+from app.models.photo import Photo
 from app.models.report import Report
 from app.models.subscription import Subscription
-from app.schemas.admin import AdminUserResponse, AdminUserUpdate, AdminPremiumGrant, AdminUserListResponse, AdminUserListItem, AdminMessageRequest, AdminMessageResponse, UserActivityEntry, AdminUserPhotoResponse
-from app.services.photo_service import PhotoService
-
-from app.core.logging import get_logger
+from app.models.swipe import Swipe
+from app.models.user import User
+from app.models.user_interest import UserInterest
+from app.models.user_profile import UserProfile
+from app.schemas.admin import (
+    AdminMessageRequest,
+    AdminMessageResponse,
+    AdminPremiumGrant,
+    AdminUserListItem,
+    AdminUserListResponse,
+    AdminUserPhotoResponse,
+    AdminUserResponse,
+    AdminUserUpdate,
+    UserActivityEntry,
+)
 from app.services.admin_log_service import log_admin_action
+from app.services.photo_service import PhotoService
 
 logger = get_logger("admin_users")
 
@@ -42,25 +52,27 @@ USER_LOAD_OPTIONS = (
 
 async def _build_admin_user_response(
     user: User,
-    total_likes_sent: Optional[int] = None,
-    total_matches: Optional[int] = None,
-    total_messages: Optional[int] = None,
-    report_count: Optional[int] = None,
+    total_likes_sent: int | None = None,
+    total_matches: int | None = None,
+    total_messages: int | None = None,
+    report_count: int | None = None,
 ) -> AdminUserResponse:
     profile = user.profile
     photos_resp: list[AdminUserPhotoResponse] = []
     if user.photos:
-        for p in sorted(user.photos, key=lambda x: (x.order or 0)):
-            photos_resp.append(AdminUserPhotoResponse(
-                id=p.id,
-                url=await PhotoService.get_photo_url(p.url, p.status),
-                is_main=p.is_main,
-                status=p.status,
-                reject_reason=p.reject_reason,
-                face_verified=getattr(p, "face_verified", False),
-                order=p.order or 0,
-                created_at=p.created_at.isoformat() if p.created_at else None,
-            ))
+        for p in sorted(user.photos, key=lambda x: x.order or 0):
+            photos_resp.append(
+                AdminUserPhotoResponse(
+                    id=p.id,
+                    url=await PhotoService.get_photo_url(p.url, p.status),
+                    is_main=p.is_main,
+                    status=p.status,
+                    reject_reason=p.reject_reason,
+                    face_verified=getattr(p, "face_verified", False),
+                    order=p.order or 0,
+                    created_at=p.created_at.isoformat() if p.created_at else None,
+                )
+            )
     return AdminUserResponse(
         id=user.id,
         email=None,
@@ -153,11 +165,29 @@ SORT_COLUMNS = {
 }
 
 SORT_COLUMNS_PROFILE = {
-    k for k, v in SORT_COLUMNS.items() if k in (
-        "name", "age", "gender", "city", "country", "province",
-        "is_premium", "is_verified", "height", "weight", "body_type",
-        "relationship_status", "education", "religion", "ethnicity",
-        "political_orientation", "smoking", "drinking", "languages",
+    k
+    for k, v in SORT_COLUMNS.items()
+    if k
+    in (
+        "name",
+        "age",
+        "gender",
+        "city",
+        "country",
+        "province",
+        "is_premium",
+        "is_verified",
+        "height",
+        "weight",
+        "body_type",
+        "relationship_status",
+        "education",
+        "religion",
+        "ethnicity",
+        "political_orientation",
+        "smoking",
+        "drinking",
+        "languages",
     )
 }
 
@@ -235,11 +265,13 @@ async def admin_list_users(
     if search:
         join_profile()
         like = f"%{search}%"
-        query = query.where(or_(
-            UserProfile.name.ilike(like),
-            User.phone.ilike(like),
-            UserProfile.bio.ilike(like),
-        ))
+        query = query.where(
+            or_(
+                UserProfile.name.ilike(like),
+                User.phone.ilike(like),
+                UserProfile.bio.ilike(like),
+            )
+        )
 
     if id is not None:
         query = query.where(User.id == id)
@@ -247,13 +279,15 @@ async def admin_list_users(
     if is_active is not None:
         query = query.where(User.is_active == is_active)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if is_premium is not None:
         join_profile()
         if is_premium:
             query = query.where(UserProfile.premium_until > now)
         else:
-            query = query.where(or_(UserProfile.premium_until.is_(None), UserProfile.premium_until <= now))
+            query = query.where(
+                or_(UserProfile.premium_until.is_(None), UserProfile.premium_until <= now)
+            )
 
     if is_verified is not None:
         join_profile()
@@ -360,7 +394,7 @@ async def admin_list_users(
     return AdminUserListResponse(
         users=response_users,
         total=total or 0,
-        next_offset=offset + limit if offset + limit < (total or 0) else None
+        next_offset=offset + limit if offset + limit < (total or 0) else None,
     )
 
 
@@ -390,21 +424,14 @@ async def admin_get_user(
 
     matches_result = await session.execute(
         select(func.count()).where(
-            or_(
-                Match.user1_id == user_id,
-                Match.user2_id == user_id
-            ),
-            Match.is_active == True
+            or_(Match.user1_id == user_id, Match.user2_id == user_id), Match.is_active == True
         )
     )
     total_matches = matches_result.scalar() or 0
 
     messages_result = await session.execute(
         select(func.count()).where(
-            or_(
-                Message.sender_id == user_id,
-                Message.receiver_id == user_id
-            )
+            or_(Message.sender_id == user_id, Message.receiver_id == user_id)
         )
     )
     total_messages = messages_result.scalar() or 0
@@ -496,9 +523,12 @@ async def admin_grant_premium(
     admin: User = Depends(get_admin_user),
 ):
     """Admin: Grant premium days to user"""
- 
+
     result = await session.execute(
-        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(User.id == user_id).with_for_update()
+        select(User)
+        .options(selectinload(User.profile), selectinload(User.settings))
+        .where(User.id == user_id)
+        .with_for_update()
     )
     user = result.scalar_one_or_none()
 
@@ -509,7 +539,7 @@ async def admin_grant_premium(
     if not profile:
         raise HTTPException(status_code=500, detail="User profile not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if profile.premium_until is None or profile.premium_until < now:
         profile.premium_until = now + timedelta(days=body.days)
     else:
@@ -522,7 +552,7 @@ async def admin_grant_premium(
         status="active",
         started_at=now,
         expires_at=profile.premium_until,
-        source="admin_grant"
+        source="admin_grant",
     )
     session.add(subscription)
 
@@ -545,7 +575,7 @@ async def admin_grant_premium(
         created_at=user.created_at,
         last_seen_at=user.last_seen_at,
         hide_last_seen=user.settings.hide_last_seen if user.settings else False,
-        hide_online_status=user.settings.hide_online_status if user.settings else False
+        hide_online_status=user.settings.hide_online_status if user.settings else False,
     )
 
 
@@ -567,51 +597,43 @@ async def admin_get_user_activity(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Get daily activity
-    from datetime import date, timedelta
+    from datetime import date, datetime, time, timedelta
+
+    # Three grouped queries for the whole window (no per-day queries); same
+    # day-boundary semantics as the previous per-day counts, zeros filled below.
+    today = date.today()
+    window_start = datetime.combine(today - timedelta(days=days - 1), time.min)
+    window_end = datetime.combine(today + timedelta(days=1), time.min)
+
+    async def _counts_by_day(column, extra):
+        rows = await session.execute(
+            select(func.date(column).label("day"), func.count())
+            .where(extra, column >= window_start, column < window_end)
+            .group_by(func.date(column))
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
+    swipes_by_day = await _counts_by_day(Swipe.created_at, Swipe.from_user == user_id)
+    matches_by_day = await _counts_by_day(
+        Match.matched_at,
+        or_(Match.user1_id == user_id, Match.user2_id == user_id),
+    )
+    messages_by_day = await _counts_by_day(
+        Message.sent_at,
+        or_(Message.sender_id == user_id, Message.receiver_id == user_id),
+    )
 
     activity = []
     for i in range(days):
-        day = date.today() - timedelta(days=i)
-
-        # Count swipes on this day
-        swipes_result = await session.execute(
-            select(func.count()).where(
-                Swipe.from_user == user_id,
-                func.date(Swipe.created_at) == day
-            )
+        day = today - timedelta(days=i)
+        activity.append(
+            {
+                "date": day.isoformat(),
+                "swipes": swipes_by_day.get(day, 0),
+                "matches": matches_by_day.get(day, 0),
+                "messages": messages_by_day.get(day, 0),
+            }
         )
-        swipes = swipes_result.scalar() or 0
-
-        # Count matches on this day
-        matches_result = await session.execute(
-            select(func.count()).where(
-                or_(
-                    Match.user1_id == user_id,
-                    Match.user2_id == user_id
-                ),
-                func.date(Match.matched_at) == day
-            )
-        )
-        matches = matches_result.scalar() or 0
-
-        # Count messages on this day
-        messages_result = await session.execute(
-            select(func.count()).where(
-                or_(
-                    Message.sender_id == user_id,
-                    Message.receiver_id == user_id
-                ),
-                func.date(Message.sent_at) == day
-            )
-        )
-        messages = messages_result.scalar() or 0
-
-        activity.append({
-            "date": day.isoformat(),
-            "swipes": swipes,
-            "matches": matches,
-            "messages": messages
-        })
 
     return activity
 
@@ -642,7 +664,7 @@ async def admin_message_user(
         title=body.title,
         body=body.message,
         data={"from_admin": True, "admin_id": str(admin.id)},
-        is_read=False
+        is_read=False,
     )
     session.add(notification)
     await session.commit()
@@ -652,5 +674,5 @@ async def admin_message_user(
         success=True,
         message=f"Message sent to {user.profile.name if user.profile else 'user'}",
         user_id=user_id,
-        user_name=user.profile.name if user.profile else None
+        user_name=user.profile.name if user.profile else None,
     )

@@ -1,9 +1,10 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -25,7 +26,9 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, phone: str = VALID_PHONE, mock_verification_code=None) -> dict:
+async def register_user(
+    client: AsyncClient, phone: str = VALID_PHONE, mock_verification_code=None
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -76,13 +79,13 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         referral_code = code_res.json()["referral_code"]
 
-        invited_data = await register_user(client, _phone("invited@example.com"), mock_verification_code)
+        invited_data = await register_user(
+            client, _phone("invited@example.com"), mock_verification_code
+        )
         invited_headers = {"Authorization": f"Bearer {invited_data['access_token']}"}
 
         claim_res = await client.post(
-            REFERRAL_CLAIM_URL,
-            json={"referral_code": referral_code},
-            headers=invited_headers
+            REFERRAL_CLAIM_URL, json={"referral_code": referral_code}, headers=invited_headers
         )
         assert claim_res.status_code == 200
 
@@ -105,9 +108,7 @@ class TestReferrals:
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
         res = await client.post(
-            REFERRAL_CLAIM_URL,
-            json={"referral_code": "INVALID123"},
-            headers=headers
+            REFERRAL_CLAIM_URL, json={"referral_code": "INVALID123"}, headers=headers
         )
         assert res.status_code == 404
         assert "Invalid referral code" in res.json()["detail"]
@@ -120,9 +121,7 @@ class TestReferrals:
         own_code = code_res.json()["referral_code"]
 
         res = await client.post(
-            REFERRAL_CLAIM_URL,
-            json={"referral_code": own_code},
-            headers=headers
+            REFERRAL_CLAIM_URL, json={"referral_code": own_code}, headers=headers
         )
         assert res.status_code == 400
         assert "Cannot use your own referral code" in res.json()["detail"]
@@ -133,20 +132,18 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         referral_code = code_res.json()["referral_code"]
 
-        invited_data = await register_user(client, _phone("invited2@example.com"), mock_verification_code)
+        invited_data = await register_user(
+            client, _phone("invited2@example.com"), mock_verification_code
+        )
         invited_headers = {"Authorization": f"Bearer {invited_data['access_token']}"}
 
         claim_res = await client.post(
-            REFERRAL_CLAIM_URL,
-            json={"referral_code": referral_code},
-            headers=invited_headers
+            REFERRAL_CLAIM_URL, json={"referral_code": referral_code}, headers=invited_headers
         )
         assert claim_res.status_code == 200
 
         res = await client.post(
-            REFERRAL_CLAIM_URL,
-            json={"referral_code": "ANOTHER123"},
-            headers=invited_headers
+            REFERRAL_CLAIM_URL, json={"referral_code": "ANOTHER123"}, headers=invited_headers
         )
         assert res.status_code == 400
         assert "Referral already claimed" in res.json()["detail"]
@@ -160,8 +157,13 @@ class TestReferrals:
         body = res.json()
 
         expected_fields = [
-            "referral_code", "successful_referrals", "total_premium_days_earned",
-            "inviter_reward_days", "invited_reward_days", "is_premium", "premium_until"
+            "referral_code",
+            "successful_referrals",
+            "total_premium_days_earned",
+            "inviter_reward_days",
+            "invited_reward_days",
+            "is_premium",
+            "premium_until",
         ]
         for field in expected_fields:
             assert field in body
@@ -183,10 +185,14 @@ class TestReferrals:
         code_res = await client.get(REFERRAL_CODE_URL, headers=inviter_headers)
         code = code_res.json()["referral_code"]
 
-        invited = await register_user(client, _phone("claim_shape@example.com"), mock_verification_code)
+        invited = await register_user(
+            client, _phone("claim_shape@example.com"), mock_verification_code
+        )
         invited_headers = {"Authorization": f"Bearer {invited['access_token']}"}
 
-        res = await client.post(REFERRAL_CLAIM_URL, json={"referral_code": code}, headers=invited_headers)
+        res = await client.post(
+            REFERRAL_CLAIM_URL, json={"referral_code": code}, headers=invited_headers
+        )
         assert res.status_code == 200
         body = res.json()
 

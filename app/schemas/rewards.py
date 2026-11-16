@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional
 
 
 class AdRewardResponse(BaseModel):
@@ -13,7 +12,7 @@ class AdRewardResponse(BaseModel):
 
 class DailyLimitsResponse(BaseModel):
     is_premium: bool
-    premium_expires_at: Optional[str] = None
+    premium_expires_at: str | None = None
     likes_used_today: int
     likes_remaining_today: int
     chats_used_today: int

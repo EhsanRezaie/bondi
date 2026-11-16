@@ -17,23 +17,19 @@ Before running:
 
 import io
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import numpy as np
-import pytest
 import pytest_asyncio
-from PIL import Image
-from sqlalchemy import select
 from httpx import AsyncClient
-from unittest.mock import AsyncMock, patch
+from PIL import Image
 
-from app.core.security import create_access_token
 from app.core.config import settings
+from app.core.security import create_access_token
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
-from app.models.photo import Photo
-
 
 ADMIN_HEADERS = {"X-Admin-Key": settings.ADMIN_SECRET_KEY}
 
@@ -52,13 +48,13 @@ def make_image_bytes(width=800, height=800, fmt="JPEG", color=None) -> bytes:
     seeded from the color)."""
     global _img_counter
     if color is None:
-        color = (50 + (_img_counter * 37) % 200,
-                 100 + (_img_counter * 61) % 155,
-                 150 + (_img_counter * 17) % 105)
+        color = (
+            50 + (_img_counter * 37) % 200,
+            100 + (_img_counter * 61) % 155,
+            150 + (_img_counter * 17) % 105,
+        )
         _img_counter += 1
-    rng = np.random.default_rng(
-        (color[0] << 16) | (color[1] << 8) | color[2]
-    )
+    rng = np.random.default_rng((color[0] << 16) | (color[1] << 8) | color[2])
     noise = rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
     img = Image.fromarray(noise, mode="RGB")
     buf = io.BytesIO()
@@ -75,6 +71,7 @@ def make_upload_file(width=800, height=800, fmt="JPEG", filename="photo.jpg", co
 # ---------------------------------------------------------------------------
 # User + auth fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def test_user(db_session) -> User:
@@ -155,15 +152,15 @@ async def _mock_face_check():
 # UPLOAD
 # ===========================================================================
 
-class TestUploadPhoto:
 
+class TestUploadPhoto:
     async def test_upload_valid_photo_succeeds(self, client, auth_headers):
         files = make_upload_file()
         resp = await client.post("/api/v1/users/me/photos", headers=auth_headers, files=files)
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["status"] == "pending"
-        assert "url" in body and body["url"]
+        assert body.get("url")
         assert body["message"] == "Photo uploaded. Under review by admin."
 
     async def test_upload_rejects_no_face(self, client, auth_headers, _mock_face_check):
@@ -268,7 +265,9 @@ class TestUploadPhoto:
         assert resp.status_code == 400
         assert "maximum 9" in resp.json()["detail"].lower()
 
-    async def test_uploaded_photo_url_is_a_real_signed_url_and_is_fetchable(self, client, auth_headers):
+    async def test_uploaded_photo_url_is_a_real_signed_url_and_is_fetchable(
+        self, client, auth_headers
+    ):
         """End-to-end against REAL MinIO: the URL returned on upload must
         actually be fetchable and return real image bytes — not just be
         present as a string."""
@@ -284,8 +283,8 @@ class TestUploadPhoto:
 # GET MY PHOTOS
 # ===========================================================================
 
-class TestGetMyPhotos:
 
+class TestGetMyPhotos:
     async def test_get_photos_empty_for_new_user(self, client, auth_headers):
         resp = await client.get("/api/v1/users/me/photos", headers=auth_headers)
         assert resp.status_code == 200
@@ -295,7 +294,9 @@ class TestGetMyPhotos:
         resp = await client.get("/api/v1/users/me/photos")
         assert resp.status_code == 401
 
-    async def test_get_photos_returns_all_statuses(self, client, auth_headers, db_session, test_user):
+    async def test_get_photos_returns_all_statuses(
+        self, client, auth_headers, db_session, test_user
+    ):
         await upload_and_get_id(client, auth_headers)
         resp = await client.get("/api/v1/users/me/photos", headers=auth_headers)
         photos = resp.json()
@@ -316,8 +317,8 @@ class TestGetMyPhotos:
 # DELETE
 # ===========================================================================
 
-class TestDeletePhoto:
 
+class TestDeletePhoto:
     async def test_delete_own_photo_succeeds(self, client, auth_headers):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.delete(f"/api/v1/users/me/photos/{body['id']}", headers=auth_headers)
@@ -336,7 +337,9 @@ class TestDeletePhoto:
         resp = await client.delete(f"/api/v1/users/me/photos/{fake_id}", headers=auth_headers)
         assert resp.status_code == 404
 
-    async def test_cannot_delete_another_users_photo(self, client, auth_headers, second_auth_headers):
+    async def test_cannot_delete_another_users_photo(
+        self, client, auth_headers, second_auth_headers
+    ):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.delete(
             f"/api/v1/users/me/photos/{body['id']}", headers=second_auth_headers
@@ -374,8 +377,8 @@ class TestDeletePhoto:
 # SET MAIN PHOTO
 # ===========================================================================
 
-class TestSetMainPhoto:
 
+class TestSetMainPhoto:
     async def test_cannot_set_pending_photo_as_main(self, client, auth_headers):
         first = await upload_and_get_id(client, auth_headers)
         second = await upload_and_get_id(client, auth_headers)
@@ -424,8 +427,8 @@ class TestSetMainPhoto:
 # ADMIN: AUTH
 # ===========================================================================
 
-class TestAdminAuth:
 
+class TestAdminAuth:
     async def test_admin_endpoints_require_admin_key(self, client):
         resp = await client.get("/api/v1/admin/photos/pending")
         assert resp.status_code == 403
@@ -447,8 +450,8 @@ class TestAdminAuth:
 # ADMIN: PENDING QUEUE
 # ===========================================================================
 
-class TestAdminPendingQueue:
 
+class TestAdminPendingQueue:
     async def test_pending_queue_empty_initially(self, client):
         resp = await client.get("/api/v1/admin/photos/pending", headers=ADMIN_HEADERS)
         assert resp.status_code == 200
@@ -496,8 +499,8 @@ class TestAdminPendingQueue:
 # ADMIN: APPROVE
 # ===========================================================================
 
-class TestAdminApprove:
 
+class TestAdminApprove:
     async def test_approve_changes_status(self, client, auth_headers):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.post(
@@ -528,9 +531,7 @@ class TestAdminApprove:
         resp = await client.post(f"/api/v1/admin/photos/{body['id']}/approve")
         assert resp.status_code == 403
 
-    async def test_approved_photo_moves_to_real_public_url_no_signature(
-        self, client, auth_headers
-    ):
+    async def test_approved_photo_moves_to_real_public_url_no_signature(self, client, auth_headers):
         """The core real-MinIO regression test: after approval, the photo's
         URL must be a PLAIN public URL (no AWS signature query params) and
         must be fetchable by a totally fresh client with no auth at all —
@@ -569,8 +570,8 @@ class TestAdminApprove:
 # ADMIN: REJECT
 # ===========================================================================
 
-class TestAdminReject:
 
+class TestAdminReject:
     async def test_reject_sets_status_and_reason(self, client, auth_headers):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.post(
@@ -649,8 +650,8 @@ class TestAdminReject:
 # ADMIN: STATS
 # ===========================================================================
 
-class TestAdminStats:
 
+class TestAdminStats:
     async def test_stats_all_zero_initially(self, client):
         resp = await client.get("/api/v1/admin/photos/stats", headers=ADMIN_HEADERS)
         assert resp.status_code == 200
@@ -679,8 +680,8 @@ class TestAdminStats:
 # ADMIN: GET SINGLE PHOTO / USER PHOTOS
 # ===========================================================================
 
-class TestAdminGetPhoto:
 
+class TestAdminGetPhoto:
     async def test_get_photo_detail_with_resolved_name(self, client, auth_headers, test_user):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.get(f"/api/v1/admin/photos/{body['id']}", headers=ADMIN_HEADERS)
@@ -713,8 +714,8 @@ class TestAdminGetPhoto:
 # ADMIN: VERIFY FACE
 # ===========================================================================
 
-class TestAdminVerifyFace:
 
+class TestAdminVerifyFace:
     async def test_verify_face_sets_flag(self, client, auth_headers):
         body = await upload_and_get_id(client, auth_headers)
         resp = await client.post(

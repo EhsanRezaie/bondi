@@ -5,14 +5,12 @@ Exposes a FastAPI route at `/metrics` (Prometheus text format). The endpoint is
 hidden from the OpenAPI schema and must only be reachable on the internal
 network (nginx does not proxy it publicly).
 """
-import time
 
 from prometheus_client import (
     Counter,
     Gauge,
     Histogram,
     generate_latest,
-    CONTENT_TYPE_LATEST,
 )
 
 from app.core.logging import get_logger
@@ -20,9 +18,7 @@ from app.core.logging import get_logger
 logger = get_logger("metrics")
 
 # --- HTTP request metrics ---------------------------------------------------
-REQUEST_COUNT = Counter(
-    "http_requests_total", "Total HTTP requests", ["method", "path", "status"]
-)
+REQUEST_COUNT = Counter("http_requests_total", "Total HTTP requests", ["method", "path", "status"])
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds",
     "HTTP request latency in seconds",
@@ -31,12 +27,16 @@ REQUEST_LATENCY = Histogram(
 )
 
 # --- DB pool ----------------------------------------------------------------
-DB_POOL_CHECKEDOUT = Gauge("bondi_db_pool_checked_out", "SQLAlchemy async pool checked-out connections")
+DB_POOL_CHECKEDOUT = Gauge(
+    "bondi_db_pool_checked_out", "SQLAlchemy async pool checked-out connections"
+)
 DB_POOL_SIZE = Gauge("bondi_db_pool_size", "SQLAlchemy async pool total size")
 
 # --- Redis ------------------------------------------------------------------
 REDIS_PING_LATENCY = Histogram(
-    "bondi_redis_ping_seconds", "Redis ping round-trip latency in seconds", buckets=(0.001, 0.005, 0.05)
+    "bondi_redis_ping_seconds",
+    "Redis ping round-trip latency in seconds",
+    buckets=(0.001, 0.005, 0.05),
 )
 
 # --- WebSocket ---------------------------------------------------------------

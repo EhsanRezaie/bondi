@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -10,9 +10,10 @@ class PromptResponse(BaseModel):
     (already localized server-side) — no client-side translation needed,
     since the same logical prompt exists as separate rows per language.
     """
+
     id: UUID
     question: str
-    category: Optional[str] = None
+    category: str | None = None
     language: str
 
     class Config:

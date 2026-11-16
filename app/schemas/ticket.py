@@ -1,6 +1,6 @@
-from uuid import UUID
 from datetime import datetime
-from typing import Optional
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -16,7 +16,7 @@ class TicketMessageCreate(BaseModel):
 class TicketMessageResponse(BaseModel):
     id: UUID
     sender_type: str
-    admin_name: Optional[str] = None
+    admin_name: str | None = None
     content: str
     created_at: datetime
 
@@ -30,9 +30,9 @@ class TicketResponse(BaseModel):
     subject: str
     message: str
     status: str
-    admin_response: Optional[str] = None
+    admin_response: str | None = None
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
     messages: list[TicketMessageResponse] = []
 
     class Config:
@@ -42,9 +42,9 @@ class TicketResponse(BaseModel):
 class TicketListResponse(BaseModel):
     tickets: list[TicketResponse]
     total: int
-    next_offset: Optional[int] = None
+    next_offset: int | None = None
 
 
 class AdminTicketUpdate(BaseModel):
-    status: Optional[str] = Field(None, pattern="^(open|in_progress|closed)$")
-    admin_response: Optional[str] = Field(None, max_length=2000)
+    status: str | None = Field(None, pattern="^(open|in_progress|closed)$")
+    admin_response: str | None = Field(None, max_length=2000)

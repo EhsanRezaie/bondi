@@ -1,22 +1,48 @@
 import io
-import uuid
-from typing import List, Optional, Tuple
 
 import numpy as np
-from PIL import Image
 from botocore.exceptions import ClientError
+from PIL import Image
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
-import app.core.redis as redis_module
 from app.core.redis import redis_client
+from app.models.photo import Photo
+from app.models.user_profile import UserProfile
 from app.services.storage import s3_client as _s3_client
 
 logger = get_logger("photo_service")
 
 
 class PhotoService:
+    @staticmethod
+    async def recompute_is_searchable(session: AsyncSession, user_id) -> None:
+        """Refresh user_profiles.is_searchable after a photo status event.
+
+        Searchable = has >= 1 approved photo AND no pending/rejected photo —
+        the exact condition the old `photos.any() / ~photos.any(non-approved)`
+        join pair expressed. Must be called (within the caller's transaction)
+        at every event that changes a photo's status set: upload, delete,
+        admin approve, admin reject.
+        """
+        approved_or, other_or = (
+            await session.execute(
+                select(
+                    func.bool_or(Photo.status == "approved"),
+                    func.bool_or(Photo.status != "approved"),
+                ).where(Photo.user_id == user_id)
+            )
+        ).one()
+        searchable = bool(approved_or) and not bool(other_or)
+        await session.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == user_id)
+            .values(is_searchable=searchable)
+        )
+
     """Handle photo upload, validation, and storage (MinIO / S3-compatible).
 
     Photos are stored as WebP (smaller than JPEG at equal quality) with a small
@@ -41,20 +67,20 @@ class PhotoService:
     PUBLIC_STATUSES = {"approved"}
 
     @staticmethod
-    async def validate_image(file_data: bytes, filename: str) -> Tuple[bool, Optional[str]]:
+    async def validate_image(file_data: bytes, filename: str) -> tuple[bool, str | None]:
         """
         Validate image file.
         Returns: (is_valid, error_message)
         """
         # Check file size
         if len(file_data) > PhotoService.MAX_FILE_SIZE:
-            return False, f"Image too large. Max {PhotoService.MAX_FILE_SIZE // (1024*1024)}MB"
+            return False, f"Image too large. Max {PhotoService.MAX_FILE_SIZE // (1024 * 1024)}MB"
 
         # PIL decoding is CPU-bound — keep it off the event loop.
         return await run_in_threadpool(PhotoService._validate_image_sync, file_data)
 
     @staticmethod
-    def _validate_image_sync(file_data: bytes) -> Tuple[bool, Optional[str]]:
+    def _validate_image_sync(file_data: bytes) -> tuple[bool, str | None]:
         try:
             # Open and validate image
             image = Image.open(io.BytesIO(file_data))
@@ -66,10 +92,16 @@ class PhotoService:
             # Check dimensions
             width, height = image.size
             if width < PhotoService.MIN_WIDTH or height < PhotoService.MIN_HEIGHT:
-                return False, f"Image too small. Minimum {PhotoService.MIN_WIDTH}x{PhotoService.MIN_HEIGHT}"
+                return (
+                    False,
+                    f"Image too small. Minimum {PhotoService.MIN_WIDTH}x{PhotoService.MIN_HEIGHT}",
+                )
 
             if width > PhotoService.MAX_WIDTH or height > PhotoService.MAX_HEIGHT:
-                return False, f"Image too large. Maximum {PhotoService.MAX_WIDTH}x{PhotoService.MAX_HEIGHT}"
+                return (
+                    False,
+                    f"Image too large. Maximum {PhotoService.MAX_WIDTH}x{PhotoService.MAX_HEIGHT}",
+                )
 
             # Check aspect ratio (not too extreme)
             ratio = width / height
@@ -95,7 +127,7 @@ class PhotoService:
         return f"users/{user_id}/{photo_id}.jpg"
 
     @staticmethod
-    def _candidate_keys(user_id: str, photo_id: str) -> List[str]:
+    def _candidate_keys(user_id: str, photo_id: str) -> list[str]:
         return [
             PhotoService._object_key(user_id, photo_id),
             PhotoService._legacy_object_key(user_id, photo_id),
@@ -140,7 +172,7 @@ class PhotoService:
         return PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
 
     @staticmethod
-    def _encode_full_and_thumb(file_data: bytes) -> Tuple[bytes, bytes]:
+    def _encode_full_and_thumb(file_data: bytes) -> tuple[bytes, bytes]:
         """Decode once and produce the full-size + thumbnail WebP bytes."""
         image = PhotoService._to_rgb(Image.open(io.BytesIO(file_data)))
         full = PhotoService._encode_webp(image, PhotoService.FULL_MAX, PhotoService.IMAGE_QUALITY)
@@ -158,9 +190,7 @@ class PhotoService:
         Resolve it to an actual loadable URL via get_photo_url() at read time.
         """
         # Decoding + WebP encoding is CPU-bound — keep it off the event loop.
-        full, thumb = await run_in_threadpool(
-            PhotoService._encode_full_and_thumb, file_data
-        )
+        full, thumb = await run_in_threadpool(PhotoService._encode_full_and_thumb, file_data)
 
         key = PhotoService._object_key(user_id, photo_id)
         thumb_key = PhotoService.thumb_key(key)
@@ -192,7 +222,9 @@ class PhotoService:
                 code = e.response.get("Error", {}).get("Code", "")
                 if code in ("404", "NoSuchKey", "NotFound"):
                     continue
-                logger.warning("photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True)
+                logger.warning(
+                    "photo_delete_head_failed", key=key, bucket=bucket, error=str(e), exc_info=True
+                )
                 continue
             await s3.delete_object(Bucket=bucket, Key=key)
             deleted = True
@@ -203,7 +235,7 @@ class PhotoService:
     async def delete_photo(user_id: str, photo_id: str) -> bool:
         """Delete a photo (full + thumbnail, current + legacy keys) from
         whichever bucket it currently lives in."""
-        keys: List[str] = []
+        keys: list[str] = []
         for base in PhotoService._candidate_keys(user_id, photo_id):
             keys.append(base)
             keys.append(PhotoService.thumb_key(base))
@@ -260,7 +292,9 @@ class PhotoService:
                             public=True,
                         )
                     except Exception as e:
-                        logger.warning("photo_publish_thumb_failed", key=key, error=str(e), exc_info=True)
+                        logger.warning(
+                            "photo_publish_thumb_failed", key=key, error=str(e), exc_info=True
+                        )
                     break
             if not moved:
                 logger.warning("photo_publish_missing", user_id=user_id, photo_id=photo_id)
@@ -287,7 +321,9 @@ class PhotoService:
                             public=False,
                         )
                     except Exception as e:
-                        logger.warning("photo_unpublish_thumb_failed", key=key, error=str(e), exc_info=True)
+                        logger.warning(
+                            "photo_unpublish_thumb_failed", key=key, error=str(e), exc_info=True
+                        )
                     break
             if not moved:
                 logger.warning("photo_unpublish_missing", user_id=user_id, photo_id=photo_id)
@@ -355,7 +391,7 @@ class PhotoService:
         return bin(ia ^ ib).count("1")
 
     @staticmethod
-    def is_duplicate(existing_hashes: List[str], new_hash: str) -> bool:
+    def is_duplicate(existing_hashes: list[str], new_hash: str) -> bool:
         """True if new_hash is within threshold of any existing photo hash."""
         threshold = settings.PHASH_DUPLICATE_THRESHOLD
         for h in existing_hashes:
@@ -371,17 +407,13 @@ class PhotoService:
         async with _s3_client() as s3:
             # Try public bucket first (approved photos)
             try:
-                response = await s3.get_object(
-                    Bucket=settings.S3_PUBLIC_BUCKET, Key=key
-                )
+                response = await s3.get_object(Bucket=settings.S3_PUBLIC_BUCKET, Key=key)
                 return await response["Body"].read()
             except ClientError:
                 pass
             # Fall back to private bucket (pending photos)
             try:
-                response = await s3.get_object(
-                    Bucket=settings.S3_PRIVATE_BUCKET, Key=key
-                )
+                response = await s3.get_object(Bucket=settings.S3_PRIVATE_BUCKET, Key=key)
                 return await response["Body"].read()
             except ClientError as e:
                 logger.error("download_photo_failed", key=key, error=str(e))

@@ -1,28 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from uuid import UUID
 
-from app.db.session import get_session
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.cache import bump_photo_epoch
 from app.core.deps import get_admin_user
 from app.core.limiter import limiter
+from app.core.logging import get_logger
 from app.core.redis import redis_client
+from app.db.session import get_session
 from app.models.photo import Photo
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.services.photo_service import PhotoService
-from app.services.admin_log_service import log_admin_action
 from app.schemas.admin import (
     AdminPendingPhotoResponse,
     AdminPhotoActionResponse,
+    AdminPhotoDetailResponse,
     AdminPhotoRejectResponse,
     AdminPhotoStatsResponse,
-    AdminPhotoDetailResponse,
     AdminPhotoVerifyResponse,
     AdminUserPhotoResponse,
 )
-
-from app.core.logging import get_logger
+from app.services.admin_log_service import log_admin_action
+from app.services.photo_service import PhotoService
 
 logger = get_logger("admin_photos")
 
@@ -79,17 +80,19 @@ async def admin_get_pending_photos(
 
     photos = []
     for photo, user, profile in rows:
-        photos.append({
-            "id": photo.id,
-            "user_id": user.id,
-            "user_name": profile.name if profile else None,
-            "user_email": None,
-            "url": await PhotoService.get_photo_url(photo.url, photo.status),
-            "is_main": photo.is_main,
-            "status": photo.status,
-            "face_verified": getattr(photo, "face_verified", False),
-            "created_at": photo.created_at.isoformat() if photo.created_at else None,
-        })
+        photos.append(
+            {
+                "id": photo.id,
+                "user_id": user.id,
+                "user_name": profile.name if profile else None,
+                "user_email": None,
+                "url": await PhotoService.get_photo_url(photo.url, photo.status),
+                "is_main": photo.is_main,
+                "status": photo.status,
+                "face_verified": getattr(photo, "face_verified", False),
+                "created_at": photo.created_at.isoformat() if photo.created_at else None,
+            }
+        )
 
     return photos
 
@@ -119,10 +122,15 @@ async def admin_approve_photo(
     await PhotoService.publish_photo(str(photo.user_id), str(photo.id))
 
     photo.status = "approved"
+    # Approval can make the owner visible — refresh flag in same transaction.
+    await PhotoService.recompute_is_searchable(session, photo.user_id)
     await session.commit()
     await log_admin_action(str(admin.id), "photo_approve", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    # Approval flips the owner's discover visibility → bump photo epoch so
+    # cached decks re-evaluate.
+    await bump_photo_epoch(redis_client)
     return {"message": "Photo approved successfully", "photo_id": str(photo_id)}
 
 
@@ -151,10 +159,15 @@ async def admin_reject_photo(
     # their own photo was rejected via GET /users/me/photos.
     photo.status = "rejected"
     photo.reject_reason = reason
+    # Rejection hides the owner (unless another approved photo set survives —
+    # recompute decides) — refresh flag in same transaction.
+    await PhotoService.recompute_is_searchable(session, photo.user_id)
     await session.commit()
     await log_admin_action(str(admin.id), "photo_reject", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    # Rejection flips the owner's discover visibility → bump photo epoch.
+    await bump_photo_epoch(redis_client)
 
     return {"message": "Photo rejected successfully", "photo_id": str(photo_id), "reason": reason}
 
@@ -169,8 +182,7 @@ async def admin_photo_stats(
     """Admin: Get photo moderation statistics"""
 
     result = await session.execute(
-        select(Photo.status, func.count(Photo.id))
-        .group_by(Photo.status)
+        select(Photo.status, func.count(Photo.id)).group_by(Photo.status)
     )
     stats = {status: count for status, count in result.all()}
 
@@ -178,7 +190,7 @@ async def admin_photo_stats(
         "pending": stats.get("pending", 0),
         "approved": stats.get("approved", 0),
         "rejected": stats.get("rejected", 0),
-        "total": sum(stats.values())
+        "total": sum(stats.values()),
     }
 
 
@@ -214,9 +226,9 @@ async def admin_get_photo(
         "is_main": photo.is_main,
         "status": photo.status,
         "reject_reason": photo.reject_reason,
-        "face_verified": getattr(photo, 'face_verified', False),
+        "face_verified": getattr(photo, "face_verified", False),
         "order": photo.order,
-        "created_at": photo.created_at.isoformat() if photo.created_at else None
+        "created_at": photo.created_at.isoformat() if photo.created_at else None,
     }
 
 
@@ -277,9 +289,9 @@ async def admin_get_user_photos(
             "is_main": p.is_main,
             "status": p.status,
             "reject_reason": p.reject_reason,
-            "face_verified": getattr(p, 'face_verified', False),
+            "face_verified": getattr(p, "face_verified", False),
             "order": p.order,
-            "created_at": p.created_at.isoformat() if p.created_at else None
+            "created_at": p.created_at.isoformat() if p.created_at else None,
         }
         for p in photos
     ]

@@ -5,16 +5,14 @@ Uses mocked InsightFace model (no real model download needed).
 Tests endpoint logic, Redis state, and the verification pipeline.
 """
 
-import io
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import cv2
 import numpy as np
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -24,10 +22,10 @@ from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_settings import UserSettings
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_image_bytes() -> bytes:
     """Create a small synthetic JPEG image."""
@@ -46,6 +44,7 @@ def make_fake_embedding() -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def test_user(db_session) -> User:
@@ -84,10 +83,15 @@ async def verified_user(db_session) -> User:
     )
     db_session.add(user)
     await db_session.flush()
-    db_session.add(UserProfile(
-        user_id=user.id, name="Verified", gender="female",
-        is_verified=True, verified_at=datetime.now(timezone.utc),
-    ))
+    db_session.add(
+        UserProfile(
+            user_id=user.id,
+            name="Verified",
+            gender="female",
+            is_verified=True,
+            verified_at=datetime.now(UTC),
+        )
+    )
     db_session.add(UserSettings(user_id=user.id))
     await db_session.commit()
     await db_session.refresh(user)
@@ -116,8 +120,8 @@ def _add_approved_photo(db_session, user_id):
 # Tests: Verification Status
 # ---------------------------------------------------------------------------
 
-class TestVerificationStatus:
 
+class TestVerificationStatus:
     @pytest.mark.asyncio
     async def test_status_not_verified(self, client, auth_headers):
         resp = await client.get("/api/v1/users/me/verify/status", headers=auth_headers)
@@ -151,8 +155,8 @@ class TestVerificationStatus:
 # Tests: Selfie Submission (with mocked face service)
 # ---------------------------------------------------------------------------
 
-class TestSelfieSubmission:
 
+class TestSelfieSubmission:
     @pytest.mark.asyncio
     async def test_verify_already_verified_matches_keeps_badge(
         self, client, db_session, verified_user, patch_redis
@@ -164,9 +168,11 @@ class TestSelfieSubmission:
             "Authorization": f"Bearer {create_access_token(str(verified_user.id), verified_user.token_version)}"
         }
         fake_emb = make_fake_embedding()
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.9))
@@ -198,9 +204,11 @@ class TestSelfieSubmission:
             "Authorization": f"Bearer {create_access_token(str(verified_user.id), verified_user.token_version)}"
         }
         fake_emb = make_fake_embedding()
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(False, 0.1))
@@ -236,8 +244,10 @@ class TestSelfieSubmission:
 
     @pytest.mark.asyncio
     async def test_verify_no_approved_photos(self, client, auth_headers, test_user, patch_redis):
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
             mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
@@ -250,13 +260,19 @@ class TestSelfieSubmission:
             assert "photo" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_verify_selfie_checks_failed(self, client, auth_headers, db_session, test_user, patch_redis):
+    async def test_verify_selfie_checks_failed(
+        self, client, auth_headers, db_session, test_user, patch_redis
+    ):
         _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
-            mock_fvs.extract_image_embedding = AsyncMock(return_value=(None, "No face detected in the image"))
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
+            mock_fvs.extract_image_embedding = AsyncMock(
+                return_value=(None, "No face detected in the image")
+            )
             mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
 
             resp = await client.post(
@@ -268,15 +284,21 @@ class TestSelfieSubmission:
             assert "no face" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_verify_low_similarity(self, client, auth_headers, db_session, test_user, patch_redis):
+    async def test_verify_low_similarity(
+        self, client, auth_headers, db_session, test_user, patch_redis
+    ):
         photo = _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
-            mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(make_fake_embedding(), ""))
+            mock_fvs.extract_single_photo_embedding = AsyncMock(
+                return_value=(make_fake_embedding(), "")
+            )
             mock_fvs.compare_embeddings = MagicMock(return_value=(False, 0.2))
             mock_ps.download_photo_bytes = AsyncMock(return_value=b"fake")
             mock_nsfw.check_image = AsyncMock(return_value=(True, 0.0))
@@ -308,9 +330,11 @@ class TestSelfieSubmission:
         await db_session.commit()
 
         fake_emb = make_fake_embedding()
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
@@ -338,9 +362,11 @@ class TestSelfieSubmission:
 
         fake_emb = make_fake_embedding()
 
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
@@ -365,14 +391,18 @@ class TestSelfieSubmission:
         assert photo.face_verified is True
 
     @pytest.mark.asyncio
-    async def test_verify_success_sets_cooldown(self, client, auth_headers, db_session, test_user, patch_redis):
+    async def test_verify_success_sets_cooldown(
+        self, client, auth_headers, db_session, test_user, patch_redis
+    ):
         _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
         fake_emb = make_fake_embedding()
-        with patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs, \
-             patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps, \
-             patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw:
+        with (
+            patch("app.api.v1.endpoints.verify.face_verification_service") as mock_fvs,
+            patch("app.api.v1.endpoints.verify.PhotoService") as mock_ps,
+            patch("app.api.v1.endpoints.verify.nsfw_service") as mock_nsfw,
+        ):
             mock_fvs.extract_image_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.extract_single_photo_embedding = AsyncMock(return_value=(fake_emb, ""))
             mock_fvs.compare_embeddings = MagicMock(return_value=(True, 0.85))
@@ -398,7 +428,9 @@ class TestSelfieSubmission:
         assert resp.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_verify_nsfw_selfie(self, client, auth_headers, db_session, test_user, patch_redis):
+    async def test_verify_nsfw_selfie(
+        self, client, auth_headers, db_session, test_user, patch_redis
+    ):
         _add_approved_photo(db_session, test_user.id)
         await db_session.commit()
 
@@ -417,10 +449,11 @@ class TestSelfieSubmission:
 # Tests: Face Verification Service (pure unit tests)
 # ---------------------------------------------------------------------------
 
-class TestFaceVerificationService:
 
+class TestFaceVerificationService:
     def test_compare_embeddings_high_similarity(self):
         from app.services.face_verification_service import FaceVerificationService
+
         svc = FaceVerificationService()
         emb = np.random.randn(128).astype(np.float32)
         emb = emb / np.linalg.norm(emb)
@@ -430,6 +463,7 @@ class TestFaceVerificationService:
 
     def test_compare_embeddings_low_similarity(self):
         from app.services.face_verification_service import FaceVerificationService
+
         svc = FaceVerificationService()
         emb1 = np.random.randn(128).astype(np.float32)
         emb1 = emb1 / np.linalg.norm(emb1)
@@ -439,16 +473,22 @@ class TestFaceVerificationService:
 
     def test_compare_embeddings_zero_vector(self):
         from app.services.face_verification_service import FaceVerificationService
+
         svc = FaceVerificationService()
-        matched, score = svc.compare_embeddings(np.zeros(128, dtype=np.float32), np.random.randn(128).astype(np.float32))
+        matched, score = svc.compare_embeddings(
+            np.zeros(128, dtype=np.float32), np.random.randn(128).astype(np.float32)
+        )
         assert matched is False
         assert score == 0.0
 
     def test_config_settings_exist(self):
         for attr in (
-            "FACE_MODELS_DIR", "FACE_DET_SCORE_THRESHOLD", "FACE_MODEL_THREADS",
+            "FACE_MODELS_DIR",
+            "FACE_DET_SCORE_THRESHOLD",
+            "FACE_MODEL_THREADS",
             "FACE_MATCH_THRESHOLD",
-            "FACE_VERIFICATION_MAX_SIZE_MB", "FACE_VERIFICATION_COOLDOWN_TTL",
+            "FACE_VERIFICATION_MAX_SIZE_MB",
+            "FACE_VERIFICATION_COOLDOWN_TTL",
             "FACE_VERIFICATION_MAX_ATTEMPTS_PER_DAY",
             "FACE_VERIFICATION_MIN_PHOTOS",
         ):

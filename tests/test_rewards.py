@@ -1,9 +1,10 @@
-
-import pytest
 from httpx import AsyncClient
+
+
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -25,7 +26,9 @@ COMPLETE_PROFILE = {
 }
 
 
-async def register_user(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+async def register_user(
+    client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -44,7 +47,9 @@ async def register_user(client: AsyncClient, mock_verification_code=None, phone:
 class TestRewards:
     """Test reward system (ad watching, daily limits)"""
 
-    async def test_premium_user_from_welcome_bonus(self, client: AsyncClient, mock_verification_code):
+    async def test_premium_user_from_welcome_bonus(
+        self, client: AsyncClient, mock_verification_code
+    ):
         data = await register_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
@@ -101,7 +106,9 @@ class TestRewards:
         res = await client.get(REWARDS_LIMITS_URL)
         assert res.status_code == 401
 
-    async def test_ad_reward_returns_correct_limits_structure(self, client: AsyncClient, mock_verification_code):
+    async def test_ad_reward_returns_correct_limits_structure(
+        self, client: AsyncClient, mock_verification_code
+    ):
         data = await register_user(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {data['access_token']}"}
 
@@ -110,10 +117,18 @@ class TestRewards:
         body = res.json()
 
         expected_fields = [
-            "is_premium", "premium_expires_at", "likes_used_today",
-            "likes_remaining_today", "chats_used_today", "chats_remaining_today",
-            "ads_watched_today", "max_ads_per_day", "daily_likes_limit",
-            "daily_chats_limit", "ad_reward_likes_bonus", "ad_reward_chats_bonus"
+            "is_premium",
+            "premium_expires_at",
+            "likes_used_today",
+            "likes_remaining_today",
+            "chats_used_today",
+            "chats_remaining_today",
+            "ads_watched_today",
+            "max_ads_per_day",
+            "daily_likes_limit",
+            "daily_chats_limit",
+            "ad_reward_likes_bonus",
+            "ad_reward_chats_bonus",
         ]
         for field in expected_fields:
             assert field in body

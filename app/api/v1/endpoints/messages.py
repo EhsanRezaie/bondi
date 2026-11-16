@@ -1,47 +1,67 @@
 # app/api/v1/endpoints/messages.py
+import asyncio
 import uuid
-from typing import Optional, Tuple
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from datetime import UTC, datetime
 from uuid import UUID
-from datetime import datetime, timezone
 
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import app.core.redis as redis
+from app.core.deps import get_current_user, get_current_user_id
+from app.core.encryption import derive_chat_key
+from app.core.limiter import limiter
+from app.core.logging import get_logger
+from app.core.redis import redis_client
 from app.db.session import get_session
-from app.models.user import User
 from app.models.chat import Chat
 from app.models.message import Message
-from app.core.deps import get_current_user, get_current_user_id
-from app.core.limiter import limiter
+from app.models.user import User
 from app.schemas.message import (
-    MessageResponse, MessageListResponse, TextMessageRequest,
-    SendMessageResponse, ForwardMessageRequest,
-    MarkReadRequest, MessageStatusResponse,
-    MessageActionResponse, ForwardMessageResponse,
     EditMessageRequest,
+    ForwardMessageRequest,
+    ForwardMessageResponse,
+    MarkReadRequest,
+    MessageActionResponse,
+    MessageListResponse,
+    MessageResponse,
+    MessageStatusResponse,
+    SendMessageResponse,
+    TextMessageRequest,
 )
 from app.services.chat_service import (
-    get_user_chat, can_send_message,
-    mark_messages_as_delivered, mark_messages_as_read,
-    delete_message, forward_message, create_encrypted_message,
-    get_decrypted_message_for_client, edit_message, chat_is_ended,
+    can_send_message,
+    chat_is_ended,
+    create_encrypted_message,
+    delete_message,
+    edit_message,
+    forward_message,
+    get_decrypted_message_for_client,
+    get_user_chat,
+    mark_messages_as_delivered,
+    mark_messages_as_read,
 )
 from app.services.media_service import MediaService
 from app.services.notification_service import NotificationService
 from app.services.websocket_manager import websocket_manager
-import app.core.redis as redis
-from app.core.redis import redis_client
-
-from app.core.logging import get_logger
 
 logger = get_logger("messages")
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
 
-async def get_chat_or_404(
-    session: AsyncSession, chat_id: UUID, user_id: UUID
-) -> Tuple[Chat, UUID]:
+async def get_chat_or_404(session: AsyncSession, chat_id: UUID, user_id: UUID) -> tuple[Chat, UUID]:
     """Fetch an active chat the user belongs to. Returns (chat, other_user_id)."""
     chat = await get_user_chat(session, chat_id, user_id)
     if not chat:
@@ -74,7 +94,7 @@ async def _background_chat_updated(
     chat_id: UUID,
     status: str,
     last_message: dict,
-    updated_at: Optional[datetime],
+    updated_at: datetime | None,
 ):
     """Publish a chat_updated event on the recipient's personal channel so
     their chat list can reorder and refresh in real time.
@@ -86,15 +106,20 @@ async def _background_chat_updated(
         from app.db.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
-            unread = await session.scalar(
-                select(func.count()).select_from(Message).where(
-                    Message.chat_id == chat_id,
-                    Message.receiver_id == recipient_user_id,
-                    Message.is_read == False,
-                    Message.is_deleted_for_all == False,
-                    Message.is_deleted_for_receiver == False,
+            unread = (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Message)
+                    .where(
+                        Message.chat_id == chat_id,
+                        Message.receiver_id == recipient_user_id,
+                        Message.is_read == False,
+                        Message.is_deleted_for_all == False,
+                        Message.is_deleted_for_receiver == False,
+                    )
                 )
-            ) or 0
+                or 0
+            )
         await websocket_manager.send_personal_message(
             str(recipient_user_id),
             {
@@ -115,13 +140,14 @@ async def _background_chat_updated(
 
 def _build_message_response(
     msg: Message,
-    decrypted_content: Optional[str] = None,
-    reply_to_data: Optional[dict] = None,
-    media_url_override: Optional[str] = None,
-    media_thumb_url_override: Optional[str] = None,
+    decrypted_content: str | None = None,
+    reply_to_data: dict | None = None,
+    media_url_override: str | None = None,
+    media_thumb_url_override: str | None = None,
 ) -> MessageResponse:
     """Build a full MessageResponse from a Message row."""
     from app.schemas.message import ReplyToResponse
+
     reply = None
     if reply_to_data:
         reply = ReplyToResponse(**reply_to_data)
@@ -155,7 +181,9 @@ async def get_chat_history(
     chat_id: UUID,
     limit: int = Query(30, ge=1, le=50),
     offset: int = Query(0, ge=0),
-    before: Optional[datetime] = Query(None, description="Cursor: get messages older than this timestamp (ISO format)"),
+    before: datetime | None = Query(
+        None, description="Cursor: get messages older than this timestamp (ISO format)"
+    ),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> MessageListResponse:
@@ -168,6 +196,10 @@ async def get_chat_history(
                  Client passes the `sent_at` of the oldest loaded message as `before` for the next page.
     """
     await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm the per-chat encryption key off the event loop (Phase 2.1): a cold
+    # LRU miss triggers a ~100ms PBKDF2-100k derivation. The message model's
+    # sync content property then hits the cache instantly.
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     query = select(Message).where(
         Message.chat_id == chat_id,
@@ -192,7 +224,7 @@ async def get_chat_history(
 
     if before:
         if before.tzinfo is None:
-            before = before.replace(tzinfo=timezone.utc)
+            before = before.replace(tzinfo=UTC)
         query = query.where(Message.sent_at < before)
 
     # `total` is only used for legacy offset pagination; skip the (potentially
@@ -216,9 +248,7 @@ async def get_chat_history(
     reply_ids = [m.reply_to_id for m in messages if m.reply_to_id]
     reply_map: dict = {}
     if reply_ids:
-        reply_rows = await session.execute(
-            select(Message).where(Message.id.in_(reply_ids))
-        )
+        reply_rows = await session.execute(select(Message).where(Message.id.in_(reply_ids)))
         reply_map = {r.id: r for r in reply_rows.scalars().all()}
 
     message_responses = []
@@ -237,33 +267,35 @@ async def get_chat_history(
                     "message_type": reply_msg.message_type,
                 }
 
-        message_responses.append(MessageResponse(
-            id=msg.id,
-            client_id=msg.client_id,
-            chat_id=msg.chat_id,
-            sender_id=msg.sender_id,
-            receiver_id=msg.receiver_id,
-            message_type=msg.message_type,
-            content=decrypted_data.get("content"),
-            media_url=await MediaService.resolve_media_url(msg.media_url),
-            media_thumb_url=(
-                await MediaService.resolve_media_url(MediaService.thumb_key(msg.media_url))
-                if msg.message_type == "photo"
-                and msg.media_url
-                and msg.media_url.endswith(".webp")
-                else None
-            ),
-            media_duration=msg.media_duration,
-            reply_to=reply_to_data,
-            is_sent=msg.is_sent,
-            is_delivered=msg.is_delivered,
-            is_read=msg.is_read,
-            is_edited=msg.is_edited,
-            sent_at=msg.sent_at,
-            delivered_at=msg.delivered_at,
-            read_at=msg.read_at,
-            edited_at=msg.edited_at,
-        ))
+        message_responses.append(
+            MessageResponse(
+                id=msg.id,
+                client_id=msg.client_id,
+                chat_id=msg.chat_id,
+                sender_id=msg.sender_id,
+                receiver_id=msg.receiver_id,
+                message_type=msg.message_type,
+                content=decrypted_data.get("content"),
+                media_url=await MediaService.resolve_media_url(msg.media_url),
+                media_thumb_url=(
+                    await MediaService.resolve_media_url(MediaService.thumb_key(msg.media_url))
+                    if msg.message_type == "photo"
+                    and msg.media_url
+                    and msg.media_url.endswith(".webp")
+                    else None
+                ),
+                media_duration=msg.media_duration,
+                reply_to=reply_to_data,
+                is_sent=msg.is_sent,
+                is_delivered=msg.is_delivered,
+                is_read=msg.is_read,
+                is_edited=msg.is_edited,
+                sent_at=msg.sent_at,
+                delivered_at=msg.delivered_at,
+                read_at=msg.read_at,
+                edited_at=msg.edited_at,
+            )
+        )
 
     has_more = len(messages) == limit
     if before:
@@ -290,6 +322,8 @@ async def send_text_message(
 ) -> SendMessageResponse:
     """Send a text message in a chat."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")
@@ -299,6 +333,9 @@ async def send_text_message(
         raise HTTPException(status_code=403, detail=reason)
 
     # Per-chat message rate limit (30/min per sender per chat)
+    # Warm per-chat encryption key off the loop BEFORE content is assigned —
+    # cold miss = ~100ms PBKDF2 on the event loop (Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
     rate_key = f"msg_rate:{current_user.id}:{chat.id}"
     try:
         pipe = redis.redis_client.pipeline()
@@ -311,7 +348,9 @@ async def send_text_message(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("msg_rate_limit_check_failed", chat_id=str(chat.id), error=str(e), exc_info=True)
+        logger.warning(
+            "msg_rate_limit_check_failed", chat_id=str(chat.id), error=str(e), exc_info=True
+        )
 
     new_message = await create_encrypted_message(
         session=session,
@@ -389,12 +428,14 @@ async def send_photo_message(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     caption: str = Form(None),
-    client_id: Optional[UUID] = Form(None),
+    client_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> SendMessageResponse:
     """Send a photo message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")
@@ -427,9 +468,7 @@ async def send_photo_message(
     # media_url holds the object KEY — resolve to a fresh signed URL for both
     # the WS echo and the HTTP response so the client can load it immediately.
     resolved_media_url = await MediaService.resolve_media_url(media_url)
-    resolved_thumb_url = await MediaService.resolve_media_url(
-        MediaService.thumb_key(media_url)
-    )
+    resolved_thumb_url = await MediaService.resolve_media_url(MediaService.thumb_key(media_url))
 
     message_data = {
         "type": "new_message",
@@ -473,7 +512,12 @@ async def send_photo_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=caption or "", media_url_override=resolved_media_url, media_thumb_url_override=resolved_thumb_url),
+        message=_build_message_response(
+            new_message,
+            decrypted_content=caption or "",
+            media_url_override=resolved_media_url,
+            media_thumb_url_override=resolved_thumb_url,
+        ),
     )
 
 
@@ -485,18 +529,22 @@ async def send_voice_message(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     duration: int = Form(...),
-    client_id: Optional[UUID] = Form(None),
+    client_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> SendMessageResponse:
     """Send a voice message (only in accepted chats)."""
     chat, other_user_id = await get_chat_or_404(session, chat_id, current_user.id)
+    # Warm per-chat encryption key off the loop (cold miss = ~100ms PBKDF2, Phase 2.1).
+    await asyncio.to_thread(derive_chat_key, str(chat_id))
 
     if await chat_is_ended(session, chat, current_user.id):
         raise HTTPException(status_code=403, detail="This conversation is over.")
 
     if chat.status != "accepted":
-        raise HTTPException(status_code=403, detail="Voice messages can only be sent in accepted chats")
+        raise HTTPException(
+            status_code=403, detail="Voice messages can only be sent in accepted chats"
+        )
 
     file_data = await file.read()
     message_id = uuid.uuid4()
@@ -565,7 +613,9 @@ async def send_voice_message(
         sent_at=new_message.sent_at,
         requires_acceptance=False,
         chat_accepted=True,
-        message=_build_message_response(new_message, decrypted_content=None, media_url_override=resolved_media_url),
+        message=_build_message_response(
+            new_message, decrypted_content=None, media_url_override=resolved_media_url
+        ),
     )
 
 
@@ -622,18 +672,17 @@ async def edit_message_endpoint(
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> MessageResponse:
     """Edit a text message's content (owner only)."""
-    message, error = await edit_message(
-        session, message_id, current_user_id, body.content
-    )
+    message, error = await edit_message(session, message_id, current_user_id, body.content)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
     await session.refresh(message)
     chat = await session.scalar(select(Chat).where(Chat.id == message.chat_id))
     other_user_id = (
-        chat.recipient_id if chat.initiator_id == current_user_id
-        else chat.initiator_id
-    ) if chat else None
+        (chat.recipient_id if chat.initiator_id == current_user_id else chat.initiator_id)
+        if chat
+        else None
+    )
 
     background_tasks.add_task(
         _background_websocket_send,
@@ -665,7 +714,9 @@ async def forward_message_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Forward a message to another chat"""
-    new_message, error = await forward_message(session, message_id, body.target_chat_id, current_user.id)
+    new_message, error = await forward_message(
+        session, message_id, body.target_chat_id, current_user.id
+    )
     if error:
         raise HTTPException(status_code=400, detail=error)
     return {"message": "Message forwarded", "new_message_id": str(new_message.id)}

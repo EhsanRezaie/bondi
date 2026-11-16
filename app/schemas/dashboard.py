@@ -1,6 +1,4 @@
-from typing import List, Optional
 from pydantic import BaseModel
-from datetime import date
 
 
 class DashboardOverviewResponse(BaseModel):
@@ -24,16 +22,16 @@ class ChartDataPoint(BaseModel):
 
 
 class UserGrowthResponse(BaseModel):
-    labels: List[str]
-    new_users: List[int]
-    active_users: List[int]
+    labels: list[str]
+    new_users: list[int]
+    active_users: list[int]
 
 
 class ActivityStatsResponse(BaseModel):
-    labels: List[str]
-    swipes: List[int]
-    matches: List[int]
-    messages: List[int]
+    labels: list[str]
+    swipes: list[int]
+    matches: list[int]
+    messages: list[int]
 
 
 class ReportStatsResponse(BaseModel):

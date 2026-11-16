@@ -1,13 +1,16 @@
+import json
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, patch
+from uuid import UUID, uuid4
 
-import pytest
 from httpx import AsyncClient
-from datetime import datetime, date, timedelta, timezone
-from unittest.mock import patch, AsyncMock
+from sqlalchemy import delete
 
 
 def _phone(key: str) -> str:
     """Derive a deterministic, unique E.164 phone number from a string key."""
     import hashlib
+
     return "+9891" + str(int(hashlib.sha1(key.encode()).hexdigest(), 16) % 10**10).zfill(10)
 
 
@@ -73,7 +76,9 @@ def calculate_age(birth_date: str) -> int:
 
 
 # ============ EXACTLY LIKE test_auth.py ============
-async def register_user_full(client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE) -> dict:
+async def register_user_full(
+    client: AsyncClient, mock_verification_code=None, phone: str = VALID_PHONE
+) -> dict:
     """Helper: complete full registration via phone OTP flow."""
     if mock_verification_code:
         await mock_verification_code(phone, VALID_CODE)
@@ -123,34 +128,56 @@ async def register_user_full_custom(
 def assert_profile_fields(data: dict, expected: dict):
     """Helper to assert profile fields match expected values."""
     profile_fields = [
-        "name", "gender", "sexual_orientation", "bio", "height", "weight",
-        "body_type", "relationship_status", "living_situation", "children_status",
-        "smoking", "drinking", "here_for", "pets", "workout_frequency", "zodiac_sign",
-        "education", "workplace", "religion", "ethnicity",
-        "political_orientation", "languages", "country", "province", "city",
-        "lat", "lng", "location_manual",
+        "name",
+        "gender",
+        "sexual_orientation",
+        "bio",
+        "height",
+        "weight",
+        "body_type",
+        "relationship_status",
+        "living_situation",
+        "children_status",
+        "smoking",
+        "drinking",
+        "here_for",
+        "pets",
+        "workout_frequency",
+        "zodiac_sign",
+        "education",
+        "workplace",
+        "religion",
+        "ethnicity",
+        "political_orientation",
+        "languages",
+        "country",
+        "province",
+        "city",
+        "lat",
+        "lng",
+        "location_manual",
     ]
 
     for field in profile_fields:
         if field in expected:
             actual = data.get(field)
             expected_val = expected[field]
-            assert actual == expected_val, f"Field {field} mismatch: expected {expected_val}, got {actual}"
+            assert actual == expected_val, (
+                f"Field {field} mismatch: expected {expected_val}, got {actual}"
+            )
 
 
 async def _delete_me(client: AsyncClient, headers: dict, payload: dict = None):
     """httpx's AsyncClient.delete() doesn't forward `json=` in this version."""
-    return await client.request(
-        "DELETE", USERS_ME_URL, headers=headers, json=payload or {}
-    )
+    return await client.request("DELETE", USERS_ME_URL, headers=headers, json=payload or {})
 
 
 # =============================================================================
 # GET /api/v1/users/me
 # =============================================================================
 
-class TestGetMe:
 
+class TestGetMe:
     async def test_get_me_success(self, client: AsyncClient, mock_verification_code):
         """Should return current user profile with all fields."""
         result = await register_user_full(client, mock_verification_code)
@@ -209,8 +236,9 @@ class TestGetMe:
 
         # Bypass the Redis user-profile cache + the shared session's identity map
         # (photos were loaded as empty during registration).
-        from app.core.cache import key_user_profile
         import app.core.redis as redis_module
+        from app.core.cache import key_user_profile
+
         db_session.expire_all()
         await redis_module.redis_client.delete(key_user_profile(user_id))
 
@@ -267,8 +295,8 @@ class TestGetMe:
 # PUT /api/v1/users/me
 # =============================================================================
 
-class TestUpdateMe:
 
+class TestUpdateMe:
     async def test_update_name_success(self, client: AsyncClient, mock_verification_code):
         """Should update user name."""
         result = await register_user_full(client, mock_verification_code)
@@ -311,7 +339,9 @@ class TestUpdateMe:
         data = res.json()
         assert data["gender"] == "female"
 
-    async def test_update_sexual_orientation_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_sexual_orientation_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update sexual orientation."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -339,7 +369,9 @@ class TestUpdateMe:
         data = res.json()
         assert data["body_type"] == "slim"
 
-    async def test_update_relationship_status_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_relationship_status_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update relationship status."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -353,7 +385,9 @@ class TestUpdateMe:
         data = res.json()
         assert data["relationship_status"] == "divorced"
 
-    async def test_update_living_situation_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_living_situation_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update living situation."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -367,7 +401,9 @@ class TestUpdateMe:
         data = res.json()
         assert data["living_situation"] == "with_partner"
 
-    async def test_update_children_status_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_children_status_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update children status."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -465,7 +501,9 @@ class TestUpdateMe:
         data = res.json()
         assert data["ethnicity"] == "kurdish"
 
-    async def test_update_political_orientation_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_political_orientation_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update political orientation."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -508,7 +546,9 @@ class TestUpdateMe:
         assert data["height"] == 175
         assert data["weight"] == 70
 
-    async def test_update_multiple_fields_success(self, client: AsyncClient, mock_verification_code):
+    async def test_update_multiple_fields_success(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should update multiple fields at once."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -553,7 +593,9 @@ class TestUpdateMe:
         )
         assert res.status_code == 422
 
-    async def test_update_invalid_sexual_orientation(self, client: AsyncClient, mock_verification_code):
+    async def test_update_invalid_sexual_orientation(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject invalid sexual orientation."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -577,7 +619,9 @@ class TestUpdateMe:
         )
         assert res.status_code == 422
 
-    async def test_update_invalid_relationship_status(self, client: AsyncClient, mock_verification_code):
+    async def test_update_invalid_relationship_status(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject invalid relationship status."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -589,7 +633,9 @@ class TestUpdateMe:
         )
         assert res.status_code == 422
 
-    async def test_update_invalid_living_situation(self, client: AsyncClient, mock_verification_code):
+    async def test_update_invalid_living_situation(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject invalid living situation."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -601,7 +647,9 @@ class TestUpdateMe:
         )
         assert res.status_code == 422
 
-    async def test_update_invalid_children_status(self, client: AsyncClient, mock_verification_code):
+    async def test_update_invalid_children_status(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject invalid children status."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -754,9 +802,11 @@ class TestUpdateMe:
 # DELETE /api/v1/users/me  (account deletion with OTP + 30-day grace)
 # =============================================================================
 
-class TestDeleteMe:
 
-    async def test_delete_me_success(self, client: AsyncClient, mock_verification_code, mock_delete_code):
+class TestDeleteMe:
+    async def test_delete_me_success(
+        self, client: AsyncClient, mock_verification_code, mock_delete_code
+    ):
         """Should soft-delete: deactivate, set deleted_at, lock the phone."""
         result = await register_user_full_custom(
             client,
@@ -786,14 +836,24 @@ class TestDeleteMe:
         )
         headers = {"Authorization": f"Bearer {result['access_token']}"}
 
-        with patch("app.api.v1.endpoints.users.send_verification_code", new_callable=AsyncMock) as mock_send:
+        with patch(
+            "app.api.v1.endpoints.users.send_verification_code", new_callable=AsyncMock
+        ) as mock_send:
             res = await client.post(USERS_ME_DELETE_CODE_URL, headers=headers)
             assert res.status_code == 204
             assert mock_send.await_count == 1
 
-    async def test_delete_full_flow_uses_real_code(self, client: AsyncClient, mock_verification_code):
+            cooldown = await client.post(USERS_ME_DELETE_CODE_URL, headers=headers)
+            assert cooldown.status_code == 429
+            assert "Please wait" in cooldown.json()["detail"]
+            assert mock_send.await_count == 1
+
+    async def test_delete_full_flow_uses_real_code(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """End-to-end: request code → delete with the actual stored code."""
         import json
+
         import app.core.redis as redis_module
 
         result = await register_user_full_custom(
@@ -854,9 +914,11 @@ class TestDeleteMe:
 # Deletion grace window: restore / purge
 # =============================================================================
 
-class TestAccountDeletionGrace:
 
-    async def test_deleted_account_restored_within_grace(self, client, mock_verification_code, mock_delete_code):
+class TestAccountDeletionGrace:
+    async def test_deleted_account_restored_within_grace(
+        self, client, mock_verification_code, mock_delete_code
+    ):
         """Logging in within the 30-day grace window restores the account."""
         phone = _phone("restore_test@example.com")
         result = await register_user_full_custom(client, mock_verification_code, phone=phone)
@@ -881,9 +943,12 @@ class TestAccountDeletionGrace:
         get_res = await client.get(USERS_ME_URL, headers=new_headers)
         assert get_res.status_code == 200
 
-    async def test_deleted_account_past_grace_blocked(self, client, db_session, mock_verification_code, mock_delete_code):
+    async def test_deleted_account_past_grace_blocked(
+        self, client, db_session, mock_verification_code, mock_delete_code
+    ):
         """Logging in after the grace window (before the sweep runs) is blocked."""
         from sqlalchemy import select
+
         from app.models.user import User
 
         phone = _phone("past_grace@example.com")
@@ -897,7 +962,7 @@ class TestAccountDeletionGrace:
 
         # Backdate deleted_at past the grace window.
         user = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one()
-        user.deleted_at = datetime.now(timezone.utc) - timedelta(days=40)
+        user.deleted_at = datetime.now(UTC) - timedelta(days=40)
         await db_session.commit()
 
         await mock_verification_code(phone, VALID_CODE)
@@ -905,9 +970,12 @@ class TestAccountDeletionGrace:
         assert login_res.status_code == 403
         assert "finalized" in login_res.json()["detail"]
 
-    async def test_purge_deleted_accounts(self, client, db_session, mock_verification_code, mock_delete_code):
+    async def test_purge_deleted_accounts(
+        self, client, db_session, mock_verification_code, mock_delete_code
+    ):
         """Past-grace accounts are hard-deleted by the purge task (incl. cascade)."""
         from sqlalchemy import select
+
         from app.models.user import User
         from app.models.user_profile import UserProfile
 
@@ -922,29 +990,38 @@ class TestAccountDeletionGrace:
 
         # Backdate past the grace window.
         user = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one()
-        user.deleted_at = datetime.now(timezone.utc) - timedelta(days=40)
+        user.deleted_at = datetime.now(UTC) - timedelta(days=40)
         await db_session.commit()
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
         from app.tasks.cleanup import _purge_deleted_accounts
         from tests.conftest import make_engine
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
         # Build a session factory on a fresh, loop-local engine so the purge
         # never touches the global AsyncSessionLocal engine (created at import
         # time on a different event loop — the CI-only "attached to a different
         # loop" failure).
         purge_engine = make_engine()
-        purge_factory = async_sessionmaker(purge_engine, class_=AsyncSession, expire_on_commit=False)
+        purge_factory = async_sessionmaker(
+            purge_engine, class_=AsyncSession, expire_on_commit=False
+        )
         try:
-            with patch("app.services.photo_service.PhotoService.delete_photo", new_callable=AsyncMock) as mock_del:
+            with patch(
+                "app.services.photo_service.PhotoService.delete_photo", new_callable=AsyncMock
+            ) as mock_del:
                 result = await _purge_deleted_accounts(session_factory=purge_factory)
         finally:
             await purge_engine.dispose()
         assert result == {"purged": 1}
 
         # User + cascade-deleted profile are gone.
-        assert (await db_session.execute(select(User).where(User.id == user_id))).scalar_one_or_none() is None
-        assert (await db_session.execute(select(UserProfile).where(UserProfile.user_id == user_id))).scalar_one_or_none() is None
+        assert (
+            await db_session.execute(select(User).where(User.id == user_id))
+        ).scalar_one_or_none() is None
+        assert (
+            await db_session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+        ).scalar_one_or_none() is None
 
         # The phone is free again → brand-new account.
         await mock_verification_code(phone, VALID_CODE)
@@ -957,8 +1034,8 @@ class TestAccountDeletionGrace:
 # POST /api/v1/users/me/location
 # =============================================================================
 
-class TestUpdateLocation:
 
+class TestUpdateLocation:
     async def test_update_location_success(self, client: AsyncClient, mock_verification_code):
         """Should update user location with lat/lng."""
         result = await register_user_full(client, mock_verification_code)
@@ -978,7 +1055,9 @@ class TestUpdateLocation:
         assert data["lng"] == 51.3890
         assert data["location_manual"] is False
 
-    async def test_update_location_with_negative_coordinates(self, client: AsyncClient, mock_verification_code):
+    async def test_update_location_with_negative_coordinates(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should handle negative coordinates correctly."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -1019,7 +1098,9 @@ class TestUpdateLocation:
         )
         assert res.status_code == 400
 
-    async def test_update_location_missing_params(self, client: AsyncClient, mock_verification_code):
+    async def test_update_location_missing_params(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should reject missing parameters."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -1039,13 +1120,96 @@ class TestUpdateLocation:
         )
         assert res.status_code == 401
 
+    async def test_subthreshold_location_ping_skips_coordinate_write_and_geocoding(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_subthreshold")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 35.6893, "lng": 51.3890},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_not_awaited()
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert profile["lat"] == COMPLETE_PROFILE_PAYLOAD["lat"]
+
+    async def test_location_update_only_autofills_present_reverse_geocode_fields(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_partial_geocode")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+            return_value={"country": "Canada", "city": "Toronto"},
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 43.6532, "lng": -79.3832},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_awaited_once_with(43.6532, -79.3832)
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert profile["country"] == "Canada"
+        assert profile["city"] == "Toronto"
+        assert profile["province"] == COMPLETE_PROFILE_PAYLOAD["province"]
+
+    async def test_location_update_preserves_manual_location_text(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_manual_text")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        text_update = await client.patch(
+            USERS_ME_LOCATION_TEXT_URL,
+            json={"country": "Japan", "province": "Tokyo", "city": "Tokyo"},
+            headers=headers,
+        )
+        assert text_update.status_code == 200
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 35.6762, "lng": 139.6503},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_not_awaited()
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert (profile["country"], profile["province"], profile["city"]) == (
+            "Japan",
+            "Tokyo",
+            "Tokyo",
+        )
+
 
 # =============================================================================
 # PATCH /api/v1/users/me/location-text
 # =============================================================================
 
-class TestUpdateLocationText:
 
+class TestUpdateLocationText:
     async def test_update_location_text_success(self, client: AsyncClient, mock_verification_code):
         """Should update location with text fields."""
         result = await register_user_full(client, mock_verification_code)
@@ -1114,9 +1278,11 @@ class TestUpdateLocationText:
 # Additional Tests
 # =============================================================================
 
-class TestUserSettings:
 
-    async def test_settings_created_on_registration(self, client: AsyncClient, mock_verification_code):
+class TestUserSettings:
+    async def test_settings_created_on_registration(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should create default settings on registration."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -1134,9 +1300,205 @@ class TestUserSettings:
         assert settings["language"] == "fa"
         assert settings["dark_mode"] is False
 
+    async def test_update_settings_persists_values_and_ignores_explicit_null(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("update_settings_values"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put(
+            "/api/v1/users/me/settings",
+            json={"hide_last_seen": True, "language": "en", "dark_mode": None},
+            headers=headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["hide_last_seen"] is True
+        assert response.json()["language"] == "en"
+        assert response.json()["dark_mode"] is False
+
+    async def test_update_settings_rejects_empty_payload(self, client, mock_verification_code):
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("update_settings_empty"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put("/api/v1/users/me/settings", json={}, headers=headers)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No fields to update"
+
+
+class TestUserInterestsAndPrompts:
+    async def test_update_interests_replaces_list_and_rejects_unknown_names(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("update_user_interests")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put(
+            "/api/v1/users/me/interests",
+            json={"interests": ["football", "reading"]},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert set(response.json()["interests"]) == {"football", "reading"}
+
+        invalid = await client.put(
+            "/api/v1/users/me/interests",
+            json={"interests": ["not-a-seeded-interest"]},
+            headers=headers,
+        )
+        assert invalid.status_code == 400
+        assert "not-a-seeded-interest" in invalid.json()["detail"]
+
+        cleared = await client.put(
+            "/api/v1/users/me/interests", json={"interests": []}, headers=headers
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["interests"] == []
+
+    async def test_update_prompts_replaces_prompt_answers(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.prompt import Prompt
+
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("update_user_prompts")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        first_prompt = Prompt(question="A favorite place?", language="en", is_active=True)
+        second_prompt = Prompt(question="A perfect day?", language="en", is_active=True)
+        db_session.add_all([first_prompt, second_prompt])
+        await db_session.commit()
+
+        response = await client.put(
+            "/api/v1/users/me/prompts",
+            json={
+                "prompts": [
+                    {"prompt_id": str(first_prompt.id), "answer": "The mountains"},
+                    {"prompt_id": str(second_prompt.id), "answer": "A long walk"},
+                ]
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert {p["answer"] for p in response.json()["prompts"]} == {
+            "The mountains",
+            "A long walk",
+        }
+
+        replaced = await client.put(
+            "/api/v1/users/me/prompts",
+            json={"prompts": [{"prompt_id": str(second_prompt.id), "answer": "Coffee"}]},
+            headers=headers,
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert [p["answer"] for p in replaced.json()["prompts"]] == ["Coffee"]
+
+        cleared = await client.put(
+            "/api/v1/users/me/prompts", json={"prompts": []}, headers=headers
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["prompts"] == []
+
+
+class TestPublicProfile:
+    async def test_public_profile_returns_serialized_profile_and_reuses_cache(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_target")
+        )
+        viewer_headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+        target_headers = {"Authorization": f"Bearer {target['access_token']}"}
+        target_id = target["user"]["id"]
+
+        first = await client.get(f"/api/v1/users/{target_id}", headers=viewer_headers)
+        assert first.status_code == 200, first.text
+        assert first.json()["id"] == target_id
+        assert first.json()["name"] == COMPLETE_PROFILE_PAYLOAD["name"]
+
+        # Cached payloads exclude viewer-relative online and distance values.
+        from app.core.cache import key_public_profile
+        from app.core.redis import redis_client
+
+        raw = await redis_client.get(key_public_profile(UUID(target_id)))
+        cached = json.loads(raw)
+        assert "distance_km" not in cached["profile"]
+        assert "is_online" not in cached["profile"]
+
+        await redis_client.setex(f"online:{target_id}", 60, "1")
+        second = await client.get(f"/api/v1/users/{target_id}", headers=viewer_headers)
+        assert second.status_code == 200, second.text
+        assert second.json()["is_online"] is True
+        assert second.json()["distance_km"] is not None
+
+        own_profile = await client.get(f"/api/v1/users/{target_id}", headers=target_headers)
+        assert own_profile.status_code == 400
+        assert own_profile.json()["detail"] == "Cannot view your own profile here"
+
+    async def test_public_profile_hides_targets_when_blocked_either_way(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.block import Block
+
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("blocked_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("blocked_target")
+        )
+        viewer_id, target_id = UUID(viewer["user"]["id"]), UUID(target["user"]["id"])
+        headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+
+        db_session.add(Block(blocker_id=viewer_id, blocked_id=target_id))
+        await db_session.commit()
+        response = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert response.status_code == 404
+
+        await db_session.execute(delete(Block).where(Block.blocker_id == viewer_id))
+        db_session.add(Block(blocker_id=target_id, blocked_id=viewer_id))
+        await db_session.commit()
+        response = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert response.status_code == 404
+
+    async def test_public_profile_rejects_missing_or_inactive_targets(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.user import User
+
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_missing_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_inactive_target")
+        )
+        headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+        target_id = UUID(target["user"]["id"])
+
+        missing = await client.get(f"/api/v1/users/{uuid4()}", headers=headers)
+        assert missing.status_code == 404
+
+        target_row = await db_session.get(User, target_id)
+        target_row.is_active = False
+        await db_session.commit()
+        inactive = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert inactive.status_code == 404
+
 
 class TestPremiumStatus:
-
     async def test_is_premium_field_exists(self, client: AsyncClient, mock_verification_code):
         """Should show is_premium field in response."""
         result = await register_user_full(client, mock_verification_code)
@@ -1150,8 +1512,9 @@ class TestPremiumStatus:
 
 
 class TestProfileCompleteness:
-
-    async def test_is_profile_complete_true_after_complete(self, client: AsyncClient, mock_verification_code):
+    async def test_is_profile_complete_true_after_complete(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should show is_profile_complete as true after completing profile."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -1160,7 +1523,9 @@ class TestProfileCompleteness:
         data = res.json()
         assert data["is_profile_complete"] is True
 
-    async def test_is_profile_complete_with_minimal(self, client: AsyncClient, mock_verification_code):
+    async def test_is_profile_complete_with_minimal(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should show is_profile_complete as true with minimal required fields."""
         result = await register_user_full_custom(
             client,
@@ -1176,8 +1541,9 @@ class TestProfileCompleteness:
 
 
 class TestEdgeCases:
-
-    async def test_update_with_unicode_characters(self, client: AsyncClient, mock_verification_code):
+    async def test_update_with_unicode_characters(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Should handle Unicode characters properly."""
         result = await register_user_full(client, mock_verification_code)
         headers = {"Authorization": f"Bearer {result['access_token']}"}
@@ -1218,7 +1584,9 @@ class TestEdgeCases:
         data = res.json()
         assert data["settings"] is not None
 
-    async def test_duplicate_phone_cannot_register(self, client: AsyncClient, mock_verification_code):
+    async def test_duplicate_phone_cannot_register(
+        self, client: AsyncClient, mock_verification_code
+    ):
         """Re-verifying an existing phone logs in instead of creating a new user."""
         phone = _phone("duplicate@example.com")
         await register_user_full_custom(
@@ -1239,8 +1607,9 @@ class TestEdgeCases:
 
 
 class TestAccountReactivation:
-
-    async def test_deleted_account_restores_via_login(self, client: AsyncClient, mock_verification_code, mock_delete_code):
+    async def test_deleted_account_restores_via_login(
+        self, client: AsyncClient, mock_verification_code, mock_delete_code
+    ):
         """Logging in within the grace window restores a deleted account."""
         phone = _phone("delete_test2@example.com")
 

@@ -10,7 +10,6 @@ Flow:
 When SMS is not enabled (SMS_ENABLED=false) the code is only logged/printed so
 local dev and tests keep working without an SMS account.
 """
-from typing import Optional
 
 import httpx
 
@@ -28,7 +27,7 @@ OTP_MESSAGE_TEMPLATES = {
 }
 
 
-async def _get_token() -> Optional[str]:
+async def _get_token() -> str | None:
     """Return a cached OAuth2 access token, minting a new one if needed."""
     cached = await redis_module.redis_client.get(SMS_TOKEN_CACHE_KEY)
     if cached:
@@ -117,5 +116,6 @@ async def send_verification_code(phone: str, code: str, language: str = "fa") ->
         logger.error("sms_send_failed", phone=phone, error=str(e), exc_info=True)
         return False
 
-    logger.info("sms_otp_sent", phone=phone, code=code)
+    # Never log the code itself: log access == account takeover of every user.
+    logger.info("sms_otp_sent", phone=phone)
     return True

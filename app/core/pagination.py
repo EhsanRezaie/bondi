@@ -8,6 +8,7 @@ scanning and discarding ``offset`` rows — the classic deep-page OFFSET cost.
 The token is intentionally opaque (URL-safe base64 of JSON) so clients treat it
 as a black box and we stay free to change the encoding later.
 """
+
 from __future__ import annotations
 
 import base64

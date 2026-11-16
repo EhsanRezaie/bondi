@@ -1,19 +1,21 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+
+from fastapi import APIRouter, Depends, Query, WebSocket
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, or_
-from app.services.websocket_manager import websocket_manager
+
 from app.core.deps import validate_ws_token
+from app.core.logging import get_logger
 from app.core.redis import get_redis
 from app.db.session import get_db
+from app.models.block import Block
 from app.models.chat import Chat
 from app.models.user import User
 from app.models.user_settings import UserSettings
-from app.models.block import Block
-from app.core.logging import get_logger
+from app.services.websocket_manager import websocket_manager
 
 logger = get_logger("websocket")
 
@@ -22,9 +24,7 @@ router = APIRouter()
 RECEIVE_TIMEOUT = 40.0
 
 
-async def _resolve_chat(
-    db: AsyncSession, chat_id: str, user_id: str
-):
+async def _resolve_chat(db: AsyncSession, chat_id: str, user_id: str):
     """Validate a chat exists, is active, the user is a member, and return the
     canonical channel + other participant. Returns None if not authorized."""
     try:
@@ -49,17 +49,20 @@ async def _resolve_chat(
         return None
 
     other_user_id = (
-        str(chat_obj.recipient_id) if str(chat_obj.initiator_id) == user_id
+        str(chat_obj.recipient_id)
+        if str(chat_obj.initiator_id) == user_id
         else str(chat_obj.initiator_id)
     )
 
     blocked = await db.scalar(
-        select(Block.id).where(
+        select(Block.id)
+        .where(
             or_(
                 (Block.blocker_id == user_id) & (Block.blocked_id == other_user_id),
                 (Block.blocker_id == other_user_id) & (Block.blocked_id == user_id),
             )
-        ).limit(1)
+        )
+        .limit(1)
     )
     if blocked:
         return None
@@ -97,14 +100,10 @@ async def _relay_typing(
         await websocket_manager.set_typing(publish_channel, user_id, redis)
     else:
         await websocket_manager.clear_typing(publish_channel, user_id, redis)
-    logger.debug(
-        "ws_typing_relayed", user_id=user_id, chat_id=channel, frame_type=event_type
-    )
+    logger.debug("ws_typing_relayed", user_id=user_id, chat_id=channel, frame_type=event_type)
 
 
-async def _broadcast_presence(
-    db: AsyncSession, user_id: str, payload: dict, redis
-) -> None:
+async def _broadcast_presence(db: AsyncSession, user_id: str, payload: dict, redis) -> None:
     """Publish a presence event to every active chat the user participates in.
 
     Resolved from the DB so it works across workers — the in-memory
@@ -126,14 +125,10 @@ async def _broadcast_presence(
         try:
             await redis.publish(channel, json.dumps(payload))
         except Exception as e:
-            logger.warning(
-                "ws_presence_publish_failed", chat_id=str(chat_id), error=str(e)
-            )
+            logger.warning("ws_presence_publish_failed", chat_id=str(chat_id), error=str(e))
 
 
-async def _presence_snapshot(
-    db: AsyncSession, peer_user_id: str, redis, chat_id: str
-):
+async def _presence_snapshot(db: AsyncSession, peer_user_id: str, redis, chat_id: str):
     """Send the current online/last-seen state of the peer over the calling
     socket (delivered directly by the caller). Returns the event dict."""
     online = await websocket_manager.is_online(peer_user_id, redis)
@@ -176,16 +171,12 @@ async def stream_websocket(
         return
 
     await websocket_manager.connect(websocket, user_id, redis)
-    await db.execute(
-        update(User).where(User.id == user_id).values(last_seen_at=datetime.now(timezone.utc))
-    )
+    await db.execute(update(User).where(User.id == user_id).values(last_seen_at=datetime.now(UTC)))
     await db.commit()
 
     # Tell peers who have a chat open with this user (on any worker) that they
     # are online.
-    await _broadcast_presence(
-        db, user_id, {"type": "user_online", "user_id": user_id}, redis
-    )
+    await _broadcast_presence(db, user_id, {"type": "user_online", "user_id": user_id}, redis)
 
     active_chat_id: str | None = None
     active_peer_id: str | None = None
@@ -193,10 +184,8 @@ async def stream_websocket(
     try:
         while True:
             try:
-                raw = await asyncio.wait_for(
-                    websocket.receive_text(), timeout=RECEIVE_TIMEOUT
-                )
-            except asyncio.TimeoutError:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=RECEIVE_TIMEOUT)
+            except TimeoutError:
                 break
             except Exception as e:
                 logger.warning("ws_receive_failed", user_id=user_id, error=str(e), exc_info=True)
@@ -205,11 +194,14 @@ async def stream_websocket(
             try:
                 data = json.loads(raw)
                 from app.schemas.message import WsInbound
+
                 msg = WsInbound.model_validate(data)
             except Exception as e:
                 logger.warning("ws_invalid_message", user_id=user_id, error=str(e), exc_info=True)
                 try:
-                    await websocket.send_text(json.dumps({"type": "error", "reason": "bad_message"}))
+                    await websocket.send_text(
+                        json.dumps({"type": "error", "reason": "bad_message"})
+                    )
                 except Exception:
                     pass
                 continue
@@ -224,22 +216,18 @@ async def stream_websocket(
                 resolved = await _resolve_chat(db, str(chat_id), user_id) if chat_id else None
                 if resolved:
                     channel, other_user_id = resolved
-                    await websocket_manager.subscribe(
-                        user_id, channel, other_user_id, redis
-                    )
+                    await websocket_manager.subscribe(user_id, channel, other_user_id, redis)
                     active_chat_id = channel
                     active_peer_id = other_user_id
-                    snapshot = await _presence_snapshot(
-                        db, other_user_id, redis, channel
-                    )
+                    snapshot = await _presence_snapshot(db, other_user_id, redis, channel)
                     try:
                         await websocket.send_text(json.dumps(snapshot))
                     except Exception as e:
-                        logger.warning("ws_snapshot_send_failed", user_id=user_id, error=str(e), exc_info=True)
+                        logger.warning(
+                            "ws_snapshot_send_failed", user_id=user_id, error=str(e), exc_info=True
+                        )
                         break
-                    logger.info(
-                        "WS subscribed", user_id=user_id, chat_id=channel
-                    )
+                    logger.info("WS subscribed", user_id=user_id, chat_id=channel)
 
             elif msg_type == "unsubscribe":
                 chat_id = msg.chat_id
@@ -248,14 +236,10 @@ async def stream_websocket(
                     if active_chat_id == str(chat_id):
                         active_chat_id = None
                         active_peer_id = None
-                    logger.info(
-                        "WS unsubscribed", user_id=user_id, chat_id=chat_id
-                    )
+                    logger.info("WS unsubscribed", user_id=user_id, chat_id=chat_id)
 
             elif msg_type in ("typing", "typing_stopped"):
-                await _relay_typing(
-                    db, user_id, msg.chat_id, active_chat_id, msg_type, redis
-                )
+                await _relay_typing(db, user_id, msg.chat_id, active_chat_id, msg_type, redis)
 
             elif msg_type == "read":
                 message_ids = [str(x) for x in (msg.message_ids or [])]
@@ -288,18 +272,14 @@ async def stream_websocket(
     except Exception:
         logger.exception("WS stream error", user_id=user_id)
     finally:
-        last_seen_at = datetime.now(timezone.utc)
+        last_seen_at = datetime.now(UTC)
         hide_last_seen = False
         try:
-            ts = await db.scalar(
-                select(User.last_seen_at).where(User.id == user_id)
-            )
+            ts = await db.scalar(select(User.last_seen_at).where(User.id == user_id))
             if ts:
                 last_seen_at = ts
             settings = await db.scalar(
-                select(UserSettings.hide_last_seen).where(
-                    UserSettings.user_id == user_id
-                )
+                select(UserSettings.hide_last_seen).where(UserSettings.user_id == user_id)
             )
             hide_last_seen = bool(settings)
         except Exception as e:
@@ -326,6 +306,6 @@ async def stream_websocket(
         )
         await websocket_manager.disconnect(websocket, user_id, redis)
         await db.execute(
-            update(User).where(User.id == user_id).values(last_seen_at=datetime.now(timezone.utc))
+            update(User).where(User.id == user_id).values(last_seen_at=datetime.now(UTC))
         )
         await db.commit()
