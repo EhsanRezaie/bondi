@@ -95,6 +95,13 @@ DEP002 = [
 
 [tool.coverage.run]
 source = ["app"]
+# Operator maintenance scripts are not deployed app code.
+omit = ["app/db/scripts/*"]
+# SQLAlchemy async runs sync engine code in greenlets; without this the C
+# tracer's frame tracking breaks on greenlet switches and whole spans of
+# executed code get mis-attributed or dropped (measured: handler bodies of
+# executed endpoints reported as missing).
+concurrency = ["greenlet"]
 
 [tool.coverage.report]
 # Phase 1.5 baseline measured 2026-11-14: 67% (9242 stmts, 3071 missed).

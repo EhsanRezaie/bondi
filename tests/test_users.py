@@ -1,7 +1,10 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
+from uuid import UUID, uuid4
 
 from httpx import AsyncClient
+from sqlalchemy import delete
 
 
 def _phone(key: str) -> str:
@@ -840,6 +843,11 @@ class TestDeleteMe:
             assert res.status_code == 204
             assert mock_send.await_count == 1
 
+            cooldown = await client.post(USERS_ME_DELETE_CODE_URL, headers=headers)
+            assert cooldown.status_code == 429
+            assert "Please wait" in cooldown.json()["detail"]
+            assert mock_send.await_count == 1
+
     async def test_delete_full_flow_uses_real_code(
         self, client: AsyncClient, mock_verification_code
     ):
@@ -1112,6 +1120,89 @@ class TestUpdateLocation:
         )
         assert res.status_code == 401
 
+    async def test_subthreshold_location_ping_skips_coordinate_write_and_geocoding(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_subthreshold")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 35.6893, "lng": 51.3890},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_not_awaited()
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert profile["lat"] == COMPLETE_PROFILE_PAYLOAD["lat"]
+
+    async def test_location_update_only_autofills_present_reverse_geocode_fields(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_partial_geocode")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+            return_value={"country": "Canada", "city": "Toronto"},
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 43.6532, "lng": -79.3832},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_awaited_once_with(43.6532, -79.3832)
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert profile["country"] == "Canada"
+        assert profile["city"] == "Toronto"
+        assert profile["province"] == COMPLETE_PROFILE_PAYLOAD["province"]
+
+    async def test_location_update_preserves_manual_location_text(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("location_manual_text")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        text_update = await client.patch(
+            USERS_ME_LOCATION_TEXT_URL,
+            json={"country": "Japan", "province": "Tokyo", "city": "Tokyo"},
+            headers=headers,
+        )
+        assert text_update.status_code == 200
+
+        with patch(
+            "app.api.v1.endpoints.users.LocationService.reverse_geocode",
+            new_callable=AsyncMock,
+        ) as reverse_geocode:
+            response = await client.post(
+                USERS_ME_LOCATION_URL,
+                params={"lat": 35.6762, "lng": 139.6503},
+                headers=headers,
+            )
+
+        assert response.status_code == 204
+        reverse_geocode.assert_not_awaited()
+        profile = (await client.get(USERS_ME_URL, headers=headers)).json()
+        assert (profile["country"], profile["province"], profile["city"]) == (
+            "Japan",
+            "Tokyo",
+            "Tokyo",
+        )
+
 
 # =============================================================================
 # PATCH /api/v1/users/me/location-text
@@ -1209,6 +1300,204 @@ class TestUserSettings:
         assert settings["language"] == "fa"
         assert settings["dark_mode"] is False
 
+    async def test_update_settings_persists_values_and_ignores_explicit_null(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("update_settings_values"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put(
+            "/api/v1/users/me/settings",
+            json={"hide_last_seen": True, "language": "en", "dark_mode": None},
+            headers=headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["hide_last_seen"] is True
+        assert response.json()["language"] == "en"
+        assert response.json()["dark_mode"] is False
+
+    async def test_update_settings_rejects_empty_payload(self, client, mock_verification_code):
+        result = await register_user_full_custom(
+            client,
+            mock_verification_code,
+            phone=_phone("update_settings_empty"),
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put(
+            "/api/v1/users/me/settings", json={}, headers=headers
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No fields to update"
+
+
+class TestUserInterestsAndPrompts:
+    async def test_update_interests_replaces_list_and_rejects_unknown_names(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("update_user_interests")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+
+        response = await client.put(
+            "/api/v1/users/me/interests",
+            json={"interests": ["football", "reading"]},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert set(response.json()["interests"]) == {"football", "reading"}
+
+        invalid = await client.put(
+            "/api/v1/users/me/interests",
+            json={"interests": ["not-a-seeded-interest"]},
+            headers=headers,
+        )
+        assert invalid.status_code == 400
+        assert "not-a-seeded-interest" in invalid.json()["detail"]
+
+        cleared = await client.put(
+            "/api/v1/users/me/interests", json={"interests": []}, headers=headers
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["interests"] == []
+
+    async def test_update_prompts_replaces_prompt_answers(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.prompt import Prompt
+
+        result = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("update_user_prompts")
+        )
+        headers = {"Authorization": f"Bearer {result['access_token']}"}
+        first_prompt = Prompt(question="A favorite place?", language="en", is_active=True)
+        second_prompt = Prompt(question="A perfect day?", language="en", is_active=True)
+        db_session.add_all([first_prompt, second_prompt])
+        await db_session.commit()
+
+        response = await client.put(
+            "/api/v1/users/me/prompts",
+            json={
+                "prompts": [
+                    {"prompt_id": str(first_prompt.id), "answer": "The mountains"},
+                    {"prompt_id": str(second_prompt.id), "answer": "A long walk"},
+                ]
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert {p["answer"] for p in response.json()["prompts"]} == {
+            "The mountains",
+            "A long walk",
+        }
+
+        replaced = await client.put(
+            "/api/v1/users/me/prompts",
+            json={"prompts": [{"prompt_id": str(second_prompt.id), "answer": "Coffee"}]},
+            headers=headers,
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert [p["answer"] for p in replaced.json()["prompts"]] == ["Coffee"]
+
+        cleared = await client.put(
+            "/api/v1/users/me/prompts", json={"prompts": []}, headers=headers
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["prompts"] == []
+
+
+class TestPublicProfile:
+    async def test_public_profile_returns_serialized_profile_and_reuses_cache(
+        self, client: AsyncClient, mock_verification_code
+    ):
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_target")
+        )
+        viewer_headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+        target_headers = {"Authorization": f"Bearer {target['access_token']}"}
+        target_id = target["user"]["id"]
+
+        first = await client.get(f"/api/v1/users/{target_id}", headers=viewer_headers)
+        assert first.status_code == 200, first.text
+        assert first.json()["id"] == target_id
+        assert first.json()["name"] == COMPLETE_PROFILE_PAYLOAD["name"]
+
+        # Cached payloads exclude viewer-relative online and distance values.
+        from app.core.cache import key_public_profile
+        from app.core.redis import redis_client
+
+        raw = await redis_client.get(key_public_profile(UUID(target_id)))
+        cached = json.loads(raw)
+        assert "distance_km" not in cached["profile"]
+        assert "is_online" not in cached["profile"]
+
+        await redis_client.setex(f"online:{target_id}", 60, "1")
+        second = await client.get(f"/api/v1/users/{target_id}", headers=viewer_headers)
+        assert second.status_code == 200, second.text
+        assert second.json()["is_online"] is True
+        assert second.json()["distance_km"] is not None
+
+        own_profile = await client.get(f"/api/v1/users/{target_id}", headers=target_headers)
+        assert own_profile.status_code == 400
+        assert own_profile.json()["detail"] == "Cannot view your own profile here"
+
+    async def test_public_profile_hides_targets_when_blocked_either_way(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.block import Block
+
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("blocked_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("blocked_target")
+        )
+        viewer_id, target_id = UUID(viewer["user"]["id"]), UUID(target["user"]["id"])
+        headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+
+        db_session.add(Block(blocker_id=viewer_id, blocked_id=target_id))
+        await db_session.commit()
+        response = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert response.status_code == 404
+
+        await db_session.execute(delete(Block).where(Block.blocker_id == viewer_id))
+        db_session.add(Block(blocker_id=target_id, blocked_id=viewer_id))
+        await db_session.commit()
+        response = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert response.status_code == 404
+
+    async def test_public_profile_rejects_missing_or_inactive_targets(
+        self, client: AsyncClient, mock_verification_code, db_session
+    ):
+        from app.models.user import User
+
+        viewer = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_missing_viewer")
+        )
+        target = await register_user_full_custom(
+            client, mock_verification_code, phone=_phone("public_inactive_target")
+        )
+        headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+        target_id = UUID(target["user"]["id"])
+
+        missing = await client.get(f"/api/v1/users/{uuid4()}", headers=headers)
+        assert missing.status_code == 404
+
+        target_row = await db_session.get(User, target_id)
+        target_row.is_active = False
+        await db_session.commit()
+        inactive = await client.get(f"/api/v1/users/{target_id}", headers=headers)
+        assert inactive.status_code == 404
 
 class TestPremiumStatus:
     async def test_is_premium_field_exists(self, client: AsyncClient, mock_verification_code):
