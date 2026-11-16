@@ -109,50 +109,99 @@ async def invalidate_user_cache(redis: Redis, user_id: UUID):
         logger.warning("cache_invalidate_failed", keys=keys, error=str(e), exc_info=True)
 
 
-# ── Discover Card Stack ──────────────────────────────────────────────────────
-DISCOVER_STACK_TTL = 1800  # 30 minutes
-DISCOVER_STACK_SIZE = 50  # pre-fetch 50 cards at a time
+# ── Discover Deck ────────────────────────────────────────────────────────────
+# Per-user cached candidate list for GET /discover. Caches the ordered user-ID
+# list (+ total count) so page views cost one Redis read + one 20-row PK fetch
+# instead of a full filtered scan + full count per request. The DB only runs
+# on cache miss/refill. Signed by filter params so changed filters rebuild.
+DISCOVER_DECK_TTL = 300  # 5 minutes
+DISCOVER_DECK_CAP = 1000  # max cached candidate ids per user (deep pages fall back to DB)
 SWIPED_SET_TTL = 7 * 86400  # 7 days
 
 
-def key_discover_stack(user_id: UUID) -> str:
-    return f"cache:discover:{user_id}:stack"
+def key_discover_deck(user_id: UUID) -> str:
+    return f"cache:discover:{user_id}:deck"
 
 
-async def pop_discover_stack(redis: Redis, user_id: UUID, count: int) -> list[str]:
-    """Pop `count` user IDs from the cached discover stack."""
-    key = key_discover_stack(user_id)
+async def get_discover_deck(redis: Redis, user_id: UUID) -> dict | None:
+    """Return {"sig": str, "ids": [str], "total": int} or None on miss/error."""
     try:
-        pipe = redis.pipeline()
-        pipe.lrange(key, 0, count - 1)
-        pipe.ltrim(key, count, -1)
-        results = await pipe.execute()
-        return results[0]
-    except Exception as e:
-        logger.warning("discover_stack_pop_failed", key=key, error=str(e), exc_info=True)
-        return []
-
-
-async def set_discover_stack(redis: Redis, user_id: UUID, user_ids: list[str]):
-    """Replace the discover stack with a new list of user IDs."""
-    key = key_discover_stack(user_id)
-    try:
-        await redis.delete(key)
-        if user_ids:
-            await redis.lpush(key, *reversed(user_ids))
-            await redis.expire(key, DISCOVER_STACK_TTL)
-    except Exception as e:
-        logger.warning("discover_stack_set_failed", key=key, error=str(e), exc_info=True)
-
-
-async def invalidate_discover_stack(redis: Redis, user_id: UUID):
-    """Invalidate discover stack (e.g. on location update)."""
-    try:
-        await redis.delete(key_discover_stack(user_id))
+        raw = await redis.get(key_discover_deck(user_id))
+        return json.loads(raw) if raw else None
     except Exception as e:
         logger.warning(
-            "discover_stack_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True
+            "discover_deck_get_failed", user_id=str(user_id), error=str(e), exc_info=True
         )
+        return None
+
+
+async def save_discover_deck(
+    redis: Redis, user_id: UUID, sig: str, ids: list[str], total: int
+) -> None:
+    try:
+        payload = json.dumps({"sig": sig, "ids": ids, "total": total})
+        await redis.set(key_discover_deck(user_id), payload, ex=DISCOVER_DECK_TTL)
+    except Exception as e:
+        logger.warning(
+            "discover_deck_save_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+
+
+async def remove_from_discover_deck(redis: Redis, user_id: UUID, target_id: UUID) -> None:
+    """Drop a swiped user from the owner's deck so they never reappear mid-TTL."""
+    key = key_discover_deck(user_id)
+    try:
+        raw = await redis.get(key)
+        if not raw:
+            return
+        deck = json.loads(raw)
+        ids = [i for i in deck.get("ids", []) if i != str(target_id)]
+        if len(ids) == len(deck.get("ids", [])):
+            return
+        deck["ids"] = ids
+        deck["total"] = max(0, int(deck.get("total", len(ids))) - 1)
+        ttl = await redis.ttl(key)
+        await redis.set(key, json.dumps(deck), ex=ttl if ttl > 0 else DISCOVER_DECK_TTL)
+    except Exception as e:
+        logger.warning(
+            "discover_deck_remove_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+
+
+async def invalidate_discover_deck(redis: Redis, user_id: UUID) -> None:
+    try:
+        await redis.delete(key_discover_deck(user_id))
+    except Exception as e:
+        logger.warning(
+            "discover_deck_invalidate_failed", user_id=str(user_id), error=str(e), exc_info=True
+        )
+
+
+# ── Photo Epoch ──────────────────────────────────────────────────────────────
+# Global counter bumped on every photo event that changes discover visibility
+# (upload→pending hides, delete can unhide, admin approve/reject flips status).
+# The deck signature embeds it, so one INCR lazily invalidates every cached
+# deck without a scan — no per-user invalidation bookkeeping.
+
+
+def key_photo_epoch() -> str:
+    return "cache:discover:photo_epoch"
+
+
+async def get_photo_epoch(redis: Redis) -> int:
+    try:
+        raw = await redis.get(key_photo_epoch())
+        return int(raw) if raw else 0
+    except Exception as e:
+        logger.warning("photo_epoch_get_failed", error=str(e), exc_info=True)
+        return 0
+
+
+async def bump_photo_epoch(redis: Redis) -> None:
+    try:
+        await redis.incr(key_photo_epoch())
+    except Exception as e:
+        logger.warning("photo_epoch_bump_failed", error=str(e), exc_info=True)
 
 
 # ── Swipe Deduplication ──────────────────────────────────────────────────────

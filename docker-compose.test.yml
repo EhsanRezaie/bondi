@@ -2,6 +2,9 @@ services:
   db_test:
     image: postgis/postgis:15-3.3
     container_name: bondi_db_test
+    # /dev/shm: parallel query DSM lives here; 64MB Docker default caused
+    # DiskFullError 500s in load tests (search scenario).
+    shm_size: 256mb
     environment:
       POSTGRES_USER: bondi_admin
       POSTGRES_PASSWORD: WqPEfyoNesuS5xky

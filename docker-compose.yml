@@ -146,6 +146,10 @@ services:
     container_name: bondi_db
     restart: unless-stopped
     command: postgres -c max_connections=200
+    # Dynamic shared memory for parallel query workers comes from /dev/shm.
+    # Docker's 64MB default is exhausted by concurrent heavy searches →
+    # asyncpg DiskFullError 500s. Size for the 16GB-RAM data server.
+    shm_size: 1gb
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bondi_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}

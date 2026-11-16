@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import bump_photo_epoch
 from app.core.deps import get_admin_user
 from app.core.limiter import limiter
 from app.core.logging import get_logger
@@ -121,10 +122,15 @@ async def admin_approve_photo(
     await PhotoService.publish_photo(str(photo.user_id), str(photo.id))
 
     photo.status = "approved"
+    # Approval can make the owner visible — refresh flag in same transaction.
+    await PhotoService.recompute_is_searchable(session, photo.user_id)
     await session.commit()
     await log_admin_action(str(admin.id), "photo_approve", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    # Approval flips the owner's discover visibility → bump photo epoch so
+    # cached decks re-evaluate.
+    await bump_photo_epoch(redis_client)
     return {"message": "Photo approved successfully", "photo_id": str(photo_id)}
 
 
@@ -153,10 +159,15 @@ async def admin_reject_photo(
     # their own photo was rejected via GET /users/me/photos.
     photo.status = "rejected"
     photo.reject_reason = reason
+    # Rejection hides the owner (unless another approved photo set survives —
+    # recompute decides) — refresh flag in same transaction.
+    await PhotoService.recompute_is_searchable(session, photo.user_id)
     await session.commit()
     await log_admin_action(str(admin.id), "photo_reject", "photo", photo_id, request, session)
 
     await redis_client.delete(f"presign:{photo.url}")
+    # Rejection flips the owner's discover visibility → bump photo epoch.
+    await bump_photo_epoch(redis_client)
 
     return {"message": "Photo rejected successfully", "photo_id": str(photo_id), "reason": reason}
 

@@ -6,7 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.core.cache import invalidate_user_cache
+from app.core.cache import bump_photo_epoch, invalidate_user_cache
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.limiter import limiter
@@ -157,10 +157,15 @@ async def upload_photo(
 
     # Store the key
     new_photo.url = photo_key
+    # New pending photo hides the owner from discover/search — refresh the
+    # denormalized flag in the same transaction as the insert.
+    await PhotoService.recompute_is_searchable(session, current_user.id)
     await session.commit()
     await session.refresh(new_photo)
 
     await invalidate_user_cache(redis_client, current_user.id)
+    # New pending photo hides the uploader from discover decks → bump epoch.
+    await bump_photo_epoch(redis_client)
 
     # Resolve a real, loadable (signed) URL for the immediate upload response
     display_url = await PhotoService.get_photo_url(photo_key, new_photo.status)
@@ -239,9 +244,16 @@ async def delete_photo(
         if first_photo:
             first_photo.is_main = True
 
+    # Deleting a photo can flip the owner's searchability — refresh in the
+    # same transaction as the delete.
+    await PhotoService.recompute_is_searchable(session, current_user.id)
+
     await session.commit()
 
     await invalidate_user_cache(redis_client, current_user.id)
+    # Deleting a photo can flip its owner back to visible (last pending photo
+    # gone) → bump epoch.
+    await bump_photo_epoch(redis_client)
 
 
 @router.put("/{photo_id}/main", response_model=PhotoResponse)

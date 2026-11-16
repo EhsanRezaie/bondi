@@ -710,6 +710,11 @@ class TestDiscover:
         await db_session.execute(
             sa_update(Photo).where(Photo.user_id == female_id).values(status="pending")
         )
+        # Direct fixture-level status mutation must maintain the
+        # denormalized flag (endpoint hooks do this on real events).
+        from app.services.photo_service import PhotoService
+
+        await PhotoService.recompute_is_searchable(db_session, female_id)
         await db_session.commit()
 
         res = await client.get(

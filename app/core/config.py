@@ -194,6 +194,8 @@ class Settings(BaseSettings):
     # CORS
     # ============================================
     CORS_ORIGINS: str = ""
+    # Disable rate limiting for load tests / benchmarks (default: enabled).
+    RATELIMIT_ENABLED: bool = True
 
     @field_validator("ADMIN_SECRET_KEY")
     @classmethod

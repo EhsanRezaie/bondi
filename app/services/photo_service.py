@@ -3,17 +3,46 @@ import io
 import numpy as np
 from botocore.exceptions import ClientError
 from PIL import Image
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.redis import redis_client
+from app.models.photo import Photo
+from app.models.user_profile import UserProfile
 from app.services.storage import s3_client as _s3_client
 
 logger = get_logger("photo_service")
 
 
 class PhotoService:
+    @staticmethod
+    async def recompute_is_searchable(session: AsyncSession, user_id) -> None:
+        """Refresh user_profiles.is_searchable after a photo status event.
+
+        Searchable = has >= 1 approved photo AND no pending/rejected photo —
+        the exact condition the old `photos.any() / ~photos.any(non-approved)`
+        join pair expressed. Must be called (within the caller's transaction)
+        at every event that changes a photo's status set: upload, delete,
+        admin approve, admin reject.
+        """
+        approved_or, other_or = (
+            await session.execute(
+                select(
+                    func.bool_or(Photo.status == "approved"),
+                    func.bool_or(Photo.status != "approved"),
+                ).where(Photo.user_id == user_id)
+            )
+        ).one()
+        searchable = bool(approved_or) and not bool(other_or)
+        await session.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == user_id)
+            .values(is_searchable=searchable)
+        )
+
     """Handle photo upload, validation, and storage (MinIO / S3-compatible).
 
     Photos are stored as WebP (smaller than JPEG at equal quality) with a small

@@ -40,6 +40,7 @@ def _birth_date(age_years: int) -> str:
     except ValueError:  # Feb 29
         return today.replace(year=today.year - age_years, day=28).isoformat()
 
+
 COMPLETE_PROFILE_PAYLOAD_MALE = {
     "name": "Search Male",
     "birth_date": "2000-01-01",
@@ -1302,7 +1303,10 @@ class TestSearchCursorPagination:
     ):
         """New users signing up mid-scroll must NOT push old rows into a later
         page — this is exactly the offset-pagination bug: with a shifting
-        'recent' order, offset page 2 would return rows already seen on page 1."""
+        order, offset page 2 would return rows already seen on page 1.
+        (Under last_seen ordering, fresh signups are "recently active" and
+        legitimately rank at the top of later pages — that's why we assert
+        the originals appear exactly once rather than that nothing new does.)"""
         male_headers = await self._register_searcher(client, mock_verification_code)
         originals = [
             await self._register_candidate(client, mock_verification_code, i) for i in range(4)
@@ -1331,9 +1335,9 @@ class TestSearchCursorPagination:
             params={"gender": "female"},
             start_cursor=cursor,
         )
-        assert len(set(later_ids)) == len(later_ids)  # no internal dup pages
+        assert len(later_ids) == len(set(later_ids))  # no internal dup pages
         assert page1_ids.isdisjoint(set(later_ids))  # no return of page-1 rows
-        assert page1_ids | set(later_ids) == set(originals)  # every original once
+        assert set(originals).issubset(page1_ids | set(later_ids))  # every original once
 
     async def test_cursor_stable_when_sort_keys_tie(
         self, client: AsyncClient, db_session, mock_verification_code

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.core.redis as redis_module
+from app.core.cache import invalidate_discover_deck
 from app.core.deps import get_current_user, get_current_user_id
 from app.core.limiter import limiter
 from app.core.logging import get_logger
@@ -82,6 +83,10 @@ async def block_user(
         )
     await session.commit()
 
+    # A block removes both users from each other's candidate pools — their
+    # cached discover decks must not keep showing each other.
+    await invalidate_discover_deck(redis_module.redis_client, current_user_id)
+    await invalidate_discover_deck(redis_module.redis_client, user_id)
     # End any active chat between the pair (conversation is over).
     await _end_blocked_chat(session, current_user_id, user_id)
 

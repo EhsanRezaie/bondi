@@ -227,6 +227,9 @@ async def setup_database(db_engine):
 
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        # user_profiles.location is a PostGIS generated column — extension must
+        # exist before create_all (worker DBs are created fresh).
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
         await conn.run_sync(Base.metadata.create_all)
 
         # ✅ Seed interests once per session (reset_state preserves them)
@@ -515,19 +518,34 @@ def blockbuster_guard(request, reset_state, patch_redis):
     # - asyncpg._dot_postgresql_path: ~/.postgresql service-file probe per connect
     bb.functions["os.path.abspath"].can_block_in("sysconfig.py", {"_safe_realpath"})
     bb.functions["os.path.abspath"].can_block_in("connect_utils.py", {"_dot_postgresql_path"})
-    bb.functions["os.stat"].can_block_in("connect_utils.py", {"_dot_postgresql_path", "_parse_connect_dsn_and_args"})
+    bb.functions["os.stat"].can_block_in(
+        "connect_utils.py", {"_dot_postgresql_path", "_parse_connect_dsn_and_args"}
+    )
     # botocore data-file loader reads candidate locations on client creation
     # (s3_client() builds a client per call — cached-client fix tracked in Phase 3)
-    bb.functions["os.stat"].can_block_in("loaders.py", {"load_data_with_path", "_potential_locations"})
+    bb.functions["os.stat"].can_block_in(
+        "loaders.py", {"load_data_with_path", "_potential_locations"}
+    )
     bb.functions["io.BufferedReader.read"].can_block_in("loaders.py", {"load_file", "_load_file"})
     bb.functions["os.listdir"].can_block_in(
         "loaders.py",
         {"list_available_services", "search_path", "list_api_versions", "determine_latest_version"},
     )
-    bb.functions["os.stat"].can_block_in("loaders.py", {"load_data_with_path", "_potential_locations", "<listcomp>", "list_available_services", "exists"})
+    bb.functions["os.stat"].can_block_in(
+        "loaders.py",
+        {
+            "load_data_with_path",
+            "_potential_locations",
+            "<listcomp>",
+            "list_available_services",
+            "exists",
+        },
+    )
     # importlib.metadata dist-info scans (stdlib, triggered inside redis/botocore lazily)
     bb.functions["os.stat"].can_block_in("metadata/__init__.py", {"mtime", "<genexpr>"})
-    bb.functions["io.TextIOWrapper.read"].can_block_in("metadata/__init__.py", {"read_text", "read_binary", "read"})
+    bb.functions["io.TextIOWrapper.read"].can_block_in(
+        "metadata/__init__.py", {"read_text", "read_binary", "read"}
+    )
     # prometheus process collector reads /proc/self/* on every /metrics scrape
     bb.functions["io.BufferedReader.read"].can_block_in("process_collector.py", {"collect"})
     bb.functions["os.listdir"].can_block_in("exposition.py", {"generate_latest"})

@@ -9,8 +9,10 @@ from sqlalchemy.orm import selectinload
 from app.core.cache import (
     cache_delete,
     get_swiped_ids,
+    invalidate_discover_deck,
     key_daily_limits,
     record_swipe_cache,
+    remove_from_discover_deck,
 )
 from app.core.config import settings
 from app.core.deps import get_current_user, get_current_user_id
@@ -283,6 +285,9 @@ async def swipe(
 
     # Record swipe in Redis set for fast discover exclusion
     await record_swipe_cache(redis_client, current_user_id, body.user_id)
+    # Drop the swiped user from the swiper's cached discover deck so they
+    # never reappear mid-TTL (refill excludes them via the swiped set anyway).
+    await remove_from_discover_deck(redis_client, current_user_id, body.user_id)
 
     # Send like notification (only if recipient is premium)
     if body.direction == "like":
@@ -377,6 +382,11 @@ async def swipe(
                 matched = True
                 match_id = existing_match_id
 
+    if matched:
+        # A match removes both users from each other's candidate pools —
+        # their cached discover decks must not keep showing each other.
+        await invalidate_discover_deck(redis_client, current_user_id)
+        await invalidate_discover_deck(redis_client, body.user_id)
     await session.commit()
 
     return SwipeResponse(

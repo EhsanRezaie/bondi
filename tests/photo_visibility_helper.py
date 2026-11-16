@@ -7,6 +7,7 @@ approved, so test users must have at least one approved photo to show up.
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.photo import Photo
+from app.services.photo_service import PhotoService
 from tests.conftest import make_engine
 
 
@@ -26,6 +27,9 @@ async def grant_approved_photo(user_id: str) -> None:
                     face_verified=True,
                 )
             )
+            # Keep the denormalized is_searchable flag in sync — the endpoint
+            # hooks do this for real photo events; this helper must too.
+            await PhotoService.recompute_is_searchable(session, user_id)
             await session.commit()
     finally:
         await engine.dispose()

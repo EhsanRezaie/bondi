@@ -48,6 +48,7 @@ from app.schemas.user import (
 from app.services.location_service import LocationService
 from app.services.profile_service import haversine_km, serialize_profile
 from app.services.sms_service import send_verification_code
+from app.utils.geo import LOCATION_WRITE_THRESHOLD_KM
 
 logger = get_logger("users")
 
@@ -339,12 +340,23 @@ async def update_location(
             detail="User profile not found",
         )
 
-    profile.lat = lat
-    profile.lng = lng
+    # Skip the coordinate write for sub-100m movement: app-open pings from the
+    # same spot would churn the GiST location index (non-HOT row updates →
+    # bloat/vacuum pressure) for zero read benefit. last_seen_at still updates
+    # (it is unindexed, so that write stays HOT-eligible and cheap).
+    moved_km: float
+    if profile.lat is not None and profile.lng is not None:
+        d = haversine_km(profile.lat, profile.lng, lat, lng)
+        moved_km = d if d is not None else float("inf")
+    else:
+        moved_km = float("inf")
+    if moved_km >= LOCATION_WRITE_THRESHOLD_KM:
+        profile.lat = lat
+        profile.lng = lng
     current_user.last_seen_at = datetime.now(UTC)
 
     # Auto-fill location text from coordinates (only if user didn't manually set)
-    if not profile.location_manual:
+    if not profile.location_manual and moved_km >= LOCATION_WRITE_THRESHOLD_KM:
         location_data = await LocationService.reverse_geocode(lat, lng)
         if location_data:
             if location_data.get("country"):
