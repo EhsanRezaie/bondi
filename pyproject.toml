@@ -67,7 +67,7 @@ markers = [
 ]
 
 [tool.deptry.package_module_name_map]
-python-jose = ["jose"]
+PyJWT = ["jwt"]
 pillow = ["PIL"]
 opencv-python-headless = ["cv2"]
 "aioboto3" = ["aioboto3"]
@@ -85,7 +85,6 @@ DEP002 = [
     "opencv-python-headless",
     "pillow",
     "python-dotenv",
-    "PyJWT",
     "python-multipart",
     "uvicorn",
     "uvloop",
