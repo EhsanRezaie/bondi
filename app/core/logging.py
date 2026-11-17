@@ -41,7 +41,7 @@ def setup_logging() -> None:
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     logging.getLogger("passlib").setLevel(logging.WARNING)
-    logging.getLogger("jose").setLevel(logging.WARNING)
+    logging.getLogger("jwt").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

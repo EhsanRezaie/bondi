@@ -1,7 +1,8 @@
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -89,7 +90,7 @@ def decode_token(token: str, expected_type: str) -> dict | None:
         if payload.get("type") != expected_type:
             return None
         return payload
-    except JWTError as e:
+    except InvalidTokenError as e:
         logger.warning("jwt_decode_failed", token_type=expected_type, error=str(e))
         return None
 
@@ -146,6 +147,6 @@ def verify_admin_token(token: str) -> dict | None:
         if payload.get("role") != "admin":
             return None
         return payload
-    except JWTError as e:
+    except InvalidTokenError as e:
         logger.warning("admin_jwt_decode_failed", error=str(e))
         return None
