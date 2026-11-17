@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # Thin app layer. Deps come from the pre-built bondi-base image (see
 # Dockerfile.base + scripts/build-base.sh). Build this first or run
 # `bash scripts/build-base.sh` before `docker compose build`.
