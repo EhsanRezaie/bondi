@@ -48,8 +48,10 @@ jobs:
         run: |
           set -o pipefail
           uv run mypy --no-error-summary > /tmp/mypy-current.txt || true
-          grep 'error:' /tmp/mypy-current.txt | sort -u > /tmp/mypy-current-sorted.txt
-          sort -u mypy-baseline.txt > /tmp/mypy-baseline-sorted.txt
+          # Compare diagnostics independent of source line shifts, which would
+          # otherwise make every existing error look new after unrelated edits.
+          sed -E 's/^([^:]+):[0-9]+: error:/\1: error:/' mypy-baseline.txt | sort -u > /tmp/mypy-baseline-sorted.txt
+          grep 'error:' /tmp/mypy-current.txt | sed -E 's/^([^:]+):[0-9]+: error:/\1: error:/' | sort -u > /tmp/mypy-current-sorted.txt
           NEW=$(comm -13 /tmp/mypy-baseline-sorted.txt /tmp/mypy-current-sorted.txt)
           if [ -n "$NEW" ]; then
             echo "::error::New mypy errors (must fix, not add to baseline):"
