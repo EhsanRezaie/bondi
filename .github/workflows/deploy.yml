@@ -49,7 +49,8 @@ jobs:
           set -o pipefail
           uv run mypy --no-error-summary > /tmp/mypy-current.txt || true
           grep 'error:' /tmp/mypy-current.txt | sort -u > /tmp/mypy-current-sorted.txt
-          NEW=$(comm -13 mypy-baseline.txt /tmp/mypy-current-sorted.txt)
+          sort -u mypy-baseline.txt > /tmp/mypy-baseline-sorted.txt
+          NEW=$(comm -13 /tmp/mypy-baseline-sorted.txt /tmp/mypy-current-sorted.txt)
           if [ -n "$NEW" ]; then
             echo "::error::New mypy errors (must fix, not add to baseline):"
             echo "$NEW"
@@ -60,7 +61,7 @@ jobs:
   security-scanners:
     name: Security scanners (report-only until remaining CVEs are triaged)
     runs-on: ubuntu-latest
-    continue-on-error: true  # pip-audit still reports ~17 untriaged CVEs (user decision pending)
+    continue-on-error: true  # pip-audit is report-only; findings are not CI blockers yet
     permissions:
       contents: read
     steps:
@@ -128,7 +129,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-groups
 
-      - name: Verify migrations (fresh DB, drift check)
+      - name: Verify migrations (fresh DB, drift check, full cycle)
         run: |
           export DATABASE_URL=postgresql+asyncpg://bondi_admin:WqPEfyoNesuS5xky@localhost:5433/bondi_test
           export REDIS_URL=redis://localhost:6380
@@ -154,10 +155,6 @@ jobs:
           export ZARINPAL_CALLBACK_URL=https://example.com/callback
           uv run alembic upgrade head
           uv run alembic check
-
-      - name: Full migration cycle (up -> base -> up)
-        run: |
-          export DATABASE_URL=postgresql+asyncpg://bondi_admin:WqPEfyoNesuS5xky@localhost:5433/bondi_test
           uv run alembic downgrade base
           uv run alembic upgrade head
 
